@@ -1,3 +1,4 @@
-# dsa-db
+# shantay
 
-Making sense of the EU's statement of reason database
+The curiously different batch processor and its first use case, the EU's
+statement of reason database.
