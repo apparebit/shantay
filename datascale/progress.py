@@ -1,3 +1,4 @@
+from contextlib import AbstractContextManager, nullcontext
 import shutil
 import time
 from typing import Callable
@@ -31,19 +32,51 @@ def _scale(value: float) -> tuple[float, str]:
     else:
         return value / 1_000_000, "mega"
 
+
 _SECOND_NS = 1_000_000_000
 
+
 class Progress:
-    def __init__(self, id: str, timer: None | Callable[[], int] = None) -> None:
-        self._id = id
+    """
+    A visual progress tracker.
+
+    This class emits status updates for a single workflow. A status update may
+    be a simple textual message or incorporate a progress bar tracking i/n
+    steps.
+
+    For the latter, the implementation automatically delays the display of the
+    bar for some fraction of a second and adds the percentage of steps completed
+    after the bar. It optionally displays the rate of progress as well.
+
+    By default, this class emits all updates on the current line. If it is
+    instantiated with the row argument, it uses that row instead.
+
+    The lock argument to the constructor, if provided, controls access to
+    standard output.
+    """
+
+    def __init__(
+        self,
+        row: None | int = None,
+        timer: None | Callable[[], int] = None,
+        lock: None | AbstractContextManager = None,
+    ) -> None:
+        self._id = None
         self._description = None
         self._activity = None
         self._unit = None
         self._with_rate = None
 
-        self._timer = timer if timer is not None else time.monotonic_ns
-        self._columns = shutil.get_terminal_size()[0]
+        self._size = shutil.get_terminal_size()
+        self._row = row if row is None else min(row, self._size[1])
 
+        self._timer = timer if timer is not None else time.monotonic_ns
+        self._lock = lock if lock else nullcontext()
+
+        self._reset()
+
+    def with_id(self, id: str) -> None:
+        self._id = id
         self._reset()
 
     def _reset(self) -> None:
@@ -55,8 +88,19 @@ class Progress:
         self._rate = 0
 
     @property
-    def release(self) -> str:
+    def id(self) -> str:
         return self._id
+
+    @property
+    def prefix(self) -> str:
+        if self._row is None:
+            return "\x1b[G"
+        else:
+            return f"\x1b[{self._row};H"
+
+    @property
+    def suffix(self) -> str:
+        return "\x1b[0K"
 
     def prep(self, description: str, activity: str, unit: str, with_rate: bool) -> None:
         """Update the configuration of this progress tracker."""
@@ -97,7 +141,7 @@ class Progress:
             self._rate += (rate - self._rate) / self._samples
 
         # Format progress bar or fallback
-        msg = f"\x1b[G{self._activity} {self._id} "
+        msg = f"{self.prefix}{self._activity} {self._id} "
         columns = len(msg) - 3
 
         if self._total:
@@ -116,23 +160,28 @@ class Progress:
         if self._with_rate and self._rate != 0:
             value, prefix = _scale(self._rate)
             s = f" at {value:,.1f} {prefix}{self._unit}/s"
-            if columns + len(s) < self._columns:
+            if columns + len(s) < self._size[0]:
                 msg += s
                 columns += len(s)
 
         # Add extra
-        if extra and columns + 3 + len(extra) < self._columns:
+        if extra and columns + 3 + len(extra) < self._size[0]:
             msg += f" • {extra}"
 
-        msg += "\x1b[0K"
+        msg += self.suffix
 
         # Render progress
-        print(msg, end="", flush=True)
+        self._render(msg)
 
     def update(self, activity: str) -> None:
         """Update a one-shot activity."""
-        print(f"\x1b[G{activity}\x1b[0K", end="", flush=True)
+        self._render(f"{self.prefix}{activity}{self.suffix}")
 
     def finish(self) -> None:
         """Finish."""
-        print()
+        if self._row is None:
+            self._render("\n")
+
+    def _render(self, text: str) -> None:
+        with self._lock:
+            print(text, end="", flush=True)
