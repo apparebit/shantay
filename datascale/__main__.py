@@ -2,11 +2,18 @@ from argparse import ArgumentParser
 import datetime as dt
 from pathlib import Path
 
+from .progress import Progress
 from .sor import DailySoR
-from .worker import Worker
+from .worker import Schedule, Task, Worker
 
 if __name__ == "__main__":
     parser = ArgumentParser(prog="datascale")
+    parser.add_argument(
+        "task",
+        choices=["prepare", "process"],
+        default="prepare",
+        help="select task to execute",
+    )
     parser.add_argument(
         "--archive",
         type=Path,
@@ -23,9 +30,16 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--stop",
-        help="set stop date",
+        help="set stop date (inclusive)",
     )
     options = parser.parse_args()
+
+    if options.task == "prepare":
+        task = Task.PREPARE_BATCHES
+    elif options.task == "process":
+        task = Task.PROCESS_BATCHES
+    else:
+        raise ValueError(f"unknown task {options.task}")
 
     archive = options.archive if options.archive else Path.cwd() / "dsa-db-archive"
     batches = options.batches if options.batches else Path.cwd() / "dsa-db-batches"
@@ -38,13 +52,20 @@ if __name__ == "__main__":
         dt.date.fromisoformat(options.stop) if options.stop
         else dt.date.today() - dt.timedelta(days=1)
     )
+    schedule = Schedule(DailySoR(start), DailySoR(stop))
 
-    worker = Worker(archive, batches)
+    progress = Progress(row=None)
+    worker = Worker(
+        archive,
+        batches,
+        progress=progress,
+        id=None,
+        schedule=schedule,
+        task=task,
+    )
+    staging_directories = [worker.staging]
+
     worker.prepare()
+    worker.run()
 
-    release = DailySoR(start)
-    while release.date < stop:
-        worker.process(release)
-        release = next(release)
-
-    Worker.shutdown_all([worker.staging])
+    Worker.shutdown_all(staging_directories, batches)
