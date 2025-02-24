@@ -13,6 +13,7 @@ dependencies = [
     "polars", # data frames
     "great_tables", # table formatting
     "ipython", # interactive use
+    "ipykernel", # notebooks
 ]
 
 [project.urls]
