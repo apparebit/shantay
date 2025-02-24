@@ -1,3 +1,12 @@
+[project]
+name = "shantay"
+description = "the curiously different batch processor"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "Apache 2.0"}
+authors = [{name = "Robert Grimm", email="rgrimm@alum.mit.edu"}]
+keywords = ["batch processing", "EU DSA", "statement of reason"]
+dynamic = ["version"]
 
 dependencies = [
     "altair", # graphics
@@ -5,3 +14,7 @@ dependencies = [
     "great_tables", # table formatting
     "ipython", # interactive use
 ]
+
+[project.urls]
+repository = "https://github.com/apparebit/shantay"
+

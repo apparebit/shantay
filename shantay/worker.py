@@ -53,6 +53,18 @@ class Task(enum.StrEnum):
     PREPARE_BATCHES = "prepare-batches"
     PROCESS_BATCHES = "process-batches"
 
+    @classmethod
+    def of(cls, s: str) -> Self:
+        try:
+            return cls(s)
+        except:
+            pass
+        if s == "prepare":
+            return Task.PREPARE_BATCHES
+        if s == "process":
+            return Task.PROCESS_BATCHES
+        raise ValueError(f"unknown task {s}")
+
 
 class Worker:
     def __init__(

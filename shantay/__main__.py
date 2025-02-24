@@ -1,4 +1,5 @@
 from argparse import ArgumentParser
+from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
 
@@ -6,7 +7,17 @@ from .progress import Progress
 from .sor import DailySoR
 from .worker import Schedule, Task, Worker
 
-if __name__ == "__main__":
+
+@dataclass(frozen=True, slots=True)
+class Options:
+    task: Task
+    archive: Path
+    batches: Path
+    start: dt.date
+    stop: dt.date
+
+
+def get_options(args: list[str]) -> Options:
     parser = ArgumentParser(prog="datascale")
     parser.add_argument(
         "task",
@@ -32,7 +43,18 @@ if __name__ == "__main__":
         "--stop",
         help="set stop date (inclusive)",
     )
-    options = parser.parse_args()
+    raw_options = parser.parse_args(args)
+
+    return Options(
+        task=Task.of(raw_options.task),
+        archive=raw_options.archive if raw_options.archive else Path.cwd() / "dsa-db-archive",
+        batches=raw_options.batches if raw_options.batches else Path.cwd() / "dsa-db-batches",
+
+
+
+
+    )
+
 
     if options.task == "prepare":
         task = Task.PREPARE_BATCHES
@@ -41,8 +63,6 @@ if __name__ == "__main__":
     else:
         raise ValueError(f"unknown task {options.task}")
 
-    archive = options.archive if options.archive else Path.cwd() / "dsa-db-archive"
-    batches = options.batches if options.batches else Path.cwd() / "dsa-db-batches"
 
     start = (
         dt.date.fromisoformat(options.start) if options.start
