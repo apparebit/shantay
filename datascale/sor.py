@@ -9,6 +9,7 @@ from .schema import (
     ContentType, ContentLanguageType, CountryGroups, DecisionVisibility, Keyword,
     StatementCategory, TerritorialScopeType, SCHEMA, SCHEMA_OVERRIDES
 )
+from .util import annotate_error
 
 class DailySoR(DailyRelease):
 
@@ -30,6 +31,7 @@ class DailySoR(DailyRelease):
     def extract_batch_steps(self) -> int:
         return 3
 
+    @annotate_error(filename_arg="root")
     def extract_batch(
         self,
         root: Path,
@@ -153,3 +155,14 @@ class DailySoR(DailyRelease):
             expected = SCHEMA[name]
             if actual != expected:
                 raise TypeError(f"column {name} has type {actual} not {expected}")
+
+    @annotate_error(filename_arg="root")
+    def process_batch(self, root: Path, index: int) -> None:
+        path = root / self.batch_directory / self.batch(index)
+        frame = pl.read_parquet(path)
+        frame = frame.with_columns(
+            pl.col("content_language").cast(ContentLanguageType)
+        )
+        tmp = path.with_suffix(".tmp.parquet")
+        frame.write_parquet(tmp)
+        tmp.replace(path)

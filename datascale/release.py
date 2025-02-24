@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 import zipfile
 
 from .progress import Progress
+from .util import annotate_error
 
 class DownloadFailed(Exception):
     """An exception indicating that a download didn't yield a resource."""
@@ -72,6 +73,7 @@ class Release(metaclass=ABCMeta):
     def batch_directory(self) -> Path:
         """The batch directory nested inside the directory."""
 
+    @annotate_error(filename_arg="root")
     def download_archive(
         self,
         root: Path,
@@ -115,6 +117,7 @@ class Release(metaclass=ABCMeta):
                     if progress:
                         progress.step(downloaded)
 
+    @annotate_error(filename_arg="root")
     def validate_archive(self, root: Path) -> None:
         """Validate the archive stored under the root against its digest."""
         digest = root / self.directory / self.digest
@@ -129,6 +132,7 @@ class Release(metaclass=ABCMeta):
         if expected != actual:
             raise ValueError(f'digest {actual} does not match {expected}')
 
+    @annotate_error(filename_arg="target")
     def copy_archive(self, source: Path, target: Path) -> None:
         """
         Copy the archive and digest stored under the source directory to the
@@ -144,6 +148,7 @@ class Release(metaclass=ABCMeta):
         with zipfile.ZipFile(root / self.directory / self.archive) as archive:
             return sorted(archive.namelist())
 
+    @annotate_error(filename_arg="root")
     def unarchive_file(self, root: Path, index: int, name: str) -> None:
         """
         Unarchive the file with index and name from the archive under the source
@@ -169,6 +174,7 @@ class Release(metaclass=ABCMeta):
         using `index * (steps + 1)` as the first step number.
         """
 
+
     @abstractmethod
     def extract_batch(
         self,
@@ -190,6 +196,11 @@ class Release(metaclass=ABCMeta):
                 return False
         return True
 
+    @abstractmethod
+    def process_batch(self, root: Path, index: int) -> None:
+        """Process the batch with the given index."""
+
+    @annotate_error(filename_arg="target")
     def copy_batches(
         self,
         source: Path,
@@ -205,6 +216,13 @@ class Release(metaclass=ABCMeta):
             shutil.copy(source / self.batch_directory / batch, path / batch)
             if progress:
                 progress.step(index)
+
+    def __eq__(self, other: object) -> bool:
+        """
+        Determine whether this release has the same type and ID as the other
+        object.
+        """
+        return type(self) == type(other) and self.id == other.id
 
     def __iter__(self) -> Self:
         """Get this release as an iterator."""
@@ -245,3 +263,7 @@ class DailyRelease(Release):
     def __next__(self) -> Self:
         """Get the next daily release."""
         return type(self)(self.date + dt.timedelta(days=1))
+
+    def __repr__(self) -> str:
+        """Get a debug representation for this release"""
+        return f"{type(self).__name__}({self.id})"
