@@ -1,0 +1,7 @@
+
+dependencies = [
+    "altair", # graphics
+    "polars", # data frames
+    "great_tables", # table formatting
+    "ipython", # interactive use
+]
