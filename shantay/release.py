@@ -1,5 +1,17 @@
+"""
+# Data Releases
+
+A `Release` corresponds to a compressed archive with a cryptographic digest on
+the side. It is immutable and has no other state than the entity that versions
+releases, such as a `datetime.date` for `DailyRelease`. Releases can be
+instantiated with either such a valid or the string representation accessible
+through `Release.id`. Since that entity versions the release, it must support
+inequality comparisons.
+"""
 from abc import abstractmethod, ABCMeta
 from collections import Counter
+from collections.abc import Iterator
+from dataclasses import dataclass
 import datetime as dt
 import hashlib
 from pathlib import Path
@@ -8,8 +20,9 @@ from typing import Self
 from urllib.request import Request, urlopen
 import zipfile
 
-from .progress import Progress
+from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
+
 
 class DownloadFailed(Exception):
     """An exception indicating that a download didn't yield a resource."""
@@ -77,7 +90,7 @@ class Release(metaclass=ABCMeta):
     def download_archive(
         self,
         root: Path,
-        progress: None | Progress = None,
+        progress: Progress = NO_PROGRESS
     ) -> None:
         """Download the release archive and digest."""
         url = f"{self.url}/{self.digest}"
@@ -105,8 +118,7 @@ class Release(metaclass=ABCMeta):
             downloaded = 0
 
             with open(root / self.directory / self.archive, mode="wb") as file:
-                if progress:
-                    progress.start(content_length)
+                progress.start(content_length)
                 while True:
                     chunk = response.read(CHUNK_SIZE)
                     if not chunk:
@@ -114,8 +126,7 @@ class Release(metaclass=ABCMeta):
                     file.write(chunk)
 
                     downloaded += len(chunk)
-                    if progress:
-                        progress.step(downloaded)
+                    progress.step(downloaded)
 
     @annotate_error(filename_arg="root")
     def validate_archive(self, root: Path) -> None:
@@ -167,13 +178,12 @@ class Release(metaclass=ABCMeta):
                         shutil.copyfileobj(source_file, target_file)
 
     @abstractmethod
-    def extract_batch_steps(self) -> int:
-        """
-        The number of logical steps performed by each invocation of
-        extract_batch(). The method should invoke Progress.step() as many times,
-        using `index * (steps + 1)` as the first step number.
-        """
+    def extract_batch_step_count(self) -> int:
+        """Determine the number of logical steps performed by extract_batch."""
 
+    def extract_batch_step(self, index: int, step: int) -> int:
+        """Determine the argument for Progress.step()."""
+        return (self.extract_batch_step_count() + 1) * index + step
 
     @abstractmethod
     def extract_batch(
@@ -181,7 +191,7 @@ class Release(metaclass=ABCMeta):
         root: Path,
         index: int, # Index of unarchived file
         name: str, # Name of unarchived file
-        progress: None | Progress = None,
+        progress: Progress = NO_PROGRESS,
     ) -> Counter:
         """
         Extract the batch data from the unarchived file and return summary
@@ -197,8 +207,8 @@ class Release(metaclass=ABCMeta):
         return True
 
     @abstractmethod
-    def process_batch(self, root: Path, index: int) -> None:
-        """Process the batch with the given index."""
+    def analyze_batch[R](self, root: Path, index: int, result: None | R) -> R:
+        """Analyze the batch with the given index."""
 
     @annotate_error(filename_arg="target")
     def copy_batches(
@@ -206,7 +216,7 @@ class Release(metaclass=ABCMeta):
         source: Path,
         target: Path,
         count: int,
-        progress: None | Progress = None,
+        progress: Progress = NO_PROGRESS,
     ) -> None:
         """Copy the batch files between root directories."""
         path = target / self.batch_directory
@@ -214,29 +224,62 @@ class Release(metaclass=ABCMeta):
         for index in range(count):
             batch = self.batch(index)
             shutil.copy(source / self.batch_directory / batch, path / batch)
-            if progress:
-                progress.step(index)
+            progress.step(index)
+
+    def __hash__(self) -> int:
+        return hash(self.id)
 
     def __eq__(self, other: object) -> bool:
-        """
-        Determine whether this release has the same type and ID as the other
-        object.
-        """
         return type(self) == type(other) and self.id == other.id
 
+    @abstractmethod
+    def __lt__(self, other: object) -> bool:
+        """
+        Determine whether this release comes before the other release. The other
+        ordering comparisons are implemented in terms of the less and equal
+        comparisons. Unlike equality, which can be implemented in terms of ID,
+        this comparison is abstract because IDs are strings and hence are not
+        always suitable for establishing order.
+        """
+
+    def __le__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return self < other or self == other
+        return NotImplemented
+
+    def __ge__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return not self < other
+        return NotImplemented
+
+    def __gt__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return not self < other and not self == other
+        return NotImplemented
+
     def __iter__(self) -> Self:
-        """Get this release as an iterator."""
         return self
 
     @abstractmethod
     def __next__(self) -> Self:
         """Get the next release."""
 
+    def __str__(self) -> str:
+        return self.id
+
+    def __repr__(self) -> str:
+        return f"{type(self).__name__}({self.id})"
+
 
 class DailyRelease(Release):
+
+    __slots__ = ("_date",)
+
     """A release made every day."""
-    def __init__(self, date: dt.date) -> None:
+    def __init__(self, date: str | dt.date) -> None:
         super().__init__()
+        if isinstance(date, str):
+            date = dt.date.fromisoformat(date)
         self._date = date
 
     @property
@@ -245,25 +288,59 @@ class DailyRelease(Release):
 
     @property
     def id(self) -> str:
-        return f"{self.date.year}-{self.date.month:02}-{self.date.day:02}"
+        return f"{self._date.year}-{self._date.month:02}-{self._date.day:02}"
 
     @property
     def directory(self) -> Path:
         """Get the directory prefix, i.e., 'YYYY/MM'."""
-        return Path(f"{self.date.year}") / f"{self.date.month:02}"
+        return Path(f"{self._date.year}") / f"{self._date.month:02}"
 
     @property
     def working_directory(self) -> Path:
-        return self.directory / f"tmp{self.date.day:02}"
+        return self.directory / f"tmp{self._date.day:02}"
 
     @property
     def batch_directory(self) -> Path:
-        return self.directory / f"{self.date.day:02}"
+        return self.directory / f"{self._date.day:02}"
+
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return self._date == other._date
+        return NotImplemented
+
+    def __lt__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return self._date < other._date
+        return NotImplemented
+
+    def __le__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return self._date <= other._date
+        return NotImplemented
+
+    def __gt__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return other._date < self._date
+        return NotImplemented
+
+    def __ge__(self, other: object) -> bool:
+        if isinstance(other, type(self)):
+            return other._date <= self._date
+        return NotImplemented
 
     def __next__(self) -> Self:
-        """Get the next daily release."""
-        return type(self)(self.date + dt.timedelta(days=1))
+        return type(self)(self._date + dt.timedelta(days=1))
 
-    def __repr__(self) -> str:
-        """Get a debug representation for this release"""
-        return f"{type(self).__name__}({self.id})"
+
+@dataclass(frozen=True, slots=True)
+class Schedule[R: Release]:
+    start: R
+    stop: R
+
+    def releases(self) -> Iterator[R]:
+        cursor = self.start
+        while True:
+            yield cursor
+            if cursor == self.stop:
+                break
+            cursor = next(cursor)

@@ -3,7 +3,7 @@ from pathlib import Path
 
 import polars as pl
 
-from .progress import Progress
+from .progress import NO_PROGRESS, Progress
 from .release import DailyRelease
 from .schema import (
     ContentType, ContentLanguageType, CountryGroups, DecisionVisibility, Keyword,
@@ -22,13 +22,15 @@ class DailySoR(DailyRelease):
         return self.archive + ".sha1"
 
     def batch(self, number: int) -> str:
-        return f"{self.id}-{number:03}.parquet"
+        if not 0 <= number <= 99_999:
+            raise ValueError(f"batch {number} is out of permissible range")
+        return f"{self.id}-{number:05}.parquet"
 
     @property
     def url(self) -> str:
         return "https://dsa-sor-data-dumps.s3.eu-central-1.amazonaws.com"
 
-    def extract_batch_steps(self) -> int:
+    def extract_batch_step_count(self) -> int:
         return 3
 
     @annotate_error(filename_arg="root")
@@ -37,14 +39,12 @@ class DailySoR(DailyRelease):
         root: Path,
         index: int,
         name: str,
-        progress: None | Progress
+        progress: Progress = NO_PROGRESS
     ) -> None:
         path = root / self.working_directory
         csv_files = f"{path}/sor-global-{self.id}-full-{index:05}-*.csv"
 
-        if progress:
-            progress.step(4 * index + 1, extra="count rows")
-
+        progress.step(self.extract_batch_step(index, 1), extra="count rows")
         total_rows = (
             pl.scan_csv(csv_files, infer_schema=False)
             .select(pl.len())
@@ -52,9 +52,7 @@ class DailySoR(DailyRelease):
             .item()
         )
 
-        if progress:
-            progress.step(4 * index + 2, extra="count rows with keywords")
-
+        progress.step(self.extract_batch_step(index, 2), extra="count rows with keywords")
         total_rows_with_keyword = (
             pl.scan_csv(csv_files, infer_schema=False)
             .filter(
@@ -66,9 +64,7 @@ class DailySoR(DailyRelease):
             .item()
         )
 
-        if progress:
-            progress.step(4 * index + 3, extra="assembling category data")
-
+        progress.step(self.extract_batch_step(index, 3), extra="assembling category data")
         frame = (
             # Lazily scan CSV files, while also...
             pl.scan_csv(
@@ -157,7 +153,7 @@ class DailySoR(DailyRelease):
                 raise TypeError(f"column {name} has type {actual} not {expected}")
 
     @annotate_error(filename_arg="root")
-    def process_batch(self, root: Path, index: int) -> None:
+    def analyze_batch(self, root: Path, index: int) -> None:
         path = root / self.batch_directory / self.batch(index)
         frame = pl.read_parquet(path)
         frame = frame.with_columns(
