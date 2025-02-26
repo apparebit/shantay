@@ -1,7 +1,6 @@
-from contextlib import AbstractContextManager, nullcontext
 import shutil
 import time
-from typing import Callable
+from typing import Callable, Self
 
 _BLOCKS = " ▎▌▊█"
 
@@ -50,36 +49,25 @@ class Progress:
 
     By default, this class emits all updates on the current line. If it is
     instantiated with the row argument, it uses that row instead.
-
-    The lock argument to the constructor, if provided, controls access to
-    standard output.
     """
 
     def __init__(
         self,
         row: None | int = None,
         timer: None | Callable[[], int] = None,
-        lock: None | AbstractContextManager = None,
     ) -> None:
-        self._id = None
-        self._description = None
-        self._activity = None
-        self._unit = None
-        self._with_rate = None
-
         self._size = shutil.get_terminal_size()
         self._row = row if row is None else min(row, self._size[1])
 
         self._timer = timer if timer is not None else time.monotonic_ns
-        self._lock = lock if lock else nullcontext()
 
-        self._reset()
+        self._reset_activity()
+        self._reset_stats()
 
-    def with_id(self, id: str) -> None:
-        self._id = id
-        self._reset()
+    def _reset_activity(self) -> None:
+        self._label = self._unit = self._with_rate = None
 
-    def _reset(self) -> None:
+    def _reset_stats(self) -> None:
         self._showing_bar = False
         self._timestamp = None
         self._processed = 0
@@ -88,37 +76,37 @@ class Progress:
         self._rate = 0
 
     @property
-    def id(self) -> str:
-        return self._id
-
-    @property
-    def prefix(self) -> str:
+    def _prefix(self) -> str:
         if self._row is None:
             return "\x1b[G"
         else:
             return f"\x1b[{self._row};H"
 
     @property
-    def suffix(self) -> str:
+    def _suffix(self) -> str:
         return "\x1b[0K"
 
-    def prep(self, description: str, activity: str, unit: str, with_rate: bool) -> None:
+    def activity(self, description: str, label: str, unit: str, with_rate: bool) -> Self:
         """Update the configuration of this progress tracker."""
-        self._description = description
-        self._activity = activity
+        self._label = label
         self._unit = unit
         self._with_rate = with_rate
-        self._reset()
+        self._reset_stats()
 
-        self.update(description)
+        self._render(f"{self._prefix}{description}{self._suffix}")
+        return self
 
-    def start(self, total: None | int = None) -> None:
+    def start(self, total: None | int = None) -> Self:
         """Start an activity with total steps."""
+        assert self._label is not None
         self._timestamp = self._timer()
         self._total = total
+        return self
 
-    def step(self, processed: int, extra: None | str = None) -> None:
+    def step(self, processed: int, extra: None | str = None) -> Self:
         """Update a previously started activity with processed steps."""
+        assert self._label is not None
+
         # Determine whether progress bar should be shown
         timestamp = None
         duration = None
@@ -141,7 +129,7 @@ class Progress:
             self._rate += (rate - self._rate) / self._samples
 
         # Format progress bar or fallback
-        msg = f"{self.prefix}{self._activity} {self._id} "
+        msg = f"{self._prefix}{self._label} "
         columns = len(msg) - 3
 
         if self._total:
@@ -168,20 +156,46 @@ class Progress:
         if extra and columns + 3 + len(extra) < self._size[0]:
             msg += f" • {extra}"
 
-        msg += self.suffix
+        msg += self._suffix
 
         # Render progress
         self._render(msg)
+        return self
 
-    def update(self, activity: str) -> None:
+    def perform(self, activity: str) -> Self:
         """Update a one-shot activity."""
-        self._render(f"{self.prefix}{activity}{self.suffix}")
+        if self._label is not None:
+            self._reset_activity()
 
-    def finish(self) -> None:
+        self._render(f"{self._prefix}{activity}{self._suffix}")
+        return self
+
+    def done(self) -> None:
         """Finish."""
+        self._reset_activity()
         if self._row is None:
             self._render("\n")
 
     def _render(self, text: str) -> None:
-        with self._lock:
-            print(text, end="", flush=True)
+        print(text, end="", flush=True)
+
+
+class _NoProgress(Progress):
+    def activity(self, description: str, label: str, unit: str, with_rate: bool) -> Self:
+        return self
+
+    def start(self, total: None | int = None) -> Self:
+        return self
+
+    def step(self, processed: int, extra: None | str = None) -> Self:
+        return self
+
+    def perform(self, activity: str) -> Self:
+        return self
+
+    def done(self) -> None:
+        pass
+
+
+NO_PROGRESS = _NoProgress()
+del _NoProgress
