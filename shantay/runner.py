@@ -1,5 +1,6 @@
 from collections import Counter
 import enum
+import logging
 from pathlib import Path
 import shutil
 from typing import Any
@@ -7,6 +8,9 @@ from typing import Any
 from .metadata import Metadata
 from .progress import Progress
 from .release import Release
+
+
+_logger = logging.getLogger("shantay")
 
 
 class Task(enum.StrEnum):
@@ -20,10 +24,12 @@ class Runner:
         archive: Path,
         batches: Path,
         progress: Progress,
-        id: None | int = None,
+        *,
+        id: int = 0,
     ) -> None:
+        self._id = id
         self._staging = Path.cwd() / (
-            "dsa-db-staging" if id is None else f"dsa-db-staging-{id:03}"
+            "dsa-db-staging" if id == 0 else f"dsa-db-staging-{id:03}"
         )
         self._archive = archive
         self._batches = batches
@@ -53,13 +59,12 @@ class Runner:
     # Startup
 
     def prepare(self) -> None:
+        _logger.info('runner %d staging: %s', self._id, self._staging)
+        _logger.info('runner %d archive: %s', self._id, self._archive)
+        _logger.info('runner %d batches: %s', self._id, self._batches)
+
         self._staging.mkdir(parents=True, exist_ok=True)
-        if (self._batches / Metadata.FILENAME).exists():
-            Metadata.copy_json(self._batches, self._staging)
-            self._metadata = Metadata.read_json(self._staging)
-        else:
-            self._metadata = Metadata()
-            self.write_json(self._staging)
+        self._metadata = Metadata.setup(self._staging, self._batches)
 
     # ----------------------------------------------------------------------------------
 
@@ -74,11 +79,14 @@ class Runner:
             f"downloading data for release {release.id}",
             f"downloading {release.id}", "byte", with_rate=True,
         )
-        release.download_archive(self._staging, self._progress)
+        size = release.download_archive(self._staging, self._progress)
+        _logger.info('downloaded all %d bytes of %s', size, release.archive)
         self._progress.perform(f"validating release {release.id}")
         release.validate_archive(self._staging)
+        _logger.info('validated %s', release.archive)
         self._progress.perform(f"copying release {release.id} to archive")
         release.copy_archive(self._staging, self._archive)
+        _logger.info('archived %s', release.archive)
 
     def is_archive_staged(self, release: Release) -> bool:
         return (self._staging / release.directory / release.archive).exists()
@@ -91,8 +99,10 @@ class Runner:
 
         self._progress.perform(f"copying release {release.id} from archive to staging")
         release.copy_archive(self._archive, self._staging)
+        _logger.info('staged %s', release.archive)
         self._progress.perform(f"validating release {release.id}")
         release.validate_archive(self._staging)
+        _logger.info('validated %s', release.archive)
 
     def extract_batches(self, release: Release) -> None:
         assert self.is_archive_staged(release)
@@ -103,7 +113,7 @@ class Runner:
             f"extracting batches from release {release.id}",
             f"extracting {release.id}", "batch", with_rate=False,
         )
-        steps = release.extract_batch_step_count() + 1
+        steps = release.extract_data_step_count() + 1
         self._progress.start(steps * batch_count)
 
         # Archived files are archives, too. Unarchive one at a time.
@@ -111,27 +121,36 @@ class Runner:
         for index, name in enumerate(filenames):
             self._progress.step(steps * index, "unarchiving data")
             release.unarchive_file(self._staging, index, name)
-            counters += release.extract_batch(self._staging, index, name, self._progress)
+            counters += release.extract_data(self._staging, index, name, self._progress)
 
             shutil.rmtree(self._staging / release.working_directory)
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
         self._metadata[release] = counters
         self._metadata.write_json(self._staging)
+        _logger.info(
+            'extracted %d files with category data from %s',
+            batch_count, release.archive
+        )
 
         self._progress.activity(
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
         ).start(batch_count)
-        release.copy_batches(self._staging, self._batches, batch_count, self._progress)
+        release.copy_extracted_data(self._staging, self._batches, batch_count, self._progress)
+        _logger.info(
+            'archived %d files with category data for release %s',
+            batch_count, release.id
+        )
 
     def prepare_batches(self, release: Release) -> None:
         if (
             release in self._metadata
-            and release.batches_exist(self._batches, self._metadata.batch_count(release))
+            and release.extracted_data_exits(self._batches, self._metadata.batch_count(release))
         ):
             return
 
+        _logger.debug('preparing data for release %s', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 
@@ -148,5 +167,5 @@ class Runner:
         ).start(batch_count)
 
         for index in range(batch_count):
-            result = release.analyze_batch(self._batches, index, result)
+            result = release.analyze_extract(self._batches, index, result)
             self._progress.step(index)
