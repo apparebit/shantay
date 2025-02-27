@@ -14,9 +14,10 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import datetime as dt
 import hashlib
+import logging
 from pathlib import Path
 import shutil
-from typing import Self
+from typing import NoReturn, Self
 from urllib.request import Request, urlopen
 import zipfile
 
@@ -24,12 +25,12 @@ from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
 
 
+_logger = logging.getLogger("shantay")
+
+
 class DownloadFailed(Exception):
     """An exception indicating that a download didn't yield a resource."""
     pass
-
-
-CHUNK_SIZE = 64 * 1_024
 
 
 class Release(metaclass=ABCMeta):
@@ -40,6 +41,7 @@ class Release(metaclass=ABCMeta):
     digests. They may be distributed on a regular schedule (e.g., daily), or
     irregularly but with version numbers.
     """
+    CHUNK_SIZE = 64 * 1_024
 
     @property
     @abstractmethod
@@ -91,14 +93,12 @@ class Release(metaclass=ABCMeta):
         self,
         root: Path,
         progress: Progress = NO_PROGRESS
-    ) -> None:
+    ) -> int:
         """Download the release archive and digest."""
         url = f"{self.url}/{self.digest}"
         with urlopen(Request(url, None, {})) as response:
             if response.status != 200:
-                raise DownloadFailed(
-                    f"download of release digest {url} failed with status {response.status}"
-                )
+                self._download_failed("digest", url, response.status)
 
             (root / self.directory).mkdir(parents=True, exist_ok=True)
             with open(root / self.directory / self.digest, mode="wb") as file:
@@ -107,9 +107,7 @@ class Release(metaclass=ABCMeta):
         url = f"{self.url}/{self.archive}"
         with urlopen(Request(url, None, {})) as response:
             if response.status != 200:
-                raise DownloadFailed(
-                    f"download of release archive {url} failed with status {response.status}"
-                )
+                self._download_failed("archive", url, response.status)
 
             content_length = response.getheader("content-length")
             content_length = (
@@ -117,16 +115,28 @@ class Release(metaclass=ABCMeta):
             )
             downloaded = 0
 
-            with open(root / self.directory / self.archive, mode="wb") as file:
+            target = root / self.directory / self.archive
+            with open(target, mode="wb") as file:
                 progress.start(content_length)
                 while True:
-                    chunk = response.read(CHUNK_SIZE)
+                    chunk = response.read(self.CHUNK_SIZE)
                     if not chunk:
                         break
                     file.write(chunk)
 
                     downloaded += len(chunk)
                     progress.step(downloaded)
+
+            return downloaded
+
+    def _download_failed(self, artifact: str, url: str, status: int) -> NoReturn:
+        """Signal that the download failed."""
+        _logger.error(
+            'download of %s <%s> failed with status %d', artifact, url, status
+        )
+        raise DownloadFailed(
+            f'download of {artifact} "{url}" failed with status {status}'
+        )
 
     @annotate_error(filename_arg="root")
     def validate_archive(self, root: Path) -> None:
@@ -137,10 +147,12 @@ class Release(metaclass=ABCMeta):
             expected = expected[:expected.index(" ")]
 
         algo = digest.suffix[1:]
-        with open(root / self.directory / self.archive, mode="rb") as file:
+        archive = root / self.directory / self.archive
+        with open(archive, mode="rb") as file:
             actual = hashlib.file_digest(file, algo).hexdigest()
 
         if expected != actual:
+            _logger.error('archive "%s" does not match %s digest', archive, algo)
             raise ValueError(f'digest {actual} does not match {expected}')
 
     @annotate_error(filename_arg="target")
@@ -149,10 +161,11 @@ class Release(metaclass=ABCMeta):
         Copy the archive and digest stored under the source directory to the
         target directory.
         """
-        path = target / self.directory
-        path.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source / self.directory / self.digest, path / self.digest)
-        shutil.copy(source / self.directory / self.archive, path / self.archive)
+        source_dir = source / self.directory
+        target_dir = target / self.directory
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(source_dir / self.digest, target_dir / self.digest)
+        shutil.copy(source_dir / self.archive, target_dir / self.archive)
 
     def archived_files(self, root: Path) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
@@ -165,28 +178,32 @@ class Release(metaclass=ABCMeta):
         Unarchive the file with index and name from the archive under the source
         directory into a suitable directory under the target directory.
         """
-        with zipfile.ZipFile(root / self.directory / self.archive) as archive:
+        input = root / self.directory / self.archive
+        with zipfile.ZipFile(input) as archive:
             with archive.open(name) as source_file:
                 output = root / self.working_directory
                 output.mkdir(parents=True, exist_ok=True)
 
                 if name.endswith(".zip"):
+                    kind = "nested archive"
                     with zipfile.ZipFile(source_file) as nested_archive:
                         nested_archive.extractall(output)
                 else:
+                    kind = "file"
                     with open(output / name, mode="wb") as target_file:
                         shutil.copyfileobj(source_file, target_file)
+                _logger.debug('unarchived %s "%s"', kind, name)
 
     @abstractmethod
-    def extract_batch_step_count(self) -> int:
+    def extract_data_step_count(self) -> int:
         """Determine the number of logical steps performed by extract_batch."""
 
-    def extract_batch_step(self, index: int, step: int) -> int:
+    def extract_data_step(self, index: int, step: int) -> int:
         """Determine the argument for Progress.step()."""
-        return (self.extract_batch_step_count() + 1) * index + step
+        return (self.extract_data_step_count() + 1) * index + step
 
     @abstractmethod
-    def extract_batch(
+    def extract_data(
         self,
         root: Path,
         index: int, # Index of unarchived file
@@ -198,7 +215,7 @@ class Release(metaclass=ABCMeta):
         statistics.
         """
 
-    def batches_exist(self, root: Path, count: int) -> bool:
+    def extracted_data_exits(self, root: Path, count: int) -> bool:
         """Determine whether all batch files exist under the given root directory."""
         path = root / self.batch_directory
         for index in range(count):
@@ -207,11 +224,11 @@ class Release(metaclass=ABCMeta):
         return True
 
     @abstractmethod
-    def analyze_batch[R](self, root: Path, index: int, result: None | R) -> R:
+    def analyze_extract[R](self, root: Path, index: int, result: None | R) -> R:
         """Analyze the batch with the given index."""
 
     @annotate_error(filename_arg="target")
-    def copy_batches(
+    def copy_extracted_data(
         self,
         source: Path,
         target: Path,
