@@ -9,6 +9,10 @@ from typing import Callable, Required, Self, TypedDict
 from .release import Release
 
 
+class MetadataConflict(Exception):
+    """Exception to indicate that metadata records for the same release differ."""
+
+
 def _as_key(key: str | Release) -> str:
     return key if isinstance(key, str) else key.id
 
@@ -39,7 +43,7 @@ class Metadata:
         self._data = {} if data is None else data
 
     def batch_count(self, release: str | Release) -> int:
-        self[_as_key(release)]["batch_count"]
+        return self[_as_key(release)]["batch_count"]
 
     def __contains__(self, key: str | Release) -> bool:
         return _as_key(key) in self._data
@@ -69,6 +73,33 @@ class Metadata:
         tmp.replace(path)
 
     @classmethod
+    def setup(cls, staging: Path, batches: Path) -> Self:
+        # Read metadata
+        staged_md = None
+        batched_md = None
+        if (staging / cls.FILENAME).exists():
+            staged_md = cls.read_json(staging)
+        if (batches / cls.FILENAME).exists():
+            batched_md = cls.read_json(batches)
+
+        # Merge metadata
+        metadata = None
+        if staged_md is None:
+            if batched_md is None:
+                metadata = cls()
+            else:
+                metadata = batched_md
+        else:
+            if batched_md is None:
+                metadata = staged_md
+            else:
+                metadata = cls.merge(staging, batches)
+
+        # Save best metadata in staging and return that metadata
+        metadata.write_json(staging)
+        return metadata
+
+    @classmethod
     def copy_json(cls, source: Path, target: Path) -> None:
         path = target / cls.FILENAME
         tmp = path.with_suffix(".tmp.json")
@@ -76,7 +107,7 @@ class Metadata:
         tmp.replace(path)
 
     @classmethod
-    def merge(cls, sources: list[Path], target: Path) -> None:
+    def merge(cls, *sources: Path) -> Self:
         merged = None
         for source in sources:
             source_data = cls.read_json(source)
@@ -84,17 +115,42 @@ class Metadata:
                 merged = source_data
                 continue
 
-            for key, value in source_data.items():
-                if key not in merged:
-                    merged[key] = value
-                elif merged[key] != value:
-                    raise ValueError(f"divergent metadata for {key.id}")
+            for k, v2 in source_data._data.items():
+                if k not in merged:
+                    merged[k] = v2
+                    continue
 
-        merged.write_json(target, sort_keys=True)
+                v1 = merged[k]
+                if v1 == v2:
+                    continue
+                if v1["batch_count"] == v2["batch_count"]:
+                    if 1 == len(v1) and 1 < len(v2):
+                        merged[k] = v2
+                        continue
+                    if 1 < len(v1) and 1 == len(v2):
+                        continue
+
+                raise MetadataConflict(f"divergent metadata for {k.id}")
+
+        return merged
 
     @classmethod
-    def recover(cls, root: Path) -> Self:
-        return _DailyFileSystemScan(root, cls()).run()
+    def recover(cls, root: Path, *, verbose: bool = False) -> Self:
+        """
+        Recover the batch_count data for all daily releases stored under the
+        root directory.
+
+        This method inspects all directories and files matching the naming
+        convention for storing daily releases, i.e.,
+        "YYYY/mm/dd/YYYY-mm-dd-nnnnn.parquet", with the one-based months and
+        days always two decimal digits and the zero-based sequence numbers in
+        batch files always five decimal digits. It reports file system entities
+        that are files but should be directories and vice versa, empty
+        directories, month and day numbers that are out of range (accounting for
+        different months having different numbers of days, including February in
+        leap years), as well as missing month, day, and sequence numbers.
+        """
+        return _DailyFileSystemScan(root, cls(), verbose=verbose).run()
 
 
 _TWO_DIGITS = re.compile(r"^[0-9]{2}$")
@@ -102,19 +158,22 @@ _FOUR_DIGITS = re.compile(r"^[0-9]{4}$")
 _BATCH_FILE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{5}.parquet$")
 
 class _DailyFileSystemScan:
-    def __init__(self, root: Path, metadata: Metadata) -> None:
+    def __init__(self, root: Path, metadata: Metadata, *, verbose: bool = False) -> None:
         self._root = root
         self._first_date = None
         self._last_date = None
         self._metadata = metadata
         self._errors = []
+        self._verbose = verbose
 
     def error(self, msg: str) -> None:
         self._errors.append(msg)
+        if self._verbose:
+            print(f"ERROR: {msg}")
 
     def signal(self, msg: None | str = None) -> None:
         if msg:
-            self._errors.append(msg)
+            self.error(msg)
         if 0 < len(self._errors):
             raise ValueError("\n".join(self._errors))
 
@@ -175,7 +234,9 @@ class _DailyFileSystemScan:
             current = extract(child.name)
             if not min_value <= current <= max_value:
                 self.signal(f'"{child}" has invalid index')
-            if index is not None and index != current:
+            if index is None and min_value == 0 and current != 0:
+                self.error(f'"{child}" has index other than 0')
+            if index is not None and current != index:
                 self.error(f'entries of "{path}" are not consecutively numbered')
             index = current + 1
 
@@ -217,8 +278,14 @@ class _DailyFileSystemScan:
 
         key = f"{year}-{month:02}-{day:02}"
         self._metadata[key] = { "batch_count": batch_count }
+        if self._verbose:
+            print(f"{key}: {batch_count:6,d}")
 
 
 if __name__ == "__main__":
-    for k, v in Metadata.recover_daily(Path("/Volumes/dsa-sor-db/data"))._data.items():
-        print(f"{k}: {v['batch_count']:03}")
+    import sys
+
+    if len(sys.argv) != 2:
+        print("ERROR: invoke as `python -m shantay.metadata <directory-to-scan>`")
+    else:
+        Metadata.recover(Path(sys.argv[1]), verbose=True)
