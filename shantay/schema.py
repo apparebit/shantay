@@ -406,6 +406,18 @@ KEYWORDS_V2 = frozenset([
     "KEYWORD_OTHER",
 ])
 
+
+KEYWORDS_MINOR_PROTECTION = tuple([
+    "NO_KEYWORD",
+    "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS",
+    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
+    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE",
+    "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS",
+    "KEYWORD_UNSAFE_CHALLENGES",
+    "KEYWORD_OTHER",
+])
+
+
 class TerritorialScope(enum.Enum):
     EU = "EU"
     EEA = "EEA"
@@ -652,7 +664,7 @@ YesNo = pl.Enum([
     "No",
 ])
 
-COLUMNS = [
+COLUMNS = tuple([
     "uuid",
     "decision_visibility",
     "decision_visibility_other",
@@ -690,7 +702,7 @@ COLUMNS = [
     "platform_name",
     "platform_uid",
     "created_at",
-]
+])
 
 SCHEMA_OVERRIDES = {
     "decision_monetary": DecisionMonetary,
