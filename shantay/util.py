@@ -1,7 +1,6 @@
 import functools
 import inspect
-from pathlib import Path
-from typing import Any, Callable
+from typing import Callable
 
 
 def annotate_error[**P, R, F: Callable[P, R]](
