@@ -8,6 +8,7 @@ from typing import Any
 from .metadata import Metadata
 from .progress import Progress
 from .release import Release
+from .schedule import Schedule
 
 
 _logger = logging.getLogger("shantay")
@@ -21,10 +22,10 @@ class Task(enum.StrEnum):
 class Runner:
     def __init__(
         self,
+        *,
         archive: Path,
         batches: Path,
         progress: Progress,
-        *,
         id: int = 0,
     ) -> None:
         self._id = id
@@ -59,9 +60,9 @@ class Runner:
     # Startup
 
     def prepare(self) -> None:
-        _logger.info('runner %d staging: %s', self._id, self._staging)
-        _logger.info('runner %d archive: %s', self._id, self._archive)
-        _logger.info('runner %d batches: %s', self._id, self._batches)
+        _logger.info('runner=%d, staging="%s"', self._id, self._staging)
+        _logger.info('runner=%d, archive="%s"', self._id, self._archive)
+        _logger.info('runner=%d, batches="%s"', self._id, self._batches)
 
         self._staging.mkdir(parents=True, exist_ok=True)
         self._metadata = Metadata.setup(self._staging, self._batches)
@@ -80,13 +81,13 @@ class Runner:
             f"downloading {release.id}", "byte", with_rate=True,
         )
         size = release.download_archive(self._staging, self._progress)
-        _logger.info('downloaded all %d bytes of %s', size, release.archive)
+        _logger.info('downloaded bytes=%d, file="%s"', size, release.archive)
         self._progress.perform(f"validating release {release.id}")
         release.validate_archive(self._staging)
-        _logger.info('validated %s', release.archive)
+        _logger.info('validated file="%s"', release.archive)
         self._progress.perform(f"copying release {release.id} to archive")
         release.copy_archive(self._staging, self._archive)
-        _logger.info('archived %s', release.archive)
+        _logger.info('archived file="%s"', release.archive)
 
     def is_archive_staged(self, release: Release) -> bool:
         return (self._staging / release.directory / release.archive).exists()
@@ -99,10 +100,10 @@ class Runner:
 
         self._progress.perform(f"copying release {release.id} from archive to staging")
         release.copy_archive(self._archive, self._staging)
-        _logger.info('staged %s', release.archive)
+        _logger.info('staged file="%s"', release.archive)
         self._progress.perform(f"validating release {release.id}")
         release.validate_archive(self._staging)
-        _logger.info('validated %s', release.archive)
+        _logger.info('validated file="%s"', release.archive)
 
     def extract_batches(self, release: Release) -> None:
         assert self.is_archive_staged(release)
@@ -129,7 +130,7 @@ class Runner:
         self._metadata[release] = counters
         self._metadata.write_json(self._staging)
         _logger.info(
-            'extracted %d files with category data from %s',
+            'extracted batch_count=%d, source="%s"',
             batch_count, release.archive
         )
 
@@ -139,7 +140,7 @@ class Runner:
         ).start(batch_count)
         release.copy_extracted_data(self._staging, self._batches, batch_count, self._progress)
         _logger.info(
-            'archived %d files with category data for release %s',
+            'archived batch_count=%d, release="%s"',
             batch_count, release.id
         )
 
@@ -159,13 +160,14 @@ class Runner:
 
         shutil.rmtree(self._staging / release.directory)
         self._progress.perform(f"done with {release.id}").done()
+        return release
 
-    def analyze_batches(self, release: Release) -> Any:
-        batch_count = self.batch_count(release, check=True)
+    def analyze(self, schedule: Schedule) -> None:
+        monthly_schedule = schedule.to_monthly()
+        release_type = type(schedule.start)
+
         self._progress.activity(
-            f"analyzing {release.id}", f"analyzing {release.id}", "batch", with_rate=False
-        ).start(batch_count)
-
-        for index in range(batch_count):
-            result = release.analyze_extract(self._batches, index, result)
-            self._progress.step(index)
+            "analyzing monthly batches", "analyzing", "batch", with_rate=False
+        )
+        self._progress.start(schedule.months)
+        release_type.analyze_monthly(self._batches, monthly_schedule, self._progress)
