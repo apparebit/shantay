@@ -88,6 +88,8 @@ def _run(args: list[str]) -> None:
     options = _get_options(args)
 
     logging.basicConfig(
+        format='%(asctime)s [%(levelname)s] %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S',
         filename=options.logfile,
         encoding="utf8",
         level=logging.DEBUG if options.verbose else logging.INFO,
