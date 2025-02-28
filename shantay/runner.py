@@ -205,14 +205,14 @@ class Runner:
         release_type = type(schedule.start)
 
         self._progress.activity(
-            "analyzing monthly batches", "analyzing", "batch", with_rate=False
+            "analyzing monthly batches", "analyzing batches", "batch", with_rate=False
         )
         self._progress.start(monthly_schedule.months)
 
         collector = Collector()
         for index, month in enumerate(monthly_schedule):
             self.analyze_month(month=month, collector=collector, release_type=release_type)
-            self._progress.step(index + 1)
+            self._progress.step(index + 1, extra=month.id)
 
         return self.combine_months(
             schedule=monthly_schedule, collector=collector, release_type=release_type
