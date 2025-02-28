@@ -7,7 +7,8 @@ import traceback
 
 from .metadata import Metadata, MetadataConflict
 from .progress import Progress
-from .release import DownloadFailed, Schedule
+from .release import DownloadFailed
+from .schedule import Schedule
 from .sor import DailySoR
 from .runner import Task, Runner
 
@@ -48,7 +49,7 @@ def _get_options(args: list[str]) -> Options:
         "--pipelines",
         default=1,
         type=int,
-        help="set the number of parallel pipelines (currently ignored)"
+        help="set the number of parallel pipelines"
     )
     parser.add_argument(
         "--logfile",
@@ -94,28 +95,45 @@ def _run(args: list[str]) -> None:
 
     schedule = Schedule(DailySoR(options.start), DailySoR(options.stop))
 
-    progress = Progress(row=None)
-    runner = Runner(
-        archive=options.archive,
-        batches=options.batches,
-        progress=progress,
-    )
-    staging_directories = [runner.staging]
+    if 1 < options.pipelines:
+        import multiprocessing as mp
+        from .runpool import RunPool
+        context = mp.get_context("spawn")
 
-    runner.prepare()
-    for release in schedule.releases():
-        try:
-            if options.task is Task.PREPARE:
-                runner.prepare_batches(release)
-            elif options.task is Task.ANALYZE:
-                runner.analyze_batches(release)
-        except (DownloadFailed, MetadataConflict) as x:
-            raise
-        except Exception as x:
-            x.add_note(
-                f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
-            )
-            raise
+        pool = RunPool(
+            size=options.pipelines,
+            archive=options.archive,
+            batches=options.batches,
+            schedule=schedule,
+            task=options.task,
+            context=context,
+        )
+
+        staging_directories = [p.staging for p in pool.processes()]
+    else:
+        progress = Progress(row=None)
+        runner = Runner(
+            archive=options.archive,
+            batches=options.batches,
+            progress=progress,
+        )
+        runner.prepare()
+        staging_directories = [runner.staging]
+
+        for release in schedule:
+            try:
+                if options.task is Task.PREPARE:
+                    runner.prepare_batches(release)
+                elif options.task is Task.ANALYZE:
+                    runner.analyze_batches(release)
+            except (DownloadFailed, MetadataConflict) as x:
+                raise
+            except Exception as x:
+                x.add_note(
+                    f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
+                )
+                raise
+
     if options.task is Task.PREPARE:
         Metadata.merge(*staging_directories).write_json(options.batches)
 
