@@ -1,10 +1,12 @@
 from collections import Counter
+from collections.abc import Iterator
 import csv
 import logging
 from pathlib import Path
 
 import polars as pl
 
+from .schedule import MonthlySchedule
 from .progress import NO_PROGRESS, Progress
 from .release import DailyRelease
 from .schema import (
@@ -15,6 +17,19 @@ from .util import annotate_error
 
 
 _logger = logging.getLogger("shantay")
+
+
+class Collection:
+    def __init__(self) -> None:
+        self._series = {}
+
+    def collect(self, **kwargs: pl.DataFrame) -> None:
+        for k, v in kwargs.items():
+            self._series.setdefault(k, []).append(v)
+
+    def consume(self) -> Iterator[tuple[str, pl.DataFrame]]:
+        for k, v in self._series.items():
+            yield k, pl.concat(v, how="vertical")
 
 
 class DailySoR(DailyRelease):
@@ -292,13 +307,24 @@ class DailySoR(DailyRelease):
             if actual != expected:
                 raise TypeError(f"column {name} has type {actual} not {expected}")
 
+    @classmethod
     @annotate_error(filename_arg="root")
-    def analyze_extract(self, root: Path, index: int) -> None:
-        path = root / self.batch_directory / self.batch(index)
-        frame = pl.read_parquet(path)
-        frame = frame.with_columns(
-            pl.col("content_language").cast(ContentLanguageType)
-        )
-        tmp = path.with_suffix(".tmp.parquet")
-        frame.write_parquet(tmp)
-        tmp.replace(path)
+    def analyze_monthly(cls, root: Path, schedule: MonthlySchedule, progress: Progress) -> None:
+        frames = Collection()
+
+        for index, month in enumerate(schedule):
+            df = pl.read_parquet(month.daily_glob(root))
+            with_keywords = df.filter(pl.col("category_specification").list.len() != 0)
+
+            frames.collect(
+                all_platforms=df.select(pl.col("platform_name").unique()),
+                platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
+            )
+
+            progress.step(index + 1)
+
+        result = {}
+        for key, value in frames.consume():
+            if key in ("all_platforms", "platforms_with_keywords"):
+                result[key] = value.select(pl.col("platform_name").unique())
+
