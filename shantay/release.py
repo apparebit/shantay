@@ -223,10 +223,6 @@ class Release(metaclass=ABCMeta):
                 return False
         return True
 
-    @abstractmethod
-    def analyze_extract[R](self, root: Path, index: int, result: None | R) -> R:
-        """Analyze the batch with the given index."""
-
     @annotate_error(filename_arg="target")
     def copy_extracted_data(
         self,
@@ -347,17 +343,3 @@ class DailyRelease(Release):
 
     def __next__(self) -> Self:
         return type(self)(self._date + dt.timedelta(days=1))
-
-
-@dataclass(frozen=True, slots=True)
-class Schedule[R: Release]:
-    start: R
-    stop: R
-
-    def releases(self) -> Iterator[R]:
-        cursor = self.start
-        while True:
-            yield cursor
-            if cursor == self.stop:
-                break
-            cursor = next(cursor)
