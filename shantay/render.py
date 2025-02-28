@@ -3,6 +3,22 @@ from IPython.display import HTML
 import polars as pl
 
 
+def scale(value: float) -> tuple[float, str]:
+    """Scale the value to three digits before the decimal and a unit prefix."""
+    if value < 0.001:
+        return value * 1_000_000, "micro"
+    elif value < 1:
+        return value * 1_000, "milli"
+    elif value < 1_000:
+        return value, ""
+    elif value < 1_000_000:
+        return value / 1_000, "kilo"
+    elif value < 1_000_000_000:
+        return value / 1_000_000, "mega"
+    else:
+        return value / 1_000_000_000, "giga"
+
+
 def to_html(df: pl.DataFrame) -> HTML:
     df = df.select(
         pl.all().exclude(

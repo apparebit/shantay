@@ -2,6 +2,8 @@ import shutil
 import time
 from typing import Callable, Self
 
+from .render import scale
+
 _BLOCKS = " ▎▌▊█"
 
 def _bar(percent: float, color: str = "38;5;69") -> str:
@@ -16,20 +18,6 @@ def _bar(percent: float, color: str = "38;5;69") -> str:
         bar += _BLOCKS[partial]
     bar = bar.ljust(25, _BLOCKS[0])
     return f"┫\x1b[{color}m{bar}\x1b[39m┣ {percent:5.1f}%"
-
-
-def _scale(value: float) -> tuple[float, str]:
-    """Scale the value to three digits before the decimal and a unit prefix."""
-    if value < 0.001:
-        return value * 1_000_000, "micro"
-    elif value < 1:
-        return value * 1_000, "milli"
-    elif value < 1_000:
-        return value, ""
-    elif value < 1_000_000:
-        return value / 1_000, "kilo"
-    else:
-        return value / 1_000_000, "mega"
 
 
 _SECOND_NS = 1_000_000_000
@@ -136,7 +124,7 @@ class Progress:
             msg += _bar(processed / self._total * 100)
             columns += 34
         else:
-            value, prefix = _scale(processed)
+            value, prefix = scale(processed)
             if value == processed:
                 s = f"{processed:,} {self._unit}"
             else:
@@ -146,7 +134,7 @@ class Progress:
 
         # Add rate
         if self._with_rate and self._rate != 0:
-            value, prefix = _scale(self._rate)
+            value, prefix = scale(self._rate)
             s = f" at {value:,.1f} {prefix}{self._unit}/s"
             if columns + len(s) < self._size[0]:
                 msg += s
