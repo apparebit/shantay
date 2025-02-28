@@ -112,29 +112,23 @@ def _run(args: list[str]) -> None:
         )
 
         staging_directories = [p.staging for p in pool.processes()]
-    else:
-        progress = Progress(row=None)
-        runner = Runner(
-            archive=options.archive,
-            batches=options.batches,
-            progress=progress,
-        )
-        runner.prepare()
-        staging_directories = [runner.staging]
+        if options.task is Task.PREPARE:
+            Metadata.merge(*staging_directories).write_json(options.batches)
+        return
 
-        for release in schedule:
-            try:
-                if options.task is Task.PREPARE:
-                    runner.prepare_batches(release)
-                elif options.task is Task.ANALYZE:
-                    runner.analyze_batches(release)
-            except (DownloadFailed, MetadataConflict) as x:
-                raise
-            except Exception as x:
-                x.add_note(
-                    f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
-                )
-                raise
+    progress = Progress(row=None)
+    runner = Runner(
+        archive=options.archive,
+        batches=options.batches,
+        progress=progress,
+    )
+    runner.start()
+    staging_directories = [runner.staging]
+
+    if options.task is Task.PREPARE:
+        runner.prepare(schedule)
+    elif options.task is Task.ANALYZE:
+        runner.analyze(schedule)
 
     if options.task is Task.PREPARE:
         Metadata.merge(*staging_directories).write_json(options.batches)

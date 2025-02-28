@@ -5,10 +5,11 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from .metadata import Metadata
+from .metadata import Metadata, MetadataConflict
 from .progress import Progress
-from .release import Release
-from .schedule import Schedule
+from .release import DownloadFailed, Release
+from .schedule import MonthlySchedule, Schedule, YearMonth
+from .sor import Collector
 
 
 _logger = logging.getLogger("shantay")
@@ -59,7 +60,7 @@ class Runner:
     # ----------------------------------------------------------------------------------
     # Startup
 
-    def prepare(self) -> None:
+    def start(self) -> None:
         _logger.info('runner=%d, staging="%s"', self._id, self._staging)
         _logger.info('runner=%d, archive="%s"', self._id, self._archive)
         _logger.info('runner=%d, batches="%s"', self._id, self._batches)
@@ -162,12 +163,57 @@ class Runner:
         self._progress.perform(f"done with {release.id}").done()
         return release
 
-    def analyze(self, schedule: Schedule) -> None:
+    def prepare(self, schedule: Schedule) -> None:
+        for release in schedule:
+            try:
+                self.prepare_batches(release)
+            except (DownloadFailed, MetadataConflict) as x:
+                raise
+            except Exception as x:
+                x.add_note(
+                    f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
+                )
+                raise
+
+    def analyze_month(
+        self,
+        *,
+        month: YearMonth,
+        collector: Collector,
+        release_type: type,
+    ) -> None:
+        """
+        Analyze the category data for the given month, accumulating intermediate
+        results with the collector instance.
+        """
+        release_type.analyze_month(root=self._batches, month=month, collector=collector)
+
+    def combine_months(
+        self,
+        *,
+        schedule: MonthlySchedule,
+        collector: Collector,
+        release_type: type,
+    ) -> Any:
+        """Combine the monthly analysis results into final results."""
+        return release_type.combine_months(
+            root=self._batches, schedule=schedule, collector=collector
+        )
+
+    def analyze(self, schedule: Schedule) -> Any:
         monthly_schedule = schedule.to_monthly()
         release_type = type(schedule.start)
 
         self._progress.activity(
             "analyzing monthly batches", "analyzing", "batch", with_rate=False
         )
-        self._progress.start(schedule.months)
-        release_type.analyze_monthly(self._batches, monthly_schedule, self._progress)
+        self._progress.start(monthly_schedule.months)
+
+        collector = Collector()
+        for index, month in enumerate(monthly_schedule):
+            self.analyze_month(month=month, collector=collector, release_type=release_type)
+            self._progress.step(index + 1)
+
+        return self.combine_months(
+            schedule=monthly_schedule, collector=collector, release_type=release_type
+        )
