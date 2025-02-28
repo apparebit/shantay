@@ -1,14 +1,14 @@
 from collections import Counter
-from collections.abc import Iterator
 import csv
 import logging
 from pathlib import Path
 
 import polars as pl
 
-from .schedule import MonthlySchedule
+from .collector import Collector
 from .progress import NO_PROGRESS, Progress
 from .release import DailyRelease
+from .schedule import YearMonth, MonthlySchedule
 from .schema import (
     BASE_SCHEMA, ContentType, ContentLanguageType, CountryGroups, DecisionVisibility,
     Keyword, StatementCategory, TerritorialScopeType, SCHEMA, SCHEMA_OVERRIDES
@@ -17,19 +17,6 @@ from .util import annotate_error
 
 
 _logger = logging.getLogger("shantay")
-
-
-class Collection:
-    def __init__(self) -> None:
-        self._series = {}
-
-    def collect(self, **kwargs: pl.DataFrame) -> None:
-        for k, v in kwargs.items():
-            self._series.setdefault(k, []).append(v)
-
-    def consume(self) -> Iterator[tuple[str, pl.DataFrame]]:
-        for k, v in self._series.items():
-            yield k, pl.concat(v, how="vertical")
 
 
 class DailySoR(DailyRelease):
@@ -103,7 +90,7 @@ class DailySoR(DailyRelease):
             .collect()
             .item()
         )
-        _logger.debug('counted %d rows in CSV files in "%s"', row_count, name)
+        _logger.debug('counted CSV rows=%d, file="%s"', row_count, name)
         return row_count
 
     def _extract_rows_with_keyword(
@@ -124,7 +111,7 @@ class DailySoR(DailyRelease):
             .collect()
             .item()
         )
-        _logger.debug('counted %d rows with keyword in CSV files in "%s"', row_count, name)
+        _logger.debug('counted CSV rows_with_keyword=%d, file="%s"', row_count, name)
         return row_count
 
     def _extract_frame(
@@ -147,12 +134,12 @@ class DailySoR(DailyRelease):
         try:
             frame = self._finish_frame(self._scan_csv_with_polars(csv_files, category))
             _logger.debug(
-                'extracted %d rows of category data from "%s" with Polars fast path',
+                'extracted rows=%d, using="Pola.rs fast path", source="%s"',
                 frame.height, name
             )
             return frame
         except Exception as x:
-            _logger.warning('failed fast path for ingesting "%s" with Polars', name, exc_info=x)
+            _logger.warning('using="Pola.rs fast path", source="%s" failed', name, exc_info=x)
 
         # Slow path: Read each CSV file by itself, first using Polars again but
         # falling back to Python's standard library when that fails.
@@ -171,24 +158,24 @@ class DailySoR(DailyRelease):
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted %d rows of category data from "%s" with Polars',
+                    'extracted rows=%d, using="Pola.rs", source="%s"',
                     frame.height, file_path.name
                 )
                 continue
             except:
-                _logger.warning('failed to read "%s" with Polars', file_path.name)
+                _logger.warning('using="Pola.rs", source="%s" failed', file_path.name)
 
             try:
                 frame = self._finish_frame(self._read_csv_row_by_row(file_path, category))
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted %d rows of category data from "%s" with Python\'s CSV parser',
+                    'extracted rows=%d, using="Python\'s CSV module", source="%s"',
                     frame.height, file_path.name
                 )
             except Exception as x:
                 _logger.error(
-                    'also failed to read "%s" with Python\'s CSV parser',
+                    'using="Python\'s CSV module", source="%s" failed',
                     file_path.name, exc_info=x
                 )
                 raise
@@ -309,22 +296,30 @@ class DailySoR(DailyRelease):
 
     @classmethod
     @annotate_error(filename_arg="root")
-    def analyze_monthly(cls, root: Path, schedule: MonthlySchedule, progress: Progress) -> None:
-        frames = Collection()
+    def analyze_month(cls, root: Path, month: YearMonth, collector: Collector) -> None:
+        df = pl.read_parquet(month.daily_glob(root))
+        with_keywords = df.filter(pl.col("category_specification").list.len() != 0)
 
-        for index, month in enumerate(schedule):
-            df = pl.read_parquet(month.daily_glob(root))
-            with_keywords = df.filter(pl.col("category_specification").list.len() != 0)
+        collector.month(month)
+        collector.values(
+            platforms=df.select(pl.col("platform_name").n_unique()).item(),
+            platforms_with_keywords=with_keywords.select(pl.col("platform_name").n_unique()).item(),
+        )
+        collector.frames(
+            platforms=df.select(pl.col("platform_name").unique()),
+            platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
+        )
 
-            frames.collect(
-                all_platforms=df.select(pl.col("platform_name").unique()),
-                platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
-            )
+    @classmethod
+    @annotate_error(filename_arg="root")
+    def combine_months(cls, root: Path, schedule: MonthlySchedule, collector: Collector) -> pl.DataFrame:
+        from IPython.display import display
 
-            progress.step(index + 1)
+        for key, value in collector.consume_frames():
+            if key in ("platforms", "platforms_with_keywords"):
+                df = value.select(pl.col("platform_name").unique())
+                display(df)
 
-        result = {}
-        for key, value in frames.consume():
-            if key in ("all_platforms", "platforms_with_keywords"):
-                result[key] = value.select(pl.col("platform_name").unique())
-
+        df = collector.frame_for_values()
+        display(df)
+        return df
