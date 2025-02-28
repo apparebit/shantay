@@ -3,6 +3,10 @@ import datetime as dt
 import polars as pl
 from .schedule import YearMonth
 
+
+_DEBUG = False
+
+
 class Collector:
     """
     A class to simplify the piecemeal construction of data series and frames.
@@ -30,6 +34,9 @@ class Collector:
 
     def frame_for_values(self) -> pl.DataFrame:
         """Return a data frame comprising individually registered values."""
+        if _DEBUG:
+            for k, v in self._series.items():
+                print(f"{k:>50} :: {len(v)}")
         return pl.DataFrame({
             "date": self._timeline,
             **self._series

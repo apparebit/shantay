@@ -11,7 +11,8 @@ from .release import DailyRelease
 from .schedule import YearMonth, MonthlySchedule
 from .schema import (
     BASE_SCHEMA, ContentType, ContentLanguageType, CountryGroups, DecisionVisibility,
-    Keyword, StatementCategory, TerritorialScopeType, SCHEMA, SCHEMA_OVERRIDES
+    EXTRA_KEYWORDS_MINOR_PROTECTION, Keyword, KEYWORDS_MINOR_PROTECTION,
+    StatementCategory, TerritorialScopeType, SCHEMA, SCHEMA_OVERRIDES
 )
 from .util import annotate_error
 
@@ -317,13 +318,17 @@ class DailySoR(DailyRelease):
             keyword_total += count
             keyword_counts[keyword.lower()] = count
 
+        # Make sure that all columns are represented so that they have same length
+        for keyword in KEYWORDS_MINOR_PROTECTION + EXTRA_KEYWORDS_MINOR_PROTECTION:
+            keyword_counts.setdefault(keyword.lower(), 0)
+
         # Actually collect statistics
         collector.month(month)
         collector.values(
             platforms=df.select(pl.col("platform_name").n_unique()).item(),
             platforms_with_keywords=with_keywords.select(pl.col("platform_name").n_unique()).item(),
             # Rows with keywords, all keywords, and max keywords per row
-            with_keyword=with_keywords.count().item(),
+            with_keyword=with_keywords.select(pl.col("category_specification")).count().item(),
             keyword_no=keyword_total,
             max_keywords=df.select(pl.col("category_specification").list.len().max()).item(),
             # Detailed breakdown from above
@@ -339,6 +344,7 @@ class DailySoR(DailyRelease):
     def combine_months(cls, root: Path, schedule: MonthlySchedule, collector: Collector) -> pl.DataFrame:
         from IPython.display import display
 
+        print("\n")
         for key, value in collector.consume_frames():
             if key in ("platforms", "platforms_with_keywords"):
                 df = value.select(pl.col("platform_name").unique())
