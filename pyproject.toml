@@ -11,6 +11,7 @@ dynamic = ["version"]
 dependencies = [
     "altair", # graphics
     "polars", # data frames
+    "pyarrow", # underlying memory representation
     "great_tables", # table formatting
     "ipython", # interactive use
     "ipykernel", # notebooks
