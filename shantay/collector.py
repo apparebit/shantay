@@ -15,7 +15,8 @@ class Collector:
 
     def month(self, year_month: YearMonth) -> None:
         """Register year-month for subsequent values() and frames()."""
-        self._timeline.append(dt.date(year_month.year, year_month.month, 1))
+        # Using mid-month as the date is less bad than the extremes
+        self._timeline.append(dt.date(year_month.year, year_month.month, 15))
 
     def values(self, **kwargs: float) -> None:
         """Register values for named series."""
