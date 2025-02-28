@@ -4,7 +4,7 @@ import datetime as dt
 from pathlib import Path
 from typing import Self
 
-from .release import Release
+from .release import DailyRelease, Release
 
 @dataclass(frozen=True, slots=True, order=True)
 class YearMonth:
@@ -27,13 +27,15 @@ class YearMonth:
             raise ValueError(f"invalid month {self.month}")
 
     @classmethod
-    def of(cls, year: int | dt.date, month: None | int = None) -> Self:
+    def of(cls, year: int | str | dt.date, month: None | int = None) -> Self:
         """Create a new year-month from a date or a year and month."""
+        if isinstance(year, str):
+            year = dt.date.fromisoformat(year)
         if isinstance(year, dt.date):
-            cls(year.year, year.month)
+            return cls(year.year, year.month)
         else:
             assert isinstance(month, int)
-            cls(year, month)
+            return cls(year, month)
 
     @property
     def id(self) -> str:
@@ -56,31 +58,30 @@ class YearMonth:
         return type(self)(year, month)
 
     def __sub__(self, other: object) -> int | Self:
-        if isinstance(other, int):
-            years, months = divmod(other, 12)
-            year = self.year - years
-            month = self.month - months
-            if month < 1:
-                year -= 1
-                month += 12
-            return type(self)(year, month)
-
         if isinstance(other, YearMonth):
             return (self.year - other.year) * 12 + self.month - other.month
+        if not isinstance(other, int):
+            return NotImplemented
 
-        return NotImplemented
+        years, months = divmod(other, 12)
+        year = self.year - years
+        month = self.month - months
+        if month < 1:
+            year -= 1
+            month += 12
+        return type(self)(year, month)
 
     def __add__(self, other: object) -> Self:
-        if isinstance(other, int):
-            years, months = divmod(other, 12)
-            year = self.year + years
-            month = self.month + months
-            if 12 < month:
-                year += 1
-                month -= 12
-            return type(self)(year, month)
+        if not isinstance(other, int):
+            return NotImplemented
 
-        return NotImplemented
+        years, months = divmod(other, 12)
+        year = self.year + years
+        month = self.month + months
+        if 12 < month:
+            year += 1
+            month -= 12
+        return type(self)(year, month)
 
     def __radd__(self, other: object) -> Self:
         return self.__add__(other)
@@ -127,7 +128,9 @@ class Schedule[R: Release]:
 
     def to_monthly(self) -> MonthlySchedule:
         """Convert this release-based schedule to a monthly schedule."""
-        return MonthlySchedule(YearMonth.of(self.start), YearMonth.of(self.stop))
+        if isinstance(self.start, DailyRelease):
+            return MonthlySchedule(YearMonth.of(self.start.date), YearMonth.of(self.stop.date))
+        raise NotImplementedError
 
     def __iter__(self) -> Iterator[R]:
         cursor = self.start
