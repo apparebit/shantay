@@ -143,6 +143,8 @@ def _run(args: list[str]) -> None:
         Metadata.merge(*staging_directories).write_json(options.batches)
 
 def run(args: list[str]) -> int:
+    # Hide cursor
+    print("\x1b[?25l", end="", flush=True)
     try:
         _run(args)
         return 0
@@ -152,3 +154,6 @@ def run(args: list[str]) -> int:
     except Exception as x:
         print("".join(traceback.format_exception(x)))
         return 1
+    finally:
+        # Show cursor again
+        print("\x1b[?25h", end="", flush=True)
