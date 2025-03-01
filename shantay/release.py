@@ -132,7 +132,7 @@ class Release(metaclass=ABCMeta):
     def _download_failed(self, artifact: str, url: str, status: int) -> NoReturn:
         """Signal that the download failed."""
         _logger.error(
-            'failed to download %s=<%s>, status=%d', artifact, url, status
+            'failed to download type="%s", status=%d, url="%s"', artifact, status, url
         )
         raise DownloadFailed(
             f'download of {artifact} "{url}" failed with status {status}'
@@ -152,7 +152,7 @@ class Release(metaclass=ABCMeta):
             actual = hashlib.file_digest(file, algo).hexdigest()
 
         if expected != actual:
-            _logger.error('unable to validate digest=%s, archive="%s"', archive, algo)
+            _logger.error('failed to validate digest=%s, file="%s"', algo, archive)
             raise ValueError(f'digest {actual} does not match {expected}')
 
     @annotate_error(filename_arg="target")
@@ -192,7 +192,7 @@ class Release(metaclass=ABCMeta):
                     kind = "file"
                     with open(output / name, mode="wb") as target_file:
                         shutil.copyfileobj(source_file, target_file)
-                _logger.debug('unarchived kind="%s", name="%s"', kind, name)
+                _logger.debug('unarchived type="%s", file="%s"', kind, name)
 
     @abstractmethod
     def extract_data_step_count(self) -> int:

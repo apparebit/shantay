@@ -91,7 +91,7 @@ class DailySoR(DailyRelease):
             .collect()
             .item()
         )
-        _logger.debug('counted CSV rows=%d, file="%s"', row_count, name)
+        _logger.debug('counted filter="all", rows=%d, file="%s"', row_count, name)
         return row_count
 
     def _extract_rows_with_keyword(
@@ -112,7 +112,7 @@ class DailySoR(DailyRelease):
             .collect()
             .item()
         )
-        _logger.debug('counted CSV rows_with_keyword=%d, file="%s"', row_count, name)
+        _logger.debug('counted filter="with keyword" rows=%d, file="%s"', row_count, name)
         return row_count
 
     def _extract_frame(
@@ -135,12 +135,15 @@ class DailySoR(DailyRelease):
         try:
             frame = self._finish_frame(self._scan_csv_with_polars(csv_files, category))
             _logger.debug(
-                'extracted rows=%d, using="Pola.rs fast path", source="%s"',
+                'extracted rows=%d, using="Pola.rs fast path", file="%s"',
                 frame.height, name
             )
             return frame
         except Exception as x:
-            _logger.warning('using="Pola.rs fast path", source="%s" failed', name, exc_info=x)
+            _logger.warning(
+                'failed to read CSV using="Pola.rs with glob", file="%s"',
+                name, exc_info=x
+            )
 
         # Slow path: Read each CSV file by itself, first using Polars again but
         # falling back to Python's standard library when that fails.
@@ -159,24 +162,24 @@ class DailySoR(DailyRelease):
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted rows=%d, using="Pola.rs", source="%s"',
+                    'extracted rows=%d, using="Pola.rs", file="%s"',
                     frame.height, file_path.name
                 )
                 continue
             except:
-                _logger.warning('using="Pola.rs", source="%s" failed', file_path.name)
+                _logger.warning('failed to read CSV using="Pola.rs", file="%s"', file_path.name)
 
             try:
                 frame = self._finish_frame(self._read_csv_row_by_row(file_path, category))
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted rows=%d, using="Python\'s CSV module", source="%s"',
+                    'extracted rows=%d, using="Python\'s CSV module", file="%s"',
                     frame.height, file_path.name
                 )
             except Exception as x:
                 _logger.error(
-                    'using="Python\'s CSV module", source="%s" failed',
+                    'failed to parse using="Python\'s CSV module", file="%s"',
                     file_path.name, exc_info=x
                 )
                 raise

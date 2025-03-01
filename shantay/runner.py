@@ -61,9 +61,9 @@ class Runner:
     # Startup
 
     def start(self) -> None:
-        _logger.info('runner=%d, staging="%s"', self._id, self._staging)
-        _logger.info('runner=%d, archive="%s"', self._id, self._archive)
-        _logger.info('runner=%d, batches="%s"', self._id, self._batches)
+        _logger.info('runner=%d, key="staging", value="%s"', self._id, self._staging)
+        _logger.info('runner=%d, key="archive", value="%s"', self._id, self._archive)
+        _logger.info('runner=%d, key="batches", value="%s"', self._id, self._batches)
 
         self._staging.mkdir(parents=True, exist_ok=True)
         self._metadata = Metadata.setup(self._staging, self._batches)
@@ -130,20 +130,14 @@ class Runner:
         self._progress.perform(f"updating batch metadata for release {release.id}")
         self._metadata[release] = counters
         self._metadata.write_json(self._staging)
-        _logger.info(
-            'extracted batch_count=%d, source="%s"',
-            batch_count, release.archive
-        )
+        _logger.info('extracted batch_count=%d, file="%s"', batch_count, release.archive)
 
         self._progress.activity(
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
         ).start(batch_count)
         release.copy_extracted_data(self._staging, self._batches, batch_count, self._progress)
-        _logger.info(
-            'archived batch_count=%d, release="%s"',
-            batch_count, release.id
-        )
+        _logger.info('archived batch_count=%d, release="%s"', batch_count, release.id)
 
     def prepare_batches(self, release: Release) -> None:
         if (
@@ -152,7 +146,7 @@ class Runner:
         ):
             return
 
-        _logger.debug('preparing data for release %s', release.id)
+        _logger.debug('preparing release="%s"', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 

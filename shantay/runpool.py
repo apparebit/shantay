@@ -68,11 +68,14 @@ class Process:
     def fail(self, x: Exception) -> None:
         id = self._release.id
         if isinstance(x, DownloadFailed):
-            _logger.error(f'download of release %s failed (%s)', id, x)
+            _logger.error(f'failed to download release="%s", reason="%s"', id, x)
         elif isinstance(x, MetadataConflict):
-            _logger.error(f'merging metadata for release %s failed (%s)', id, x)
+            _logger.error(f'failed to merge metadata release="%s", reason="%s"', id, x)
         else:
-            _logger.error(f'%s data for release %s failed', id, exc_info=x)
+            _logger.error(
+                f'failed task="%s", release="%s", reason="%s"',
+                self._task, id, x, exc_info=x
+            )
 
         if self._pool is None:
             self._runner = None
@@ -81,7 +84,7 @@ class Process:
             return
 
         if 2 < self._tries:
-            _logger.info('moving on to next release')
+            _logger.info('giving up retrying task="%s", release="%s"', self._task, id)
             return self.run()
 
         self._tries += 1
