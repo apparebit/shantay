@@ -48,9 +48,9 @@ class DailySoR(DailyRelease):
         root: Path,
         index: int,
         name: str,
+        category: str,
         progress: Progress = NO_PROGRESS
     ) -> None:
-        category = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
         path = root / self.working_directory
         csv_files = f"{path}/sor-global-{self.id}-full-{index:05}-*.csv"
 

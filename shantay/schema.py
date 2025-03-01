@@ -83,6 +83,18 @@ StatementCategory = pl.Enum([
 ])
 
 
+def normalize_category(category: str) -> str:
+    """Normalize the given category to a schema-approved one."""
+    cat = category.upper()
+    if cat.startswith("CATEGORY_"):
+        cat = f"STATEMENT_{cat}"
+    elif not cat.startswith("STATEMENT_CATEGORY_"):
+        cat = f"STATEMENT_CATEGORY_{cat}"
+    if cat not in StatementCategory.categories:
+        raise ValueError(f'"{category}" does not match any valid statement categories')
+    return cat
+
+
 Keyword = pl.Enum([
     # --- Animal welfare
     "KEYWORD_ANIMAL_HARM",
@@ -673,6 +685,7 @@ YesNo = pl.Enum([
     "No",
 ])
 
+
 COLUMNS = tuple([
     "uuid",
     "decision_visibility",
@@ -736,17 +749,6 @@ def base_schema() -> pl.Schema:
     return pl.Schema(schema)
 
 BASE_SCHEMA = base_schema()
-
-
-DATETIMES = {
-    "end_date_visibility_restriction": pl.Datetime(time_unit="ms"),
-    "end_date_monetary_restriction": pl.Datetime(time_unit="ms"),
-    "end_date_service_restriction": pl.Datetime(time_unit="ms"),
-    "end_date_account_restriction": pl.Datetime(time_unit="ms"),
-    "content_date": pl.Datetime(time_unit="ms"),
-    "application_date": pl.Datetime(time_unit="ms"),
-    "created_at": pl.Datetime(time_unit="ms"),
-}
 
 
 SCHEMA = pl.Schema({

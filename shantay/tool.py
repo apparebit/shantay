@@ -9,6 +9,7 @@ from .metadata import Metadata, MetadataConflict
 from .progress import Progress
 from .release import DownloadFailed
 from .schedule import Schedule
+from .schema import normalize_category
 from .sor import DailySoR
 from .runner import Task, Runner
 
@@ -16,6 +17,7 @@ from .runner import Task, Runner
 @dataclass(frozen=True, slots=True)
 class Options:
     task: Task
+    category: str
     archive: Path
     batches: Path
     start: dt.date
@@ -60,7 +62,13 @@ def _get_options(args: list[str]) -> Options:
     parser.add_argument(
         "-v", "--verbose",
         action="store_true",
-        help="enable verbose logging"
+        help="enable verbose logging, which usually is a good idea"
+    )
+    parser.add_argument(
+        "--category",
+        default="protection_of_minors",
+        help="set category for extracting data (which may omit STATEMENT_CATEGORY_ prefix "
+        "and be written in lower case)",
     )
     parser.add_argument(
         "task",
@@ -73,6 +81,7 @@ def _get_options(args: list[str]) -> Options:
 
     return Options(
         task=Task(raw_options.task),
+        category=normalize_category(raw_options.category),
         archive=raw_options.archive if raw_options.archive else Path.cwd() / "dsa-db-archive",
         batches=raw_options.batches if raw_options.batches else Path.cwd() / "dsa-db-batches",
         start=dt.date.fromisoformat(raw_options.start) if raw_options.start
@@ -126,7 +135,7 @@ def _run(args: list[str]) -> None:
     staging_directories = [runner.staging]
 
     if options.task is Task.PREPARE:
-        runner.prepare(schedule)
+        runner.prepare(options.category, schedule)
     elif options.task is Task.ANALYZE:
         runner.analyze(schedule)
 

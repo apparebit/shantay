@@ -106,7 +106,7 @@ class Runner:
         release.validate_archive(self._staging)
         _logger.info('validated file="%s"', release.archive)
 
-    def extract_batches(self, release: Release) -> None:
+    def extract_batches(self, category: str, release: Release) -> None:
         assert self.is_archive_staged(release)
 
         filenames = release.archived_files(self._staging)
@@ -123,7 +123,9 @@ class Runner:
         for index, name in enumerate(filenames):
             self._progress.step(steps * index, "unarchiving data")
             release.unarchive_file(self._staging, index, name)
-            counters += release.extract_data(self._staging, index, name, self._progress)
+            counters += release.extract_data(
+                self._staging, index, name, category, self._progress
+            )
 
             shutil.rmtree(self._staging / release.working_directory)
 
@@ -139,7 +141,7 @@ class Runner:
         release.copy_extracted_data(self._staging, self._batches, batch_count, self._progress)
         _logger.info('archived batch_count=%d, release="%s"', batch_count, release.id)
 
-    def prepare_batches(self, release: Release) -> None:
+    def prepare_batches(self, category: str, release: Release) -> None:
         if (
             release in self._metadata
             and release.extracted_data_exits(self._batches, self._metadata.batch_count(release))
@@ -151,16 +153,16 @@ class Runner:
             self.download_archive(release)
 
         self.stage_archive(release)
-        self.extract_batches(release)
+        self.extract_batches(category, release)
 
         shutil.rmtree(self._staging / release.directory)
         self._progress.perform(f"done with {release.id}").done()
         return release
 
-    def prepare(self, schedule: Schedule) -> None:
+    def prepare(self, category: str, schedule: Schedule) -> None:
         for release in schedule:
             try:
-                self.prepare_batches(release)
+                self.prepare_batches(category, release)
             except (DownloadFailed, MetadataConflict) as x:
                 raise
             except Exception as x:
