@@ -359,7 +359,7 @@ class DailySoR(DailyRelease):
                 series = value.select(pl.col("platform_name").unique())
                 print(f"{key} reporting category SoRs:")
                 for index in range(series.height):
-                    print(f"    {series.item(index)}")
+                    print(f"    {series.item(index, 0)}")
                 print()
             else:
                 raise ValueError(f"unknown collection {key}")
