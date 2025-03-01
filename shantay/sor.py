@@ -356,14 +356,18 @@ class DailySoR(DailyRelease):
         print("\n")
         for key, value in collector.consume_frames():
             if key in ("platforms", "platforms_with_keywords"):
-                df = value.select(pl.col("platform_name").unique())
+                series = value.select(pl.col("platform_name").unique())
                 print(f"{key} reporting category SoRs:")
-                for v in df.select(pl.col("platform_name")):
-                    print(f"    {v}")
+                for index in range(series.height):
+                    print(f"    {series.item(index)}")
+                print()
             else:
                 raise ValueError(f"unknown collection {key}")
 
         df = collector.frame_for_values()
-        df.write_parquet(root / "meta.parquet")
+        tmp = root / "meta.tmp.parquet"
+        df.write_parquet(tmp)
+        tmp.replace(root / "meta.parquet")
+
         display(df)
         return df
