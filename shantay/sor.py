@@ -302,23 +302,24 @@ class DailySoR(DailyRelease):
     @annotate_error(filename_arg="root")
     def analyze_month(cls, root: Path, month: YearMonth, collector: Collector) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
-        df = pl.read_parquet(month.daily_glob(root))
-        with_keywords = df.filter(pl.col("category_specification").list.len() != 0)
+        frame = pl.read_parquet(month.daily_glob(root))
+        with_keywords = frame.filter(pl.col("category_specification").list.len() != 0)
 
         # Collect value counts for keywords
         keyword_counts = {}
-        keyword_total = 0
+        keyword_count_total = 0
         for keyword, count in (
-            df.select(
+            with_keywords.select(
                 pl.col("category_specification")
                 .list.explode()
                 .value_counts()
             )
             .unnest("category_specification")
-        ).rows():
+            .rows()
+        ):
             if keyword is None:
                 keyword = "NO_KEYWORD"
-            keyword_total += count
+            keyword_count_total += count
             keyword_counts[keyword.lower()] = count
 
         # Make sure that all columns are represented so that they have same length
@@ -328,17 +329,22 @@ class DailySoR(DailyRelease):
         # Actually collect statistics
         collector.month(month)
         collector.values(
-            platforms=df.select(pl.col("platform_name").n_unique()).item(),
+            # Platforms
+            platforms=frame.select(pl.col("platform_name").n_unique()).item(),
             platforms_with_keywords=with_keywords.select(pl.col("platform_name").n_unique()).item(),
-            # Rows with keywords, all keywords, and max keywords per row
-            with_keyword=with_keywords.select(pl.col("category_specification")).count().item(),
-            keyword_no=keyword_total,
-            max_keywords=df.select(pl.col("category_specification").list.len().max()).item(),
-            # Detailed breakdown from above
+
+            # Rows
+            rows=frame.height,
+            rows_with_keywords=with_keywords.height,
+            rows_with_keywords_old=with_keywords.select(pl.col("category_specification")).count().item(),
+
+            # Keywords
+            max_keywords_per_row=frame.select(pl.col("category_specification").list.len().max()).item(),
+            keyword_count=keyword_count_total,
             **keyword_counts,
         )
         collector.frames(
-            platforms=df.select(pl.col("platform_name").unique()),
+            platforms=frame.select(pl.col("platform_name").unique()),
             platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
         )
 
@@ -354,8 +360,10 @@ class DailySoR(DailyRelease):
                 print(f"{key} reporting category SoRs:")
                 for v in df.select(pl.col("platform_name")):
                     print(f"    {v}")
+            else:
+                raise ValueError(f"unknown collection {key}")
 
         df = collector.frame_for_values()
-        df.write_parquet(root / "monthly.parquet")
+        df.write_parquet(root / "meta.parquet")
         display(df)
         return df
