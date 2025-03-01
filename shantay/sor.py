@@ -365,9 +365,9 @@ class DailySoR(DailyRelease):
                 raise ValueError(f"unknown collection {key}")
 
         df = collector.frame_for_values()
-        tmp = root / "meta.tmp.parquet"
+        tmp = root / "stats.tmp.parquet"
         df.write_parquet(tmp)
-        tmp.replace(root / "meta.parquet")
+        tmp.replace(root / "stats.parquet")
 
         display(df)
         return df
