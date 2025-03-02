@@ -107,22 +107,29 @@ class Metadata:
             raise MetadataConflict(f"divergent categories {self._category} and {other}")
 
     def _merge_releases(self, other: dict[str, Entry]) -> None:
-        for k, v2 in other.items():
-            if k not in self._releases:
-                self._releases[k] = v2
+        for release, entry2 in other.items():
+            if release not in self._releases:
+                self._releases[release] = entry2
                 continue
 
-            v1 = self._releases[k]
-            if v1 == v2:
-                continue
-            if v1["batch_count"] == v2["batch_count"]:
-                if 1 == len(v1) and 1 < len(v2):
-                    self._releases[k] = v2
+            entry1 = self._releases[release]
+            if entry1["batch_count"] == entry2["batch_count"]:
+                if 1 == len(entry1) and 1 < len(entry2):
+                    self._releases[release] = entry2
                     continue
-                if 1 < len(v1) and 1 == len(v2):
+                elif 1 < len(entry1) and 1 == len(entry2):
+                    continue
+                elif all(
+                    entry1[k] == entry2[k] for k in (
+                        "total_rows",
+                        "total_rows_with_keywords",
+                        "batch_rows",
+                        "batch_rows_with_keywords"
+                    )
+                ):
                     continue
 
-                raise MetadataConflict(f"divergent metadata for release {k.id}")
+            raise MetadataConflict(f"divergent metadata for release {release.id}")
 
     @classmethod
     def read_json(cls, root: Path) -> Self:
