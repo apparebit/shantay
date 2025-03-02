@@ -98,6 +98,13 @@ class Metadata:
             merged._merge_releases(source_data._releases)
         return merged
 
+    def merge_with(self, other: Self) -> Self:
+        """Merge with the other metadata."""
+        merged = type(self)(self._category, dict(self._releases))
+        merged._merge_category(other._category)
+        merged._merge_releases(other._releases)
+        return merged
+
     def _merge_category(self, other: None | str) -> None:
         if other is None:
             pass
@@ -114,13 +121,15 @@ class Metadata:
 
             entry1 = self._releases[release]
             if entry1["batch_count"] == entry2["batch_count"]:
+                if 1 == len(entry1) and 1 == len(entry2):
+                    continue
                 if 1 == len(entry1) and 1 < len(entry2):
                     self._releases[release] = entry2
                     continue
                 elif 1 < len(entry1) and 1 == len(entry2):
                     continue
                 elif all(
-                    entry1[k] == entry2[k] for k in (
+                    entry1.get(k) == entry2.get(k) for k in (
                         "total_rows",
                         "total_rows_with_keywords",
                         "batch_rows",
@@ -129,7 +138,7 @@ class Metadata:
                 ):
                     continue
 
-            raise MetadataConflict(f"divergent metadata for release {release.id}")
+            raise MetadataConflict(f"divergent metadata for release {release}")
 
     @classmethod
     def read_json(cls, root: Path) -> Self:
