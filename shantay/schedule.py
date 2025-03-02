@@ -42,6 +42,16 @@ class YearMonth:
         """Get this year-month's ID."""
         return f"{self.year}-{self.month:02}"
 
+    @property
+    def first_day(self) -> dt.datetime:
+        """Get this year-month's first day as a Python date."""
+        return dt.date(self.year, self.month, 1)
+
+    @property
+    def days(self) -> int:
+        """Get the number of days in this year-month."""
+        return self.__next__().first_day - dt.timedelta(days=1)
+
     def daily_glob(self, root: Path) -> str:
         """Get a glob for daily category data files."""
         return f"{root}/{self.year}/{self.month:02}/??/{self.year}-{self.month:02}-??-*.parquet"
