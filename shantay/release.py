@@ -310,7 +310,7 @@ class DailyRelease(Release):
 
     @property
     def working_directory(self) -> Path:
-        return self.directory / f"tmp{self._date.day:02}"
+        return self.directory / f"{self._date.day:02}.tmp"
 
     @property
     def batch_directory(self) -> Path:
