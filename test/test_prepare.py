@@ -158,3 +158,20 @@ class TestPrepare(unittest.TestCase):
                     ])
                 elif key == "platforms_with_keywords":
                     self.assertListEqual(platforms, ["Snapchat"])
+
+        with self.subTest("check log file"):
+            with LOGFILE.open(mode="r", encoding="utf8") as file:
+                lines = file.readlines()
+
+            self.assertEqual(len(lines), 10)
+            self.assertIn("staged file", lines[0])
+            self.assertIn("validated file", lines[1])
+            self.assertIn('unarchived type="nested archive"', lines[2])
+            self.assertIn('counted filter="none", rows=100', lines[3])
+            self.assertIn('counted filter="with_keywords", rows=12', lines[4])
+            self.assertIn('extracted rows=8', lines[5])
+            self.assertIn('unarchived type="nested archive"', lines[6])
+            self.assertIn('counted filter="none", rows=100', lines[7])
+            self.assertIn('counted filter="with_keywords", rows=1', lines[8])
+            self.assertIn('extracted rows=9', lines[9])
+
