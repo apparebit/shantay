@@ -6,15 +6,13 @@ import re
 import shutil
 from typing import Callable, Required, Self, TypedDict
 
+import polars as pl
+
 from .release import Release
 
 
 class MetadataConflict(Exception):
     """Exception to indicate that metadata records for the same release differ."""
-
-
-def _as_key(key: str | Release) -> str:
-    return key if isinstance(key, str) else key.id
 
 
 class Entry(TypedDict, total=False):
@@ -25,114 +23,131 @@ class FullEntry(Entry):
     release: str
 
 
-def _get_days_in_month(year, month) -> int:
-    month += 1
-    if month == 13:
-        year += 1
-        month = 1
-    return (dt.date(year, month, 1) - dt.timedelta(days=1)).day
+def _as_key(key: str | Release) -> str:
+    return key if isinstance(key, str) else key.id
 
 
 class Metadata:
 
     FILENAME = "meta.json"
 
-    __slots__ = ("_data",)
+    __slots__ = ("_category", "_releases")
 
-    def __init__(self, data: None | dict[str, Entry] = None) -> None:
-        self._data = {} if data is None else data
+    def __init__(
+        self,
+        category: None | str = None,
+        releases: None | dict[str, Entry] = None,
+    ) -> None:
+        self._category = category
+        self._releases = releases or {}
+
+    @property
+    def category(self) -> None | str:
+        """Get the category for batches."""
+        return self._category
+
+    @property
+    def releases(self) -> Iterator[FullEntry]:
+        """Get an iterator over the release records."""
+        return (dict(release=k) | v for k, v in self._releases.items())
+
+    @property
+    def coverage(self) -> tuple[dt.date, dt.date]:
+        """Get the date for the first and last release."""
+        if len(self._releases) == 0:
+            raise ValueError("no coverage available")
+        releases = sorted(self._releases)
+        return dt.date.fromisoformat(releases[0]), dt.date.fromisoformat(releases[-1])
+
+    def set_category(self, category: str) -> None:
+        """Set the not yet configured category."""
+        if self._category is None:
+            self._category = category
+        elif self._category != category:
+            raise MetadataConflict(f"categories {self._category} and {category} differ")
 
     def batch_count(self, release: str | Release) -> int:
-        return self[_as_key(release)]["batch_count"]
+        """Get the batch count for the given release."""
+        return self._releases[_as_key(release)]["batch_count"]
 
     def __contains__(self, key: str | Release) -> bool:
-        return _as_key(key) in self._data
+        """Determine whether the given release has an entry."""
+        return _as_key(key) in self._releases
 
     def __getitem__(self, key: str | Release) -> Entry:
-        return self._data[_as_key(key)]
+        """Get the entry for the given release."""
+        return self._releases[_as_key(key)]
 
     def __setitem__(self, key: str | Release, value: Entry) -> None:
-        self._data[_as_key(key)] = value
+        """Set the entry for the given release."""
+        self._releases[_as_key(key)] = value
 
     def __len__(self) -> int:
-        return len(self._data)
+        """Get the number of releases covered."""
+        return len(self._releases)
 
-    def records(self) -> Iterator[FullEntry]:
-        return (dict(release=k) | v for k, v in self._data.items() if k != "meta")
+    @classmethod
+    def merge(cls, *sources: Path, not_exist_ok: bool = True) -> Self:
+        """Merge the metadata from the given directories."""
+        merged = cls()
+        for source in sources:
+            if not_exist_ok and not source.exists():
+                continue
+            merged.merge_with(cls.read_json(source), update_in_place=True)
+        return merged
+
+    def merge_with(self, other: Self, update_in_place: bool = False) -> Self:
+        """Merge metadata with compatible entries."""
+        if other._category is None:
+            category = self._category
+        elif self._category is None or self._category == other._category:
+            category = other._category
+        else:
+            raise MetadataConflict(f"divergent categories {self._category} and {other._category}")
+
+        releases = self._releases if update_in_place else dict(self._releases)
+        for k, v2 in other._releases.items():
+            if k not in releases:
+                releases[k] = v2
+                continue
+
+            v1 = self._releases[k]
+            if v1 == v2:
+                continue
+            if v1["batch_count"] == v2["batch_count"]:
+                if 1 == len(v1) and 1 < len(v2):
+                    releases[k] = v2
+                    continue
+                if 1 < len(v1) and 1 == len(v2):
+                    continue
+
+                raise MetadataConflict(f"divergent metadata for release {k.id}")
+
+        return type(self)(category, releases)
 
     @classmethod
     def read_json(cls, root: Path) -> Self:
         with open(root / cls.FILENAME, mode="r", encoding="utf8") as file:
-            return cls(json.load(file))
+            data = json.load(file)
+        return cls(data["category"], data["releases"])
 
     def write_json(self, root: Path, *, sort_keys: bool = False) -> None:
         path = root / self.FILENAME
         tmp = path.with_suffix(".tmp.json")
         with open(tmp, mode="w", encoding="utf8") as file:
-            json.dump(self._data, file, indent=2, sort_keys=sort_keys)
+            json.dump({
+                "category": self._category,
+                "releases": self._releases
+            }, file, indent=2, sort_keys=sort_keys)
         tmp.replace(path)
 
     @classmethod
-    def setup(cls, staging: Path, batches: Path) -> Self:
-        # Read metadata
-        staged_md = None
-        batched_md = None
-        if (staging / cls.FILENAME).exists():
-            staged_md = cls.read_json(staging)
-        if (batches / cls.FILENAME).exists():
-            batched_md = cls.read_json(batches)
-
-        # Merge metadata
-        metadata = None
-        if staged_md is None:
-            if batched_md is None:
-                metadata = cls()
-            else:
-                metadata = batched_md
-        else:
-            if batched_md is None:
-                metadata = staged_md
-            else:
-                metadata = cls.merge(staging, batches)
-
-        # Save best metadata in staging and return that metadata
-        metadata.write_json(staging)
-        return metadata
-
-    @classmethod
     def copy_json(cls, source: Path, target: Path) -> None:
+        """Copy the metadata in JSON format from source to target directory."""
         path = target / cls.FILENAME
         tmp = path.with_suffix(".tmp.json")
         shutil.copy(source / cls.FILENAME, tmp)
         tmp.replace(path)
-
-    @classmethod
-    def merge(cls, *sources: Path) -> Self:
-        merged = None
-        for source in sources:
-            source_data = cls.read_json(source)
-            if merged is None:
-                merged = source_data
-                continue
-
-            for k, v2 in source_data._data.items():
-                if k not in merged:
-                    merged[k] = v2
-                    continue
-
-                v1 = merged[k]
-                if v1 == v2:
-                    continue
-                if v1["batch_count"] == v2["batch_count"]:
-                    if 1 == len(v1) and 1 < len(v2):
-                        merged[k] = v2
-                        continue
-                    if 1 < len(v1) and 1 == len(v2):
-                        continue
-
-                raise MetadataConflict(f"divergent metadata for {k.id}")
-
-        return merged
 
     @classmethod
     def recover(cls, root: Path, *, verbose: bool = False) -> Self:
@@ -207,10 +222,14 @@ class _DailyFileSystemScan:
                     batches = self.scandir(day, "*.parquet", _BATCH_FILE)
                     self.check_children(day, batches, 0, 99_999, lambda n: int(n[-13:-8]))
 
+                    batch_no = 0
                     for batch in batches:
-                        self.check_is_file(batch)
+                        if self.check_is_file(batch):
+                            batch_no += 1
 
-                    self.update_batch_count(year_no, month_no, day_no, len(batches))
+                    if self._metadata._category is None and 0 < batch_no:
+                        self.update_category(day)
+                    self.update_batch_count(year_no, month_no, day_no, batch_no)
 
         self.signal()
         return self._metadata
@@ -254,6 +273,19 @@ class _DailyFileSystemScan:
         self.error(f'"{path}" is not a file')
         return False
 
+    def update_category(self, path: Path) -> None:
+        self._metadata._category = (
+            pl.scan_parquet(path)
+            .select(
+                pl.col("category")
+                .value_counts(sort=True)
+                .first()
+                .struct.field("category")
+            )
+            .collect()
+            .item()
+        )
+
     def update_batch_count(
         self,
         year: int,
@@ -280,6 +312,14 @@ class _DailyFileSystemScan:
         self._metadata[key] = { "batch_count": batch_count }
         if self._verbose:
             print(f"{key}: {batch_count:6,d}")
+
+
+def _get_days_in_month(year, month) -> int:
+    month += 1
+    if month == 13:
+        year += 1
+        month = 1
+    return (dt.date(year, month, 1) - dt.timedelta(days=1)).day
 
 
 if __name__ == "__main__":
