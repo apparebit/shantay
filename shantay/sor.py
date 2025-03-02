@@ -40,7 +40,7 @@ class DailySoR(DailyRelease):
         return "https://dsa-sor-data-dumps.s3.eu-central-1.amazonaws.com"
 
     def extract_data_step_count(self) -> int:
-        return 13
+        return 12
 
     @annotate_error(filename_arg="root")
     def extract_data(
@@ -54,17 +54,15 @@ class DailySoR(DailyRelease):
         path = root / self.working_directory
         csv_files = f"{path}/sor-global-{self.id}-full-{index:05}-*.csv"
 
-        total_rows = self._extract_total_rows(csv_files, index, name, progress)
-        total_rows_with_keyword = self._extract_rows_with_keyword(
+        total_rows, total_rows_with_keywords = self._extract_row_counts(
             csv_files, index, name, progress
         )
-        frame = self._extract_frame(csv_files, index, name, category, progress)
+        frame = self._extract_filtered_rows(csv_files, index, name, category, progress)
 
         batch_rows = frame.height
-        batch_rows_with_keyword = frame.filter(
-            pl.col("category_specification").is_not_null()
-                & (0 < pl.col("category_specification").list.len())
-        ).select(pl.len()).item()
+        batch_rows_with_keywords = frame.select(
+            (0 < pl.col("category_specification").list.len()).sum()
+        ).item()
         batch_memory = frame.estimated_size()
 
         self._validate_schema(frame)
@@ -74,48 +72,38 @@ class DailySoR(DailyRelease):
 
         return Counter(
             total_rows=total_rows,
-            total_rows_with_keywords=total_rows_with_keyword,
+            total_rows_with_keywords=total_rows_with_keywords,
             batch_rows=batch_rows,
-            batch_rows_with_keywords=batch_rows_with_keyword,
+            batch_rows_with_keywords=batch_rows_with_keywords,
             batch_memory=batch_memory,
         )
 
-    def _extract_total_rows(
+    def _extract_row_counts(
         self, csv_files: str, index: int, name: str, progress: Progress = NO_PROGRESS
-    ) -> int:
-        """Determine the total number of rows across all CSV files in the batch."""
+    ) -> tuple[int, int]:
+        """
+        Determine number of rows and rows with keywords across all CSV files in
+        the batch.
+        """
         progress.step(self.extract_data_step(index, 1), extra="count rows")
-        row_count = (
+        rows, rows_with_keywords = (
             pl.scan_csv(csv_files, infer_schema=False)
-            .select(pl.len())
-            .collect()
-            .item()
-        )
-        _logger.debug('counted filter="all", rows=%d, file="%s"', row_count, name)
-        return row_count
-
-    def _extract_rows_with_keyword(
-        self, csv_files: str, index: int, name: str, progress: Progress = NO_PROGRESS
-    ) -> int:
-        """
-        Determine the number of rows with one or more keywords across all CSV
-        files in the batch.
-        """
-        progress.step(self.extract_data_step(index, 2), extra="count rows with keywords")
-        row_count = (
-            pl.scan_csv(csv_files, infer_schema=False)
-            .filter(
-                pl.col("category_specification").is_not_null()
-                    & (2 < pl.col("category_specification").str.len_bytes())
+            .select(
+                pl.len(),
+                # Minimum length of 3 bytes accounts for "[]"
+                (2 < pl.col("category_specification").str.len_bytes()).sum(),
             )
-            .select(pl.len())
             .collect()
-            .item()
+            .row(0)
         )
-        _logger.debug('counted filter="with keyword" rows=%d, file="%s"', row_count, name)
-        return row_count
+        _logger.debug('counted filter="none", rows=%d, file="%s"', rows, name)
+        _logger.debug(
+            'counted filter="with_keywords", rows=%d, file="%s"',
+            rows_with_keywords, name
+        )
+        return rows, rows_with_keywords
 
-    def _extract_frame(
+    def _extract_filtered_rows(
         self,
         csv_files: str,
         index: int,
@@ -131,11 +119,11 @@ class DailySoR(DailyRelease):
         Python's standard library.
         """
         # Fast path: Read all CSV files in one lazy Polars operation.
-        progress.step(self.extract_data_step(index, 3), extra="extracting category data")
+        progress.step(self.extract_data_step(index, 2), extra="extracting category data")
         try:
             frame = self._finish_frame(self._scan_csv_with_polars(csv_files, category))
             _logger.debug(
-                'extracted rows=%d, using="Pola.rs fast path", file="%s"',
+                'extracted rows=%d, using="Pola.rs with glob", file="%s"',
                 frame.height, name
             )
             return frame
@@ -151,10 +139,13 @@ class DailySoR(DailyRelease):
         path = Path(csv_files[:split])
         glob = csv_files[split + 1:]
 
+        files = sorted(path.glob(glob))
+        assert len(files) == 0, f'glob "{csv_files}" matches no files'
+
         frames = []
-        for file_no, file_path in enumerate(sorted(path.glob(glob))):
+        for file_no, file_path in enumerate(files):
             progress.step(
-                self.extract_data_step(index, 3 + file_no), extra=f"extracting {file_path.name}"
+                self.extract_data_step(index, 2 + file_no), extra=f"extracting {file_path.name}"
             )
 
             try:
@@ -195,7 +186,12 @@ class DailySoR(DailyRelease):
         the same time. The returned LazyFrame has not been collect()ed.
         """
         return (
-            pl.scan_csv(str(path), schema_overrides=SCHEMA_OVERRIDES, infer_schema=False)
+            pl.scan_csv(
+                str(path),
+                null_values=["", "[]"],
+                schema_overrides=SCHEMA_OVERRIDES,
+                infer_schema=False,
+            )
             .filter(
                 (pl.col("category") == category)
                 | pl.col("category_addition").str.contains(category, literal=True)
@@ -228,7 +224,7 @@ class DailySoR(DailyRelease):
 
             for row in reader:
                 if row[category_index] == category or category in row[addition_index]:
-                    row = [None if field == "" else field for field in row]
+                    row = [None if field in ("", "[]") else field for field in row]
                     rows.append(row)
 
         return pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
@@ -252,7 +248,7 @@ class DailySoR(DailyRelease):
                     .otherwise(pl.col("territorial_scope"))
                     .alias("territorial_scope"),
             )
-            # Parse list-valued columns
+            # Parse list-valued columns (assumes no [] values)
             .with_columns(
                 pl.col(
                     "decision_visibility",
