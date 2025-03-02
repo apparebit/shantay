@@ -51,11 +51,12 @@ In practice, well, let's review:
  5. *Buggy distribution*: Three CSV files in the distribution of zipped archives
     of zipped CSV files, `sor-global-2024-08-29-full-00030-00002.csv`,
     `sor-global-2024-09-13-full-00011-00000.csv`, and
-    `sor-global-2024-09-14-full-00046-00001.csv`, contain severe violations of
-    the CSV format. For instance, the first file not only intermingles two
-    different conventions for escaping quotes, `""` and `\"`, but also manages
-    to get both of them wrong. Not surprisingly, that trips up Pola.rs' and
-    PyArrow's CSV parsers. 😡
+    `sor-global-2024-09-14-full-00046-00001.csv`, contain coding errors such as
+    invalid and overlapping combinations of quotes escaped as `""` and `\"`. Not
+    surprisingly, they trip up Pola.rs' and PyArrow's CSV parsers. Additionally,
+    CSV files use empty strings as well as `[]` to encode empty lists. While
+    technically valid, the latter parses as a list with a single `null` and
+    hence must be filtered out before. 😡
  6. *Limited data availability*: According to the EU's data retention policy,
     "after 18 months (540 days), the daily dumps are removed from the data
     download section and are archived in a cold storage." It is unclear what
