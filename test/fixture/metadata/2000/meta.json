@@ -1,0 +1,11 @@
+{
+    "category": "END_OF_THE_WORLD",
+    "releases": {
+        "1999-12-31": {
+            "batch_count": 665
+        },
+        "2000-01-01": {
+            "batch_count": 1
+        }
+    }
+}
