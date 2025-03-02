@@ -5,9 +5,9 @@ from pathlib import Path
 import shutil
 from typing import Any
 
-from .metadata import Metadata, MetadataConflict
+from .metadata import Metadata
 from .progress import Progress
-from .release import DownloadFailed, Release
+from .release import Release
 from .schedule import MonthlySchedule, Schedule, YearMonth
 from .sor import Collector
 
@@ -26,17 +26,16 @@ class Runner:
         *,
         archive: Path,
         batches: Path,
+        staging: Path,
+        metadata: Metadata,
         progress: Progress,
         id: int = 0,
     ) -> None:
         self._id = id
-        self._staging = Path.cwd() / (
-            "dsa-db-staging" if id == 0 else f"dsa-db-staging-{id:03}"
-        )
         self._archive = archive
         self._batches = batches
-
-        self._metadata = None
+        self._staging = staging
+        self._metadata = metadata
         self._progress = progress
 
     @property
@@ -60,13 +59,12 @@ class Runner:
     # ----------------------------------------------------------------------------------
     # Startup
 
-    def start(self) -> None:
-        _logger.info('runner=%d, key="staging", value="%s"', self._id, self._staging)
-        _logger.info('runner=%d, key="archive", value="%s"', self._id, self._archive)
-        _logger.info('runner=%d, key="batches", value="%s"', self._id, self._batches)
-
-        self._staging.mkdir(parents=True, exist_ok=True)
-        self._metadata = Metadata.setup(self._staging, self._batches)
+    def start(self, task: Task) -> None:
+        _logger.info('starting runner=%d, task="%s"', self._id, task)
+        _logger.info('    key="staging",  value="%s"', self._staging)
+        _logger.info('    key="archive",  value="%s"', self._archive)
+        _logger.info('    key="batches",  value="%s"', self._batches)
+        _logger.info('    key="category", value="%s"', self._metadata.category)
 
     # ----------------------------------------------------------------------------------
 
@@ -153,23 +151,21 @@ class Runner:
             self.download_archive(release)
 
         self.stage_archive(release)
-        self.extract_batches(category, release)
+        try:
+            self.extract_batches(category, release)
+        except Exception as x:
+            x.add_note(
+                f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
+            )
+            raise
 
         shutil.rmtree(self._staging / release.directory)
         self._progress.perform(f"done with {release.id}").done()
         return release
 
-    def prepare(self, category: str, schedule: Schedule) -> None:
+    def prepare(self, schedule: Schedule, *, category: str) -> None:
         for release in schedule:
-            try:
-                self.prepare_batches(category, release)
-            except (DownloadFailed, MetadataConflict) as x:
-                raise
-            except Exception as x:
-                x.add_note(
-                    f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
-                )
-                raise
+            self.prepare_batches(category, release)
 
     def analyze_month(
         self,
