@@ -50,7 +50,7 @@ class DailySoR(DailyRelease):
         name: str,
         category: str,
         progress: Progress = NO_PROGRESS
-    ) -> None:
+    ) -> Counter:
         path = root / self.working_directory
         csv_files = f"{path}/sor-global-{self.id}-full-{index:05}-*.csv"
 
@@ -59,24 +59,12 @@ class DailySoR(DailyRelease):
         )
         frame = self._extract_filtered_rows(csv_files, index, name, category, progress)
 
-        batch_rows = frame.height
-        batch_rows_with_keywords = frame.select(
-            (0 < pl.col("category_specification").list.len()).sum()
-        ).item()
-        batch_memory = frame.estimated_size()
-
         self._validate_schema(frame)
         path = root / self.batch_directory
         path.mkdir(parents=True, exist_ok=True)
         frame.write_parquet(path / self.batch(index))
 
-        return Counter(
-            total_rows=total_rows,
-            total_rows_with_keywords=total_rows_with_keywords,
-            batch_rows=batch_rows,
-            batch_rows_with_keywords=batch_rows_with_keywords,
-            batch_memory=batch_memory,
-        )
+        return self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
 
     def _extract_row_counts(
         self, csv_files: str, index: int, name: str, progress: Progress = NO_PROGRESS
@@ -293,6 +281,23 @@ class DailySoR(DailyRelease):
             expected = SCHEMA[name]
             if actual != expected:
                 raise TypeError(f"column {name} has type {actual} not {expected}")
+
+    def _assemble_frame_counters(
+        self, frame: pl.DataFrame, total_rows: int, total_rows_with_keywords: int
+    ) -> Counter:
+        batch_rows = frame.height
+        batch_rows_with_keywords = frame.select(
+            (0 < pl.col("category_specification").list.len()).sum()
+        ).item()
+        batch_memory = frame.estimated_size()
+
+        return Counter(
+            total_rows=total_rows,
+            total_rows_with_keywords=total_rows_with_keywords,
+            batch_rows=batch_rows,
+            batch_rows_with_keywords=batch_rows_with_keywords,
+            batch_memory=batch_memory,
+        )
 
     @classmethod
     @annotate_error(filename_arg="root")
