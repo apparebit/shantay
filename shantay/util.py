@@ -37,3 +37,19 @@ def annotate_error[**P, R, F: Callable[P, R]](
                     x.filename = str(value)
         return inner
     return wrapper
+
+
+def scale(value: float) -> tuple[float, str]:
+    """Scale the value to three digits before the decimal and a unit prefix."""
+    if value < 0.001:
+        return value * 1_000_000, "micro"
+    elif value < 1:
+        return value * 1_000, "milli"
+    elif value < 1_000:
+        return value, ""
+    elif value < 1_000_000:
+        return value / 1_000, "kilo"
+    elif value < 1_000_000_000:
+        return value / 1_000_000, "mega"
+    else:
+        return value / 1_000_000_000, "giga"

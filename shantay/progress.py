@@ -2,7 +2,7 @@ import shutil
 import time
 from typing import Callable, Self
 
-from .render import scale
+from .util import scale
 
 _BLOCKS = " ▎▌▊█"
 
