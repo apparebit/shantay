@@ -18,17 +18,21 @@ from .runner import Task, Runner
 class Options:
     task: Task
     category: str
+    metadata: Metadata
+
     archive: Path
     batches: Path
+    staging: Path
+
     start: dt.date
     stop: dt.date
-    pipelines: int
+
     logfile: Path
     verbose: bool
 
 
 def _get_options(args: list[str]) -> Options:
-    parser = ArgumentParser(prog="datascale")
+    parser = ArgumentParser(prog="shantay")
     parser.add_argument(
         "--archive",
         type=Path,
@@ -48,12 +52,6 @@ def _get_options(args: list[str]) -> Options:
         help="set the stop date (inclusive)",
     )
     parser.add_argument(
-        "--pipelines",
-        default=1,
-        type=int,
-        help="set the number of parallel pipelines"
-    )
-    parser.add_argument(
         "--logfile",
         default="shantay.log",
         type=Path,
@@ -66,7 +64,6 @@ def _get_options(args: list[str]) -> Options:
     )
     parser.add_argument(
         "--category",
-        default="protection_of_minors",
         help="set category for extracting data (which may omit STATEMENT_CATEGORY_ prefix "
         "and be written in lower case)",
     )
@@ -78,19 +75,59 @@ def _get_options(args: list[str]) -> Options:
     )
 
     raw_options = parser.parse_args(args)
+    archive = raw_options.archive if raw_options.archive else Path.cwd() / "dsa_db-distributions"
+    batches = raw_options.batches if raw_options.batches else Path.cwd() / "dsa_db-data"
+    staging = Path.cwd() / "dsa-db-staging"
+    staging.mkdir(parents=True, exist_ok=True)
 
+    # Make sure we have a category
+    category = None
+    if raw_options.category is not None:
+        category = normalize_category(raw_options.category)
+
+    metadata = Metadata.merge(staging, batches, not_exist_ok=True)
+    if category:
+        metadata.set_category(category)
+    else:
+        category = metadata.category
+    if metadata.category is None:
+        raise ValueError("cannot determine category, please provide --category option")
+    metadata.write_json(staging)
+
+    # Make sure we have start and stop dates.
+    if raw_options.task == "prepare":
+        start = dt.date(2023, 9, 25)
+        stop = dt.date.today() - dt.timedelta(days=2)
+    elif 0 < len(metadata):
+        start, stop = metadata.coverage
+    else:
+        start = stop = None
+
+    if raw_options.start is not None:
+        start = dt.date.fromisoformat(raw_options.start)
+    if raw_options.stop is not None:
+        stop = dt.date.fromisoformat(raw_options.stop)
+
+    if start is None:
+        raise ValueError("cannot determine start date, please provide --start option")
+    if stop is None:
+        raise ValueError("cannot determine stop date, please provide --stop option")
+
+    # We have options
     return Options(
         task=Task(raw_options.task),
-        category=normalize_category(raw_options.category),
-        archive=raw_options.archive if raw_options.archive else Path.cwd() / "dsa-db-archive",
-        batches=raw_options.batches if raw_options.batches else Path.cwd() / "dsa-db-batches",
-        start=dt.date.fromisoformat(raw_options.start) if raw_options.start
-            else dt.date(2023, 9, 25),
-        stop=dt.date.fromisoformat(raw_options.stop) if raw_options.stop
-            else dt.date.today() - dt.timedelta(days=2),
-        logfile=raw_options.logfile,
+        category=category,
+        metadata=metadata,
+
+        archive=archive,
+        batches=batches,
+        staging=staging,
+
+        start=start,
+        stop=stop,
+
         verbose=raw_options.verbose,
-        pipelines=raw_options.pipelines if 1 <= raw_options.pipelines else 1
+        logfile=raw_options.logfile,
     )
 
 def _run(args: list[str]) -> None:
@@ -106,41 +143,23 @@ def _run(args: list[str]) -> None:
 
     schedule = Schedule(DailySoR(options.start), DailySoR(options.stop))
 
-    if 1 < options.pipelines:
-        import multiprocessing as mp
-        from .runpool import RunPool
-        context = mp.get_context("spawn")
-
-        pool = RunPool(
-            size=options.pipelines,
-            archive=options.archive,
-            batches=options.batches,
-            schedule=schedule,
-            task=options.task,
-            context=context,
-        )
-
-        staging_directories = [p.staging for p in pool.processes()]
-        if options.task is Task.PREPARE:
-            Metadata.merge(*staging_directories).write_json(options.batches)
-        return
-
     progress = Progress(row=None)
     runner = Runner(
         archive=options.archive,
         batches=options.batches,
+        staging=options.staging,
+        metadata=options.metadata,
         progress=progress,
     )
-    runner.start()
-    staging_directories = [runner.staging]
+    runner.start(options.task)
 
     if options.task is Task.PREPARE:
-        runner.prepare(options.category, schedule)
+        runner.prepare(schedule, category=options.category)
     elif options.task is Task.ANALYZE:
         runner.analyze(schedule)
 
     if options.task is Task.PREPARE:
-        Metadata.merge(*staging_directories).write_json(options.batches)
+        Metadata.copy_json(options.staging, options.batches)
 
 def run(args: list[str]) -> int:
     # Hide cursor
