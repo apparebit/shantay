@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 from pathlib import Path
 import traceback
+from typing import Any
 
 from .metadata import Metadata, MetadataConflict
 from .progress import Progress
@@ -31,7 +32,7 @@ class Options:
     verbose: bool
 
 
-def _get_options(args: list[str]) -> Options:
+def _parse_raw_options(args: list[str]) -> Any:
     parser = ArgumentParser(prog="shantay")
     parser.add_argument(
         "--archive",
@@ -74,7 +75,9 @@ def _get_options(args: list[str]) -> Options:
         help="select the task to execute",
     )
 
-    raw_options = parser.parse_args(args)
+    return parser.parse_args(args)
+
+def _parse_options(raw_options: Any) -> Options:
     archive = raw_options.archive if raw_options.archive else Path.cwd() / "dsa_db-distributions"
     batches = raw_options.batches if raw_options.batches else Path.cwd() / "dsa_db-data"
     staging = Path.cwd() / "dsa-db-staging"
@@ -130,16 +133,18 @@ def _get_options(args: list[str]) -> Options:
         logfile=raw_options.logfile,
     )
 
-def _run(args: list[str]) -> None:
-    options = _get_options(args)
-
+def configure_logging(logfile: str, *, verbose: bool) -> None:
     logging.basicConfig(
         format='%(asctime)s [%(levelname)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
-        filename=options.logfile,
+        filename=logfile,
         encoding="utf8",
-        level=logging.DEBUG if options.verbose else logging.INFO,
+        level=logging.DEBUG if verbose else logging.INFO,
     )
+
+def _run(args: list[str]) -> None:
+    options = _parse_options(_parse_raw_options(args))
+    configure_logging(options.logfile, verbose=options.verbose)
 
     schedule = Schedule(DailySoR(options.start), DailySoR(options.stop))
 
