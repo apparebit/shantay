@@ -6,7 +6,7 @@ import shutil
 from typing import Any
 
 from .metadata import Metadata
-from .progress import Progress
+from .progress import NO_PROGRESS, Progress
 from .release import Release
 from .schedule import MonthlySchedule, Schedule, YearMonth
 from .sor import Collector
@@ -28,8 +28,8 @@ class Runner:
         batches: Path,
         staging: Path,
         metadata: Metadata,
-        progress: Progress,
         id: int = 0,
+        progress: Progress = NO_PROGRESS,
     ) -> None:
         self._id = id
         self._archive = archive
