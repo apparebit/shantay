@@ -87,28 +87,29 @@ class Metadata:
         return len(self._releases)
 
     @classmethod
-    def merge(cls, *sources: Path, not_exist_ok: bool = True) -> Self:
+    def merge(cls, *sources: Path, not_exist_ok: bool = False) -> Self:
         """Merge the metadata from the given directories."""
         merged = cls()
         for source in sources:
-            if not_exist_ok and not source.exists():
+            if not_exist_ok and not (source / cls.FILENAME).exists():
                 continue
-            merged.merge_with(cls.read_json(source), update_in_place=True)
+            source_data = cls.read_json(source)
+            merged._merge_category(source_data._category)
+            merged._merge_releases(source_data._releases)
         return merged
 
-    def merge_with(self, other: Self, update_in_place: bool = False) -> Self:
-        """Merge metadata with compatible entries."""
-        if other._category is None:
-            category = self._category
-        elif self._category is None or self._category == other._category:
-            category = other._category
+    def _merge_category(self, other: None | str) -> None:
+        if other is None:
+            pass
+        elif self._category is None or self._category == other:
+            self._category = other
         else:
-            raise MetadataConflict(f"divergent categories {self._category} and {other._category}")
+            raise MetadataConflict(f"divergent categories {self._category} and {other}")
 
-        releases = self._releases if update_in_place else dict(self._releases)
-        for k, v2 in other._releases.items():
-            if k not in releases:
-                releases[k] = v2
+    def _merge_releases(self, other: dict[str, Entry]) -> None:
+        for k, v2 in other.items():
+            if k not in self._releases:
+                self._releases[k] = v2
                 continue
 
             v1 = self._releases[k]
@@ -116,14 +117,12 @@ class Metadata:
                 continue
             if v1["batch_count"] == v2["batch_count"]:
                 if 1 == len(v1) and 1 < len(v2):
-                    releases[k] = v2
+                    self._releases[k] = v2
                     continue
                 if 1 < len(v1) and 1 == len(v2):
                     continue
 
                 raise MetadataConflict(f"divergent metadata for release {k.id}")
-
-        return type(self)(category, releases)
 
     @classmethod
     def read_json(cls, root: Path) -> Self:
