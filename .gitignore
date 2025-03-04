@@ -4,5 +4,6 @@ tmp
 dsa-db-*
 shantay.log
 dist
+target
 test/shantay.log
 test/tmp

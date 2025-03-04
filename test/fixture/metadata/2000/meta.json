@@ -1,5 +1,5 @@
 {
-    "category": "END_OF_THE_WORLD",
+    "filter": "END_OF_THE_WORLD",
     "releases": {
         "1999-12-31": {
             "batch_count": 665

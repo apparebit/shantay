@@ -6,10 +6,10 @@ import unittest
 import polars as pl
 
 from shantay.collector import Collector
+from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
-from shantay.runner import Runner
-from shantay.schedule import YearMonth
-from shantay.sor import DailySoR
+from shantay.model import Coverage, Daily, Monthly, Storage
+from shantay.processor import Processor
 from shantay.tool import configure_logging
 
 ROOT = Path(__file__).parent
@@ -33,7 +33,7 @@ CSV_FILES = [
     "sor-global-2024-03-14-full-00001-00001.csv",
 ]
 
-CATEGORY = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
+FILTER = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
 
 def setUpModule():
     shutil.rmtree(STAGING, ignore_errors=True)
@@ -55,83 +55,92 @@ class TestPrepare(unittest.TestCase):
 
     def test_extraction(self):
         with self.subTest("set up metadata, runner, and release"):
-            metadata = Metadata(CATEGORY, {})
-            runner = Runner(
-                archive=ARCHIVE,
-                batches=STAGING,
-                staging=STAGING,
+            dataset = StatementsOfReasons()
+            storage = Storage(archive=ARCHIVE, working=STAGING, staging=STAGING)
+            release = Daily.of(2024, 3, 14)
+            coverage = Coverage(release, release, FILTER)
+            metadata = Metadata(FILTER, {})
+            processor = Processor(
+                dataset=dataset,
+                storage=storage,
+                coverage=coverage,
                 metadata=metadata,
             )
-            release = DailySoR("2024-03-14")
 
-            digest = release.directory / release.digest
-            archive = release.directory / release.archive
+            digest = release.parent_directory / dataset.digest(release)
+            archive = release.parent_directory / dataset.archive(release)
 
         with self.subTest("stage archive by copying fixture"):
             self.assertFalse((STAGING / digest).exists())
             self.assertFalse((STAGING / archive).exists())
-            runner.stage_archive(release)
+            processor.stage_archive(release)
             self.assertTrue((STAGING / digest).exists())
             self.assertTrue((STAGING / archive).exists())
             self.assertFileEqual(ARCHIVE / digest, STAGING / digest)
             self.assertFileEqual(ARCHIVE / archive, STAGING / archive)
 
         with self.subTest("determine archived files"):
-            filenames = release.archived_files(STAGING)
+            filenames = processor.list_archived_files(STAGING, release)
             self.assertListEqual(filenames, ZIP_FILES)
 
         with self.subTest("unarchive first of two CSV files"):
-            step_count = release.extract_data_step_count()
+            step_count = dataset.extract_data_step_count
             self.assertEqual(step_count, 12)
 
-            workdir = STAGING / release.working_directory
+            workdir = STAGING / release.temp_directory
             self.assertFalse(workdir.exists())
 
-            release.unarchive_file(STAGING, 0, ZIP_FILES[0])
+            processor.unarchive_file(STAGING, release, 0, ZIP_FILES[0])
             self.assertTrue(workdir.exists())
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES[:2])
             self.assertFileEqual(workdir / CSV_FILES[0], FIXTURE / "csv" / CSV_FILES[0])
             self.assertFileEqual(workdir / CSV_FILES[1], FIXTURE / "csv" / CSV_FILES[1])
 
         with self.subTest("determine row counts"):
-            glob = f"{STAGING / release.working_directory}/*.csv"
-            count1, count2 = release._extract_row_counts(glob, 0, ZIP_FILES[0])
+            glob = f"{STAGING / release.temp_directory}/*.csv"
+            count1, count2 = dataset._extract_row_counts(glob, 0, ZIP_FILES[0])
             self.assertEqual(count1, 100)
             self.assertEqual(count2, 12)
 
         with self.subTest("extract first batch of category data"):
-            frame = release._extract_filtered_rows(glob, 0, ZIP_FILES[0], CATEGORY)
-            release._validate_schema(frame)
+            frame = dataset._extract_filtered_rows(glob, 0, ZIP_FILES[0], FILTER)
+            dataset._validate_schema(frame)
 
             counters = Counter(batch_count = 2)
-            counters += release._assemble_frame_counters(frame, count1, count2)
+            counters += dataset._assemble_frame_counters(frame, count1, count2)
             self.assertEqual(counters["batch_count"], 2)
             self.assertEqual(counters["total_rows"], 100)
             self.assertEqual(counters["total_rows_with_keywords"], 12)
             self.assertEqual(counters["batch_rows"], 8)
             self.assertEqual(counters["batch_rows_with_keywords"], 2)
 
-            framedir = STAGING / release.batch_directory
+            framedir = STAGING / release.directory
             self.assertFalse(framedir.exists())
             framedir.mkdir(parents=True)
-            batch0 = framedir / release.batch(0)
+            batch0 = framedir / release.batch_file(0)
             frame.write_parquet(batch0)
 
-            self.assertFileEqual(batch0, FIXTURE / release.batch(0))
+            self.assertFileEqual(batch0, FIXTURE / release.batch_file(0))
 
         with self.subTest("extract second batch of category data"):
-            batch1 = STAGING / release.batch_directory / release.batch(1)
+            batch1 = STAGING / release.directory / release.batch_file(1)
             self.assertFalse(batch1.exists())
 
-            release.unarchive_file(STAGING, 1, ZIP_FILES[1])
-            counters += release.extract_data(STAGING, 1, ZIP_FILES[1], CATEGORY)
+            processor.unarchive_file(STAGING, release, 1, ZIP_FILES[1])
+            counters += dataset.extract_file_data(
+                root=STAGING,
+                release=release,
+                index=1,
+                name=ZIP_FILES[1],
+                filter=FILTER,
+            )
 
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
             self.assertFileEqual(workdir / CSV_FILES[2], FIXTURE / "csv" / CSV_FILES[2])
             self.assertFileEqual(workdir / CSV_FILES[3], FIXTURE / "csv" / CSV_FILES[3])
 
             self.assertEqual(counters["batch_count"], 2)
-            self.assertEqual(counters["total_rows"], 100 + 100)
+            self.assertEqual(counters["total_rows"], 100 + 102)
             self.assertEqual(counters["total_rows_with_keywords"], 12 + 1)
             self.assertEqual(counters["batch_rows"], 8 + 9)
             self.assertEqual(counters["batch_rows_with_keywords"], 2 + 0)
@@ -140,11 +149,11 @@ class TestPrepare(unittest.TestCase):
             self.assertTrue(18 <= memory <= 22)
 
             self.assertTrue(batch1.exists())
-            self.assertFileEqual(batch1, FIXTURE / release.batch(1))
+            self.assertFileEqual(batch1, FIXTURE / release.batch_file(1))
 
-        with self.subTest("analyze monthly data"):
+        with self.subTest("analyze release data"):
             collector = Collector()
-            release.analyze_month(STAGING, YearMonth(2024, 3), collector)
+            dataset.analyze_release(STAGING, release.monthly, collector)
 
             for key, value in collector.consume_frames():
                 self.assertIn(key, ("platforms", "platforms_with_keywords"))
@@ -163,7 +172,7 @@ class TestPrepare(unittest.TestCase):
             with LOGFILE.open(mode="r", encoding="utf8") as file:
                 lines = file.readlines()
 
-            self.assertEqual(len(lines), 10)
+            self.assertEqual(len(lines), 36)
             self.assertIn("staged file", lines[0])
             self.assertIn("validated file", lines[1])
             self.assertIn('unarchived type="nested archive"', lines[2])
@@ -171,7 +180,36 @@ class TestPrepare(unittest.TestCase):
             self.assertIn('counted filter="with_keywords", rows=12', lines[4])
             self.assertIn('extracted rows=8', lines[5])
             self.assertIn('unarchived type="nested archive"', lines[6])
-            self.assertIn('counted filter="none", rows=100', lines[7])
+            self.assertIn('counted filter="none", rows=102', lines[7])
             self.assertIn('counted filter="with_keywords", rows=1', lines[8])
-            self.assertIn('extracted rows=9', lines[9])
-
+            # Trying to parse both CSV files in one Pola.rs operation fails:
+            self.assertIn('[WARNING] failed to read CSV using="Pola.rs with glob"', lines[9])
+            self.assertTrue(lines[10].startswith('Traceback'))
+            self.assertTrue(lines[11].startswith('  File'))
+            self.assertTrue(lines[12].startswith('    frame = self'))
+            self.assertTrue(lines[13].startswith('            ^^^^'))
+            self.assertTrue(lines[14].startswith('  File'))
+            self.assertTrue(lines[15].startswith('    frame = frame'))
+            self.assertTrue(lines[16].startswith('            ^^^^^'))
+            self.assertTrue(lines[17].startswith('  File'))
+            self.assertTrue(lines[18].startswith('    return wrap_df(ldf'))
+            self.assertTrue(lines[19].startswith('                   ^^^'))
+            self.assertTrue(lines[20].startswith('polars.exceptions.ComputeError: could not parse'))
+            self.assertTrue(lines[21].startswith(''))
+            self.assertTrue(lines[22].startswith('The current offset in the file is 131 bytes'))
+            self.assertTrue(lines[23].startswith(''))
+            self.assertTrue(lines[24].startswith('You might want to try'))
+            self.assertTrue(lines[25].startswith('- increasing'))
+            self.assertTrue(lines[26].startswith('- specifying'))
+            self.assertTrue(lines[27].startswith('- setting'))
+            self.assertTrue(lines[28].startswith('- adding'))
+            self.assertTrue(lines[29].startswith(''))
+            self.assertTrue(lines[30].startswith('Original error: ```invalid csv file'))
+            self.assertTrue(lines[31].startswith(''))
+            self.assertTrue(lines[32].startswith('Field `"Napodobňovanie'))
+            # Parsing the first CSV file by itself with Pola.rs works:
+            self.assertIn('extracted rows=8, using="Pola.rs"', lines[33])
+            # Parsing the second CSV file by itself with Pola.rs fails:
+            self.assertIn('failed to read CSV using="Pola.rs"', lines[34])
+            # Parsing the second CSV fail by itself with Python's csv works:
+            self.assertIn('extracted rows=1, using="Python\'s CSV module"', lines[35])

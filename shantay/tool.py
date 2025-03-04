@@ -1,73 +1,71 @@
 from argparse import ArgumentParser
-from dataclasses import dataclass
 import datetime as dt
 import logging
 from pathlib import Path
 import traceback
 from typing import Any
 
-from .metadata import Metadata, MetadataConflict
+from .dsa_sor import StatementsOfReasons
+from .metadata import Metadata
+from .model import Coverage, Daily, DownloadFailed, MetadataConflict, Storage
+from .processor import Processor
 from .progress import Progress
-from .release import DownloadFailed
-from .schedule import Schedule
 from .schema import normalize_category
-from .sor import DailySoR
-from .runner import Task, Runner
 
 
-@dataclass(frozen=True, slots=True)
-class Options:
-    task: Task
-    category: str
-    metadata: Metadata
-
-    archive: Path
-    batches: Path
-    staging: Path
-
-    start: dt.date
-    stop: dt.date
-
-    logfile: Path
-    verbose: bool
-
-
-def _parse_raw_options(args: list[str]) -> Any:
+def _parse_options(args: list[str]) -> Any:
     parser = ArgumentParser(prog="shantay")
-    parser.add_argument(
+
+    group = parser.add_argument_group("data storage")
+    group.add_argument(
         "--archive",
         type=Path,
-        help="set the directory for storing downloaded archives"
+        help="set directory for storing downloaded archives (defaults to "
+        "`dsa-db-archive` in current working directory)"
     )
-    parser.add_argument(
-        "--batches",
+    group.add_argument(
+        "--working",
         type=Path,
-        help="set the directory for storing extracted category data"
+        help="set directory for storing extracted working set (defaults to "
+        "`dsa-db-working` in current working directory)"
     )
-    parser.add_argument(
-        "--start",
-        help="set the start date"
+    group.add_argument(
+        "--staging",
+        type=Path,
+        help="set directory for storing temporary files (`dsa_db-staging` in current "
+        "working directory)"
     )
-    parser.add_argument(
-        "--stop",
-        help="set the stop date (inclusive)",
+
+    group = parser.add_argument_group("coverage of working set")
+    group.add_argument(
+        "--first",
+        help="set the start date (defaults to earliest possible date)"
     )
-    parser.add_argument(
+    group.add_argument(
+        "--last",
+        help="set the stop date (inclusive, defaults to day before yesterday)",
+    )
+    group.add_argument(
+        "--category",
+        help="set category to filter for(which may omit STATEMENT_CATEGORY_ prefix "
+        "and be written in lower case)",
+    )
+
+    group = parser.add_argument_group("logging")
+    group.add_argument(
         "--logfile",
         default="shantay.log",
         type=Path,
-        help="set the file receiving log output"
+        help="set file receiving log output (defaults to `shantay.log` in current "
+        "working directory)"
     )
-    parser.add_argument(
-        "-v", "--verbose",
-        action="store_true",
-        help="enable verbose logging, which usually is a good idea"
+    group.add_argument(
+        "--quiet",
+        dest="verbose",
+        action="store_false",
+        help="disable verbose logging, which is the default"
     )
-    parser.add_argument(
-        "--category",
-        help="set category for extracting data (which may omit STATEMENT_CATEGORY_ prefix "
-        "and be written in lower case)",
-    )
+
     parser.add_argument(
         "task",
         choices=["prepare", "analyze"],
@@ -77,61 +75,52 @@ def _parse_raw_options(args: list[str]) -> Any:
 
     return parser.parse_args(args)
 
-def _parse_options(raw_options: Any) -> Options:
-    archive = raw_options.archive if raw_options.archive else Path.cwd() / "dsa_db-distributions"
-    batches = raw_options.batches if raw_options.batches else Path.cwd() / "dsa_db-data"
-    staging = Path.cwd() / "dsa-db-staging"
-    staging.mkdir(parents=True, exist_ok=True)
+def _configure(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
+    # Set up storage
+    storage = Storage(
+        archive=options.archive if options.archive else Path.cwd() / "dsa_db-archive",
+        working=options.working if options.working else Path.cwd() / "dsa_db-working",
+        staging=options.staging if options.staging else Path.cwd() / "dsa_db-staging",
+    )
 
-    # Make sure we have a category
-    category = None
-    if raw_options.category is not None:
-        category = normalize_category(raw_options.category)
+    # Set up filter and metadata
+    filter = None
+    if options.category is not None:
+        filter = normalize_category(options.category)
 
-    metadata = Metadata.merge(staging, batches, not_exist_ok=True)
-    if category:
-        metadata.set_category(category)
+    metadata = Metadata.merge(storage.staging, storage.working, not_exist_ok=True)
+    if filter:
+        metadata.set_filter(filter)
     else:
-        category = metadata.category
-    if metadata.category is None:
+        filter = metadata.filter
+    if metadata.filter is None:
         raise ValueError("cannot determine category, please provide --category option")
-    metadata.write_json(staging)
+    storage.staging.mkdir(parents=True, exist_ok=True)
+    metadata.write_json(storage.staging)
 
     # Make sure we have start and stop dates.
-    if raw_options.task == "prepare":
-        start = dt.date(2023, 9, 25)
-        stop = dt.date.today() - dt.timedelta(days=2)
+    if options.task == "prepare":
+        first = dt.date(2023, 9, 25)
+        last = dt.date.today() - dt.timedelta(days=2)
     elif 0 < len(metadata):
-        start, stop = metadata.coverage
+        first, last = metadata.range
     else:
-        start = stop = None
+        first = last = None
 
-    if raw_options.start is not None:
-        start = dt.date.fromisoformat(raw_options.start)
-    if raw_options.stop is not None:
-        stop = dt.date.fromisoformat(raw_options.stop)
+    if options.first is not None:
+        first = dt.date.fromisoformat(options.first)
+    if options.last is not None:
+        last = dt.date.fromisoformat(options.last)
 
-    if start is None:
-        raise ValueError("cannot determine start date, please provide --start option")
-    if stop is None:
-        raise ValueError("cannot determine stop date, please provide --stop option")
+    if first is None:
+        raise ValueError("cannot determine start date, please provide --first option")
+    if last is None:
+        raise ValueError("cannot determine stop date, please provide --last option")
 
-    # We have options
-    return Options(
-        task=Task(raw_options.task),
-        category=category,
-        metadata=metadata,
-
-        archive=archive,
-        batches=batches,
-        staging=staging,
-
-        start=start,
-        stop=stop,
-
-        verbose=raw_options.verbose,
-        logfile=raw_options.logfile,
-    )
+    # Finish it all up
+    coverage = Coverage(Daily(first), Daily(last), filter)
+    progress = Progress()
+    return storage, coverage, metadata, progress
 
 def configure_logging(logfile: str, *, verbose: bool) -> None:
     logging.basicConfig(
@@ -143,28 +132,19 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
     )
 
 def _run(args: list[str]) -> None:
-    options = _parse_options(_parse_raw_options(args))
+    options = _parse_options(args)
     configure_logging(options.logfile, verbose=options.verbose)
-
-    schedule = Schedule(DailySoR(options.start), DailySoR(options.stop))
-
-    progress = Progress(row=None)
-    runner = Runner(
-        archive=options.archive,
-        batches=options.batches,
-        staging=options.staging,
-        metadata=options.metadata,
+    storage, coverage, metadata, progress = _configure(options)
+    processor = Processor(
+        dataset=StatementsOfReasons(),
+        storage=storage,
+        coverage=coverage,
+        metadata=metadata,
         progress=progress,
     )
-    runner.start(options.task)
-
-    if options.task is Task.PREPARE:
-        runner.prepare(schedule, category=options.category)
-    elif options.task is Task.ANALYZE:
-        runner.analyze(schedule)
-
-    if options.task is Task.PREPARE:
-        Metadata.copy_json(options.staging, options.batches)
+    processor.start(options.task)
+    if options.task == "prepare":
+        Metadata.copy_json(storage.staging, storage.batches)
 
 def run(args: list[str]) -> int:
     # Hide cursor

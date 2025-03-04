@@ -138,7 +138,7 @@ class StyledStream:
         return self.sgr("3", text)
 
     def err(self, text: str) -> str:
-        return self.sgr("38;5;88", text)
+        return self.sgr("48;5;88;38;5;255;1", text)
 
     def failure(self, text: str) -> str:
         return self.sgr("1;38;5;255;48;5;88", text)
@@ -183,7 +183,7 @@ def print_summary(stream: TextIO) -> ResultPrinter:
         stream.write(styled.strong(f"{label}: {test.source_file}: {test.invocation}"))
         stream.write("\n")
         stream.write(styled.light("\n".join(f"    {l}" for l in lines[:-1])))
-        stream.write(f"\n    {styled.err(lines[-1])}\n\n")
+        stream.write(f"\n\n    {styled.err(lines[-1])}\n\n")
 
     def print_summary(
         tests: int,

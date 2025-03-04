@@ -6,63 +6,62 @@ from pathlib import Path
 import polars as pl
 
 from .collector import Collector
+from .model import Coverage, Daily, Dataset, Release
 from .progress import NO_PROGRESS, Progress
-from .release import DailyRelease
-from .schedule import YearMonth, MonthlySchedule
 from .schema import (
-    BASE_SCHEMA, ContentType, ContentLanguageType, CountryGroups, DecisionVisibility,
-    EXTRA_KEYWORDS_MINOR_PROTECTION, Keyword, KEYWORDS_MINOR_PROTECTION,
-    StatementCategory, TerritorialScopeType, SCHEMA, SCHEMA_OVERRIDES
+    BASE_SCHEMA, ContentLanguageType, ContentType, CountryGroups, DecisionVisibility,
+    EXTRA_KEYWORDS_MINOR_PROTECTION, Keyword, KEYWORDS_MINOR_PROTECTION, SCHEMA,
+    SCHEMA_OVERRIDES, StatementCategory, TerritorialScopeType
 )
 from .util import annotate_error
 
 
-_logger = logging.getLogger("shantay")
+_logger = logging.getLogger(__package__)
 
 
-class DailySoR(DailyRelease):
+class StatementsOfReasons(Dataset[Daily]):
+    def name(self) -> str:
+        return "EU-DSA-SoR-DB"
 
-    @property
-    def archive(self) -> str:
-        return f"sor-global-{self.id}-full.zip"
+    def url(self, filename: str) -> str:
+        return f"https://dsa-sor-data-dumps.s3.eu-central-1.amazonaws.com/{filename}"
 
-    @property
-    def digest(self) -> str:
-        return self.archive + ".sha1"
+    def archive(self, release: Daily) -> str:
+        return f"sor-global-{release.id}-full.zip"
 
-    def batch(self, number: int) -> str:
-        if not 0 <= number <= 99_999:
-            raise ValueError(f"batch {number} is out of permissible range")
-        return f"{self.id}-{number:05}.parquet"
+    def digest(self, release: Daily) -> str:
+        return f"{self.archive(release)}.sha1"
 
     @property
-    def url(self) -> str:
-        return "https://dsa-sor-data-dumps.s3.eu-central-1.amazonaws.com"
-
     def extract_data_step_count(self) -> int:
         return 12
 
+    def extract_data_step_number(self, index: int, step: int) -> int:
+        return (self.extract_data_step_count + 1 ) * index + step
+
     @annotate_error(filename_arg="root")
-    def extract_data(
+    def extract_file_data(
         self,
+        *,
         root: Path,
+        release: Daily,
         index: int,
         name: str,
-        category: str,
+        filter: str,
         progress: Progress = NO_PROGRESS
     ) -> Counter:
-        path = root / self.working_directory
-        csv_files = f"{path}/sor-global-{self.id}-full-{index:05}-*.csv"
+        path = root / release.temp_directory
+        csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
         total_rows, total_rows_with_keywords = self._extract_row_counts(
             csv_files, index, name, progress
         )
-        frame = self._extract_filtered_rows(csv_files, index, name, category, progress)
+        frame = self._extract_filtered_rows(csv_files, index, name, filter, progress)
 
         self._validate_schema(frame)
-        path = root / self.batch_directory
+        path = root / release.directory
         path.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path / self.batch(index))
+        frame.write_parquet(path / release.batch_file(index))
 
         return self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
 
@@ -73,7 +72,7 @@ class DailySoR(DailyRelease):
         Determine number of rows and rows with keywords across all CSV files in
         the batch.
         """
-        progress.step(self.extract_data_step(index, 1), extra="count rows")
+        progress.step(self.extract_data_step_number(index, 1), extra="count rows")
         rows, rows_with_keywords = (
             pl.scan_csv(csv_files, infer_schema=False)
             .select(
@@ -107,7 +106,7 @@ class DailySoR(DailyRelease):
         Python's standard library.
         """
         # Fast path: Read all CSV files in one lazy Polars operation.
-        progress.step(self.extract_data_step(index, 2), extra="extracting category data")
+        progress.step(self.extract_data_step_number(index, 2), extra="extracting category data")
         try:
             frame = self._finish_frame(self._scan_csv_with_polars(csv_files, category))
             _logger.debug(
@@ -117,8 +116,7 @@ class DailySoR(DailyRelease):
             return frame
         except Exception as x:
             _logger.warning(
-                'failed to read CSV using="Pola.rs with glob", file="%s"',
-                name, exc_info=x
+                'failed to read CSV using="Pola.rs with glob", file="%s"', name, exc_info=x
             )
 
         # Slow path: Read each CSV file by itself, first using Polars again but
@@ -128,12 +126,12 @@ class DailySoR(DailyRelease):
         glob = csv_files[split + 1:]
 
         files = sorted(path.glob(glob))
-        assert len(files) == 0, f'glob "{csv_files}" matches no files'
+        assert 0 < len(files), f'glob "{csv_files}" matches no files'
 
         frames = []
         for file_no, file_path in enumerate(files):
             progress.step(
-                self.extract_data_step(index, 2 + file_no), extra=f"extracting {file_path.name}"
+                self.extract_data_step_number(index, 2 + file_no), extra=f"extracting {file_path.name}"
             )
 
             try:
@@ -299,12 +297,20 @@ class DailySoR(DailyRelease):
             batch_memory=batch_memory,
         )
 
-    @classmethod
     @annotate_error(filename_arg="root")
-    def analyze_month(cls, root: Path, month: YearMonth, collector: Collector) -> None:
+    def analyze_release[R: Release](
+        self, root: Path, release: R, collector: Collector
+    ) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
-        frame = pl.read_parquet(month.daily_glob(root))
+        frame = pl.read_parquet(f"{root}/{release.batch_glob}")
         with_keywords = frame.filter(pl.col("category_specification").list.len() != 0)
+        # with_csam = with_keywords.filter(
+        #     pl.col("category_specification").list.contains("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
+        # ).select(
+        #     pl.count().alias("total"),
+        #     pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT").count(),
+        #     pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").count(),
+        # )
 
         # Collect value counts for keywords
         keyword_counts = {}
@@ -328,7 +334,7 @@ class DailySoR(DailyRelease):
             keyword_counts.setdefault(keyword.lower(), 0)
 
         # Actually collect statistics
-        collector.month(month)
+        collector.release(release)
         collector.values(
             # Platforms
             platforms=frame.select(pl.col("platform_name").n_unique()).item(),
@@ -343,15 +349,21 @@ class DailySoR(DailyRelease):
             max_keywords_per_row=frame.select(pl.col("category_specification").list.len().max()).item(),
             keyword_count=keyword_count_total,
             **keyword_counts,
+
+            # CSAM
+            #csam_count=with_csam.height,
+            #csam_count=with_csam.ite
+
         )
         collector.frames(
             platforms=frame.select(pl.col("platform_name").unique()),
             platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
         )
 
-    @classmethod
     @annotate_error(filename_arg="root")
-    def combine_months(cls, root: Path, schedule: MonthlySchedule, collector: Collector) -> pl.DataFrame:
+    def combine_releases(
+        self, root: Path, coverage: Coverage, collector: Collector
+    ) -> pl.DataFrame:
         from IPython.display import display
 
         print("\n")

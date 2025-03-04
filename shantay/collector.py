@@ -1,7 +1,6 @@
 from collections.abc import Iterator
 import datetime as dt
 import polars as pl
-from .schedule import YearMonth
 
 
 _DEBUG = False
@@ -17,10 +16,10 @@ class Collector:
         self._series = {}
         self._frames = {}
 
-    def month(self, year_month: YearMonth) -> None:
-        """Register year-month for subsequent values() and frames()."""
+    def release(self, release: object) -> None:
+        """Register the release for subsequent value and frame registrations."""
         # Using mid-month as the date is less bad than the extremes
-        self._timeline.append(dt.date(year_month.year, year_month.month, 15))
+        self._timeline.append(release)
 
     def values(self, **kwargs: float) -> None:
         """Register values for named series."""

@@ -1,7 +1,8 @@
 from pathlib import Path
 import unittest
 
-from shantay.metadata import Metadata, MetadataConflict
+from shantay.metadata import Metadata
+from shantay.model import MetadataConflict
 from shantay.schema import normalize_category
 
 ROOT = Path(__file__).parent
@@ -13,12 +14,12 @@ FULL_CATEGORY = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
 
 
 class TestMetadata(unittest.TestCase):
-    def test_category(self) -> None:
+    def test_filter(self) -> None:
         self.assertEqual(normalize_category(CATEGORY), FULL_CATEGORY)
 
     def check_metadata_2000(self, metadata: Metadata) -> None:
-        self.assertEqual(metadata.category, "END_OF_THE_WORLD")
-        self.assertListEqual([*metadata.releases], [
+        self.assertEqual(metadata.filter, "END_OF_THE_WORLD")
+        self.assertListEqual([*metadata.records], [
             {"release": "1999-12-31", "batch_count": 665},
             {"release": "2000-01-01", "batch_count":   1},
         ])
@@ -26,8 +27,8 @@ class TestMetadata(unittest.TestCase):
     def test_new_metadata(self) -> None:
         # Instantiate metadata
         metadata = Metadata(normalize_category(CATEGORY))
-        self.assertEqual(metadata.category, FULL_CATEGORY)
-        self.assertListEqual([*metadata.releases], [])
+        self.assertEqual(metadata.filter, FULL_CATEGORY)
+        self.assertListEqual([*metadata.records], [])
 
     def test_merge_same_metadata(self) -> None:
         # Merge with identical data

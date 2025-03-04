@@ -8,11 +8,8 @@ from typing import Callable, Required, Self, TypedDict
 
 import polars as pl
 
-from .release import Release
 
-
-class MetadataConflict(Exception):
-    """Exception to indicate that metadata records for the same release differ."""
+from .model import MetadataConflict, Release
 
 
 class Entry(TypedDict, total=False):
@@ -23,64 +20,60 @@ class FullEntry(Entry):
     release: str
 
 
-def _as_key(key: str | Release) -> str:
-    return key if isinstance(key, str) else key.id
-
-
-class Metadata:
+class Metadata[R: Release]:
 
     FILENAME = "meta.json"
 
-    __slots__ = ("_category", "_releases")
+    __slots__ = ("_filter", "_releases")
 
     def __init__(
         self,
-        category: None | str = None,
+        filter: None | str = None,
         releases: None | dict[str, Entry] = None,
     ) -> None:
-        self._category = category
+        self._filter = filter
         self._releases = releases or {}
 
     @property
-    def category(self) -> None | str:
-        """Get the category for batches."""
-        return self._category
+    def filter(self) -> None | str:
+        """Get the filter for the working set."""
+        return self._filter
 
     @property
-    def releases(self) -> Iterator[FullEntry]:
+    def records(self) -> Iterator[FullEntry]:
         """Get an iterator over the release records."""
         return (dict(release=k) | v for k, v in self._releases.items())
 
     @property
-    def coverage(self) -> tuple[dt.date, dt.date]:
+    def range(self) -> tuple[dt.date, dt.date]:
         """Get the date for the first and last release."""
         if len(self._releases) == 0:
             raise ValueError("no coverage available")
         releases = sorted(self._releases)
-        return dt.date.fromisoformat(releases[0]), dt.date.fromisoformat(releases[-1])
+        return releases[0].date, releases[-1].date
 
-    def set_category(self, category: str) -> None:
+    def set_filter(self, filter: str) -> None:
         """Set the not yet configured category."""
-        if self._category is None:
-            self._category = category
-        elif self._category != category:
-            raise MetadataConflict(f"categories {self._category} and {category} differ")
+        if self._filter is None:
+            self._filter = filter
+        elif self._filter != filter:
+            raise MetadataConflict(f"categories {self._filter} and {filter} differ")
 
-    def batch_count(self, release: str | Release) -> int:
+    def batch_count(self, release: str | R) -> int:
         """Get the batch count for the given release."""
-        return self._releases[_as_key(release)]["batch_count"]
+        return self._releases[str(release)]["batch_count"]
 
-    def __contains__(self, key: str | Release) -> bool:
+    def __contains__(self, key: R) -> bool:
         """Determine whether the given release has an entry."""
-        return _as_key(key) in self._releases
+        return str(key) in self._releases
 
-    def __getitem__(self, key: str | Release) -> Entry:
+    def __getitem__(self, key: R) -> Entry:
         """Get the entry for the given release."""
-        return self._releases[_as_key(key)]
+        return self._releases[str(key)]
 
-    def __setitem__(self, key: str | Release, value: Entry) -> None:
+    def __setitem__(self, key: R, value: Entry) -> None:
         """Set the entry for the given release."""
-        self._releases[_as_key(key)] = value
+        self._releases[str(key)] = value
 
     def __len__(self) -> int:
         """Get the number of releases covered."""
@@ -94,24 +87,24 @@ class Metadata:
             if not_exist_ok and not (source / cls.FILENAME).exists():
                 continue
             source_data = cls.read_json(source)
-            merged._merge_category(source_data._category)
+            merged._merge_filter(source_data._filter)
             merged._merge_releases(source_data._releases)
         return merged
 
     def merge_with(self, other: Self) -> Self:
         """Merge with the other metadata."""
-        merged = type(self)(self._category, dict(self._releases))
-        merged._merge_category(other._category)
+        merged = type(self)(self._filter, dict(self._releases))
+        merged._merge_filter(other._filter)
         merged._merge_releases(other._releases)
         return merged
 
-    def _merge_category(self, other: None | str) -> None:
+    def _merge_filter(self, other: None | str) -> None:
         if other is None:
             pass
-        elif self._category is None or self._category == other:
-            self._category = other
+        elif self._filter is None or self._filter == other:
+            self._filter = other
         else:
-            raise MetadataConflict(f"divergent categories {self._category} and {other}")
+            raise MetadataConflict(f"divergent categories {self._filter} and {other}")
 
     def _merge_releases(self, other: dict[str, Entry]) -> None:
         for release, entry2 in other.items():
@@ -144,14 +137,14 @@ class Metadata:
     def read_json(cls, root: Path) -> Self:
         with open(root / cls.FILENAME, mode="r", encoding="utf8") as file:
             data = json.load(file)
-        return cls(data["category"], data["releases"])
+        return cls(data["filter"], data["releases"])
 
     def write_json(self, root: Path, *, sort_keys: bool = False) -> None:
         path = root / self.FILENAME
         tmp = path.with_suffix(".tmp.json")
         with open(tmp, mode="w", encoding="utf8") as file:
             json.dump({
-                "category": self._category,
+                "filter": self._filter,
                 "releases": self._releases
             }, file, indent=2, sort_keys=sort_keys)
         tmp.replace(path)
@@ -242,8 +235,8 @@ class _DailyFileSystemScan:
                         if self.check_is_file(batch):
                             batch_no += 1
 
-                    if self._metadata._category is None and 0 < batch_no:
-                        self.update_category(day)
+                    if self._metadata._filter is None and 0 < batch_no:
+                        self.update_filter(day)
                     self.update_batch_count(year_no, month_no, day_no, batch_no)
 
         self.signal()
@@ -288,14 +281,14 @@ class _DailyFileSystemScan:
         self.error(f'"{path}" is not a file')
         return False
 
-    def update_category(self, path: Path) -> None:
-        self._metadata._category = (
+    def update_filter(self, path: Path) -> None:
+        self._metadata._filter = (
             pl.scan_parquet(path)
             .select(
-                pl.col("category")
+                pl.col("filter")
                 .value_counts(sort=True)
                 .first()
-                .struct.field("category")
+                .struct.field("filter")
             )
             .collect()
             .item()
