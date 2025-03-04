@@ -86,9 +86,13 @@ or
 > uvx shantay -h
 ```
 
-The `-h` option causes *shantay* to print instructions about proper invocation.
-That's as far as documentation goes right now. I'll be sure to add more detailed
-instructions as *shantay* matures.
+Thusly prodded, shantay prints its usage information to the console. You can set
+the three directories for persistent storage. You can also limit the first and
+last day as well as specify the category. The latter is only required upon first
+run, so that shantay knows which of the 15 categories of violative content and
+behaviors to treat as working subset. Currently, a single value in the
+`STATEMENT_CATEGORY` is accepted but support for more expressive filtering will
+soon follow.
 
 ----
 
