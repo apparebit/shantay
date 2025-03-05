@@ -56,7 +56,11 @@ class TestPrepare(unittest.TestCase):
     def test_extraction(self):
         with self.subTest("set up metadata, runner, and release"):
             dataset = StatementsOfReasons()
-            storage = Storage(archive=ARCHIVE, working=STAGING, staging=STAGING)
+            storage = Storage(
+                archive_root=ARCHIVE,
+                working_root=STAGING,
+                staging_root=STAGING
+            )
             release = Daily.of(2024, 3, 14)
             coverage = Coverage(release, release, FILTER)
             metadata = Metadata(FILTER, {})
@@ -67,8 +71,8 @@ class TestPrepare(unittest.TestCase):
                 metadata=metadata,
             )
 
-            digest = release.parent_directory / dataset.digest(release)
-            archive = release.parent_directory / dataset.archive(release)
+            digest = release.parent_directory / dataset.digest_name(release)
+            archive = release.parent_directory / dataset.archive_name(release)
 
         with self.subTest("stage archive by copying fixture"):
             self.assertFalse((STAGING / digest).exists())

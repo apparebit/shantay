@@ -11,6 +11,9 @@ from .collector import Collector
 from .progress import NO_PROGRESS, Progress
 
 
+# ================================================================================================
+# Release, Daily, Monthly
+
 class Release(metaclass=ABCMeta):
     """
     A release capturing the periodical aspects of a dataset.
@@ -53,7 +56,8 @@ class Release(metaclass=ABCMeta):
     def parent_directory(self) -> Path:
         """
         A directory for grouping files at release granularity, e.g., "2000/03"
-        for a daily release on any day in March 2000.
+        for a daily release on any day in March 2000. Use this directory for
+        storing the original archive of a distribution.
         """
 
     @property
@@ -61,7 +65,8 @@ class Release(metaclass=ABCMeta):
     def directory(self) -> Path:
         """
         A directory for grouping *per* release files, e.g., "2000/03/30" for a
-        daily release on March 30, 2000.
+        daily release on March 30, 2000. Use this directory for storing
+        extracted batch files.
         """
 
     @property
@@ -196,6 +201,14 @@ class Daily(Release):
         return self.year, self.month, self.day
 
     @property
+    def first_day(self) -> Self:
+        return self
+
+    @property
+    def last_day(self) -> Self:
+        return self
+
+    @property
     def monthly(self) -> Self:
         return Monthly(self)
 
@@ -247,6 +260,14 @@ class Monthly(Release):
         return self.inner.ymd
 
     @property
+    def first_day(self) -> Daily:
+        return Daily(self.year, self.month, 1)
+
+    @property
+    def last_day(self) -> Daily:
+        return Daily(self.year, self.month, _days_in_month(self.year, self.month))
+
+    @property
     def daily(self) -> Self:
         return self.inner
 
@@ -278,26 +299,8 @@ def _days_in_month(year: int, month: int) -> int:
         return 31
 
 
-@dataclass(frozen=True, slots=True)
-class ReleaseRange[R: Release]:
-    """A range of releases, inclusive."""
-
-    first: R
-    last: R
-
-    def __post_init__(self) -> None:
-        assert self.first <= self.last
-
-    def __iter__(self) -> Iterator[R]:
-        cursor = self.first
-        while True:
-            yield cursor
-            if cursor == self.last:
-                break
-            cursor = next(cursor)
-
-    def __len__(self) -> int:
-        return self.last - self.first + 1
+# ================================================================================================
+# Dataset, Coverage
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,7 +309,8 @@ class Coverage[R: Release]:
 
     first: R
     last: R
-    filter: str
+    # Really: str | pl.Expr
+    filter: str | object
 
     def __post_init__(self) -> None:
         assert self.first <= self.last
@@ -335,11 +339,11 @@ class Dataset[R: Release](metaclass=ABCMeta):
         """The URL for the release."""
 
     @abstractmethod
-    def archive(self, release: R) -> str:
+    def archive_name(self, release: R) -> str:
         """The archive file name for the release."""
 
     @abstractmethod
-    def digest(self, release: R) -> str:
+    def digest_name(self, release: R) -> str:
         """The digest file name for the release."""
 
     @property
@@ -382,13 +386,25 @@ class Dataset[R: Release](metaclass=ABCMeta):
         """
 
 
+# ================================================================================================
+# Storage
+
+
 @dataclass(frozen=True, slots=True)
 class Storage:
     """The current storage locations."""
 
-    archive: Path
-    working: Path
-    staging: Path
+    archive_root: Path
+    working_root: Path
+    staging_root: Path
+
+
+# ================================================================================================
+# Storage
+
+
+class ConfigError(Exception):
+    """An invalid configuration option."""
 
 
 class DownloadFailed(Exception):

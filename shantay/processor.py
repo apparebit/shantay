@@ -39,13 +39,13 @@ class Processor[R: Release]:
 
     def start(self, task: str) -> None:
         _logger.info('starting runner=%d, task="%s"', self._id, task)
-        _logger.info('    key="dataset.name",    value="%s"', self._dataset.name)
-        _logger.info('    key="storage.archive", value="%s"', self._storage.archive)
-        _logger.info('    key="storage.working", value="%s"', self._storage.working)
-        _logger.info('    key="storage.staging", value="%s"', self._storage.staging)
-        _logger.info('    key="coverage.filter", value="%s"', self._coverage.filter)
-        _logger.info('    key="coverage.first",  value="%s"', self._coverage.first.id)
-        _logger.info('    key="coverage.last",   value="%s"', self._coverage.last.id)
+        _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
+        _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
+        _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
+        _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
+        _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
+        _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
+        _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
 
         if task == "prepare":
             self.prepare()
@@ -61,7 +61,7 @@ class Processor[R: Release]:
     def prepare_batches(self, release: R) -> None:
         if (
             release in self._metadata
-            and self.extracted_data_exists(self._storage.working, release)
+            and self.extracted_data_exists(self._storage.working_root, release)
         ):
             return
 
@@ -78,7 +78,7 @@ class Processor[R: Release]:
             )
             raise
 
-        shutil.rmtree(self._storage.staging / release.parent_directory)
+        shutil.rmtree(self._storage.staging_root / release.parent_directory)
         self._progress.perform(f"done with {release.id}").done()
         return release
 
@@ -90,25 +90,27 @@ class Processor[R: Release]:
             f"downloading data for release {release.id}",
             f"downloading {release.id}", "byte", with_rate=True,
         )
-        size = self._download_archive(self._storage.staging, release)
-        _logger.info('downloaded bytes=%d, file="%s"', size, self._dataset.archive(release))
+        size = self._download_archive(self._storage.staging_root, release)
+        _logger.info('downloaded bytes=%d, file="%s"', size, self._dataset.archive_name(release))
         self._progress.perform(f"validating release {release.id}")
-        self.validate_archive(self._storage.staging, release)
-        _logger.info('validated file="%s"', self._dataset.archive(release))
+        self.validate_archive(self._storage.staging_root, release)
+        _logger.info('validated file="%s"', self._dataset.archive_name(release))
         self._progress.perform(f"copying release {release.id} to archive")
-        self.copy_archive(self._storage.staging, self._storage.archive, release)
-        _logger.info('archived file="%s"', self._dataset.archive(release))
+        self.copy_archive(self._storage.staging_root, self._storage.archive_root, release)
+        _logger.info('archived file="%s"', self._dataset.archive_name(release))
 
     def is_archive_downloaded(self, release: R) -> bool:
         """Determine whether the archive for the release has been downloaded."""
         return (
-            self._storage.archive / release.parent_directory / self._dataset.archive(release)
+            self._storage.archive_root
+            / release.parent_directory
+            / self._dataset.archive_name(release)
         ).exists()
 
     @annotate_error(filename_arg="root")
     def _download_archive(self, root: Path, release: R) -> int:
         """Download the release archive and digest."""
-        digest = self._dataset.digest(release)
+        digest = self._dataset.digest_name(release)
         url = self._dataset.url(digest)
         path = root / release.parent_directory
 
@@ -120,7 +122,7 @@ class Processor[R: Release]:
             with open(path / digest, mode="wb") as file:
                 shutil.copyfileobj(response, file)
 
-        archive = self._dataset.archive(release)
+        archive = self._dataset.archive_name(release)
         url = self._dataset.url(archive)
         with urlopen(Request(url, None, {})) as response:
             if response.status != 200:
@@ -157,13 +159,13 @@ class Processor[R: Release]:
     @annotate_error(filename_arg="root")
     def validate_archive(self, root: Path, release: R) -> None:
         """Validate the archive stored under the root against its digest."""
-        digest = root / release.parent_directory / self._dataset.digest(release)
+        digest = root / release.parent_directory / self._dataset.digest_name(release)
         with open(digest, mode="rt", encoding="ascii") as file:
             expected = file.read().strip()
             expected = expected[:expected.index(" ")]
 
         algo = digest.suffix[1:]
-        archive = root / release.parent_directory / self._dataset.archive(release)
+        archive = root / release.parent_directory / self._dataset.archive_name(release)
         with open(archive, mode="rb") as file:
             actual = hashlib.file_digest(file, algo).hexdigest()
 
@@ -179,8 +181,8 @@ class Processor[R: Release]:
         """
         source_dir = source / release.parent_directory
         target_dir = target / release.parent_directory
-        digest = self._dataset.digest(release)
-        archive = self._dataset.archive(release)
+        digest = self._dataset.digest_name(release)
+        archive = self._dataset.archive_name(release)
 
         target_dir.mkdir(parents=True, exist_ok=True)
         shutil.copy(source_dir / digest, target_dir / digest)
@@ -197,23 +199,25 @@ class Processor[R: Release]:
             return
 
         self._progress.perform(f"copying release {release.id} from archive to staging")
-        self.copy_archive(self._storage.archive, self._storage.staging, release)
-        _logger.info('staged file="%s"', self._dataset.archive(release))
+        self.copy_archive(self._storage.archive_root, self._storage.staging_root, release)
+        _logger.info('staged file="%s"', self._dataset.archive_name(release))
         self._progress.perform(f"validating release {release.id}")
-        self.validate_archive(self._storage.staging, release)
-        _logger.info('validated file="%s"', self._dataset.archive(release))
+        self.validate_archive(self._storage.staging_root, release)
+        _logger.info('validated file="%s"', self._dataset.archive_name(release))
 
     def is_archive_staged(self, release: R) -> bool:
         """"Determine whether the archive for the given release has been staged."""
         return (
-            self._storage.staging / release.parent_directory / self._dataset.archive(release)
+            self._storage.staging_root
+            / release.parent_directory
+            / self._dataset.archive_name(release)
         ).exists()
 
     def extract_batches(self, release: R) -> None:
         """Extract the batches for the given release."""
         assert self.is_archive_staged(release)
 
-        filenames = self.list_archived_files(self._storage.staging, release)
+        filenames = self.list_archived_files(self._storage.staging_root, release)
         batch_count = len(filenames)
         self._progress.activity(
             f"extracting batches from release {release.id}",
@@ -226,9 +230,9 @@ class Processor[R: Release]:
         counters = Counter(batch_count=batch_count)
         for index, name in enumerate(filenames):
             self._progress.step(steps * index, "unarchiving data")
-            self.unarchive_file(self._storage.staging, release, index, name)
+            self.unarchive_file(self._storage.staging_root, release, index, name)
             counters += self._dataset.extract_file_data(
-                root=self._storage.staging,
+                root=self._storage.staging_root,
                 release=release,
                 index=index,
                 name=name,
@@ -236,25 +240,25 @@ class Processor[R: Release]:
                 progress=self._progress
             )
 
-            shutil.rmtree(self._storage.staging / release.temp_directory)
+            shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
         self._metadata[release] = counters
-        self._metadata.write_json(self._storage.staging)
-        _logger.info('extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive(release))
+        self._metadata.write_json(self._storage.staging_root)
+        _logger.info('extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive_name(release))
 
         self._progress.activity(
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
         ).start(batch_count)
         self.copy_extracted_data(
-            self._storage.staging, self._storage.working, release, batch_count
+            self._storage.staging_root, self._storage.working_root, release, batch_count
         )
         _logger.info('archived batch_count=%d, release="%s"', batch_count, release.id)
 
     def list_archived_files(self, root: Path, release: R) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
-        path = root / release.parent_directory / self._dataset.archive(release)
+        path = root / release.parent_directory / self._dataset.archive_name(release)
         with zipfile.ZipFile(path) as archive:
             return sorted(archive.namelist())
 
@@ -264,7 +268,7 @@ class Processor[R: Release]:
         Unarchive the file with index and name from the archive under the source
         directory into a suitable directory under the target directory.
         """
-        input = root / release.parent_directory / self._dataset.archive(release)
+        input = root / release.parent_directory / self._dataset.archive_name(release)
         with zipfile.ZipFile(input) as archive:
             with archive.open(name) as source_file:
                 output = root / release.temp_directory
@@ -306,9 +310,9 @@ class Processor[R: Release]:
 
         collector = Collector()
         for index, release in enumerate(self._coverage):
-            self.dataset.analyze_release(self._storage.working, release, collector)
+            self.dataset.analyze_release(self._storage.working_root, release, collector)
             self._progress.step(index + 1, extra=release.id)
 
         return self.dataset.combine_releases(
-            self._storage.working, self._coverage, collector
+            self._storage.working_root, self._coverage, collector
         )

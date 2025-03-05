@@ -26,11 +26,11 @@ class StatementsOfReasons(Dataset[Daily]):
     def url(self, filename: str) -> str:
         return f"https://dsa-sor-data-dumps.s3.eu-central-1.amazonaws.com/{filename}"
 
-    def archive(self, release: Daily) -> str:
+    def archive_name(self, release: Daily) -> str:
         return f"sor-global-{release.id}-full.zip"
 
-    def digest(self, release: Daily) -> str:
-        return f"{self.archive(release)}.sha1"
+    def digest_name(self, release: Daily) -> str:
+        return f"{self.archive_name(release)}.sha1"
 
     @property
     def extract_data_step_count(self) -> int:
@@ -105,7 +105,7 @@ class StatementsOfReasons(Dataset[Daily]):
         processing one CSV file at a time, first with Polars and then with
         Python's standard library.
         """
-        # Fast path: Read all CSV files in one lazy Polars operation.
+        # Fast path: Process several CSV files in one lazy Polars operation
         progress.step(self.extract_data_step_number(index, 2), extra="extracting category data")
         try:
             frame = self._finish_frame(self._scan_csv_with_polars(csv_files, category))
@@ -119,8 +119,8 @@ class StatementsOfReasons(Dataset[Daily]):
                 'failed to read CSV using="Pola.rs with glob", file="%s"', name, exc_info=x
             )
 
-        # Slow path: Read each CSV file by itself, first using Polars again but
-        # falling back to Python's standard library when that fails.
+        # Slow path: Process each CSV file by itself, trying first with the same
+        # lazy Polars operation and falling back onto Python's CSV module.
         split = csv_files.rindex("/")
         path = Path(csv_files[:split])
         glob = csv_files[split + 1:]
