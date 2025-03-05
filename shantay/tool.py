@@ -1,13 +1,18 @@
 from argparse import ArgumentParser
 import datetime as dt
+from importlib import import_module
 import logging
 from pathlib import Path
 import traceback
 from typing import Any
 
+import polars as pl
+
 from .dsa_sor import StatementsOfReasons
 from .metadata import Metadata
-from .model import Coverage, Daily, DownloadFailed, MetadataConflict, Storage
+from .model import (
+    ConfigError, Coverage, Daily, DownloadFailed, MetadataConflict, Storage
+)
 from .processor import Processor
 from .progress import Progress
 from .schema import normalize_category
@@ -46,9 +51,14 @@ def _parse_options(args: list[str]) -> Any:
         help="set the stop date (inclusive, defaults to day before yesterday)",
     )
     group.add_argument(
+        "--filter",
+        help="set the module name, colon, and global variable name for the Pola.rs"
+        "expression filtering out all but the data of interest",
+    )
+    group.add_argument(
         "--category",
-        help="set category to filter for(which may omit STATEMENT_CATEGORY_ prefix "
-        "and be written in lower case)",
+        help="set category to filter (may omit the STATEMENT_CATEGORY_ prefix and/or"
+        "use lower case)",
     )
 
     group = parser.add_argument_group("logging")
@@ -75,30 +85,47 @@ def _parse_options(args: list[str]) -> Any:
 
     return parser.parse_args(args)
 
-def _configure(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
-    # Set up storage
+
+def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
+    # Handle --archive, --working, and --staging options
     storage = Storage(
-        archive=options.archive if options.archive else Path.cwd() / "dsa_db-archive",
-        working=options.working if options.working else Path.cwd() / "dsa_db-working",
-        staging=options.staging if options.staging else Path.cwd() / "dsa_db-staging",
+        archive_root=options.archive if options.archive else Path.cwd() / "dsa_db-archive",
+        working_root=options.working if options.working else Path.cwd() / "dsa_db-working",
+        staging_root=options.staging if options.staging else Path.cwd() / "dsa_db-staging",
     )
 
-    # Set up filter and metadata
-    filter = None
+    # Handle --category and --filter options
+    if options.category is not None and options.filter is not None:
+        raise ConfigError("--category and --filter are mutually exclusive")
     if options.category is not None:
-        filter = normalize_category(options.category)
+        filter_name = filter_value = normalize_category(options.category)
+    if options.filter is not None:
+        filter_name = options.filter
+        filter_value = _resolve_module_binding(options.filter)
 
-    metadata = Metadata.merge(storage.staging, storage.working, not_exist_ok=True)
-    if filter:
-        metadata.set_filter(filter)
-    else:
-        filter = metadata.filter
+    # Prepare metadata
+    metadata = Metadata.merge(storage.staging_root, storage.working_root, not_exist_ok=True)
     if metadata.filter is None:
-        raise ValueError("cannot determine category, please provide --category option")
-    storage.staging.mkdir(parents=True, exist_ok=True)
-    metadata.write_json(storage.staging)
+        if filter_name is None:
+            raise ConfigError(
+                "no metadata from previous run is available; please specify --category or --filter"
+            )
+        metadata.set_filter(filter_name)
+    elif filter_name is None:
+        filter_name = metadata.filter
+        if filter_name.startwith("STATEMENT_CATEGORY"):
+            filter_value = filter_name
+        else:
+            filter_value = _resolve_module_binding(filter_name)
+    elif metadata.filter != filter_name:
+        raise ConfigError(
+            f'metadata from previous run is incompatible with --category/--filter option'
+        )
 
-    # Make sure we have start and stop dates.
+    storage.staging_root.mkdir(parents=True, exist_ok=True)
+    metadata.write_json(storage.staging_root)
+
+    # Handle --first and --last
     if options.task == "prepare":
         first = dt.date(2023, 9, 25)
         last = dt.date.today() - dt.timedelta(days=2)
@@ -113,14 +140,35 @@ def _configure(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
         last = dt.date.fromisoformat(options.last)
 
     if first is None:
-        raise ValueError("cannot determine start date, please provide --first option")
+        raise ConfigError("cannot determine first date, please provide --first option")
     if last is None:
-        raise ValueError("cannot determine stop date, please provide --last option")
+        raise ConfigError("cannot determine last date, please provide --last option")
 
     # Finish it all up
-    coverage = Coverage(Daily(first), Daily(last), filter)
+    coverage = Coverage(Daily(first), Daily(last), filter_value)
     progress = Progress()
     return storage, coverage, metadata, progress
+
+
+def _resolve_module_binding(s: str) -> object:
+    module, _, binding = s.partition(":")
+    if not module:
+        raise ConfigError(f'module binding "{s}" without module (before colon)')
+    if not binding:
+        raise ConfigError(f'module binding "{s}" without binding (after colon)')
+
+    try:
+        m = import_module(module)
+    except ImportError:
+        raise ConfigError(f'unable to import module for module binding "{s}"')
+    try:
+        v = getattr(m, binding)
+    except AttributeError:
+        raise ConfigError(f'attribute not found for module binding "{s}"')
+    if not isinstance(v, pl.Expr):
+        raise ConfigError(f'value of module binding "{s}" is not a Pola.rs expression')
+    return v
+
 
 def configure_logging(logfile: str, *, verbose: bool) -> None:
     logging.basicConfig(
@@ -131,10 +179,12 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
         level=logging.DEBUG if verbose else logging.INFO,
     )
 
+
 def _run(args: list[str]) -> None:
     options = _parse_options(args)
     configure_logging(options.logfile, verbose=options.verbose)
-    storage, coverage, metadata, progress = _configure(options)
+    storage, coverage, metadata, progress = get_configuration(options)
+
     processor = Processor(
         dataset=StatementsOfReasons(),
         storage=storage,
@@ -144,7 +194,8 @@ def _run(args: list[str]) -> None:
     )
     processor.start(options.task)
     if options.task == "prepare":
-        Metadata.copy_json(storage.staging, storage.batches)
+        Metadata.copy_json(storage.staging_root, storage.working_root)
+
 
 def run(args: list[str]) -> int:
     # Hide cursor
@@ -152,10 +203,14 @@ def run(args: list[str]) -> int:
     try:
         _run(args)
         return 0
-    except (DownloadFailed, MetadataConflict) as x:
+    except (ConfigError, DownloadFailed, MetadataConflict) as x:
+        # They are package-specific exceptions and indicate preanticipated
+        # errors. Hence, we do not need to print an exception trace.
         print(str(x))
         return 1
     except Exception as x:
+        # For all other exceptions, that most certainly doesn't hold. They are
+        # surprising and we need as much information about them as we can get.
         print("".join(traceback.format_exception(x)))
         return 1
     finally:
