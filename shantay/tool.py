@@ -145,7 +145,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
         raise ConfigError("cannot determine last date, please provide --last option")
 
     # Finish it all up
-    coverage = Coverage(Daily(first), Daily(last), filter_value)
+    coverage = Coverage(Daily.of(first), Daily.of(last), filter_value)
     progress = Progress()
     return storage, coverage, metadata, progress
 
