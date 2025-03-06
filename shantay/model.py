@@ -53,6 +53,16 @@ class Release(metaclass=ABCMeta):
 
     @property
     @abstractmethod
+    def year(self) -> int:
+        """The year of the release."""
+
+    @property
+    @abstractmethod
+    def month(self) -> int:
+        """The month of the release."""
+
+    @property
+    @abstractmethod
     def parent_directory(self) -> Path:
         """
         A directory for grouping files at release granularity, e.g., "2000/03"
@@ -87,15 +97,23 @@ class Release(metaclass=ABCMeta):
 
     @property
     @abstractmethod
-    def ymd(self) -> tuple[int, int, int]: ...
+    def first_day(self) -> dt.date:
+        """Get the first day for this release."""
 
     @property
-    def daily(self) -> Self:
-        return self
+    @abstractmethod
+    def last_day(self) -> dt.date:
+        """Get the last day for this release."""
 
     @property
-    def monthly(self) -> Self:
-        return self
+    @abstractmethod
+    def daily(self) -> "Daily":
+        """Get the daily release corresponding to this one."""
+
+    @property
+    @abstractmethod
+    def monthly(self) -> "Monthly":
+        """Get the monthly release corresponding to this one."""
 
     def __eq__(self, other: object) -> bool:
         if isinstance(other, Release):
@@ -201,15 +219,15 @@ class Daily(Release):
         return self.year, self.month, self.day
 
     @property
-    def first_day(self) -> Self:
-        return self
+    def first_day(self) -> dt.date:
+        return dt.date(self.year, self.month, self.day)
 
     @property
-    def last_day(self) -> Self:
-        return self
+    def last_day(self) -> dt.date:
+        return dt.date(self.year, self.month, self.day)
 
     @property
-    def monthly(self) -> Self:
+    def monthly(self) -> "Monthly":
         return Monthly(self)
 
     def __sub__(self, other) -> int:
@@ -256,16 +274,12 @@ class Monthly(Release):
         return self.inner.parent_directory
 
     @property
-    def ymd(self) -> tuple[int, int, int]:
-        return self.inner.ymd
+    def first_day(self) -> dt.date:
+        return dt.date(self.year, self.month, 1)
 
     @property
-    def first_day(self) -> Daily:
-        return Daily(self.year, self.month, 1)
-
-    @property
-    def last_day(self) -> Daily:
-        return Daily(self.year, self.month, _days_in_month(self.year, self.month))
+    def last_day(self) -> dt.date:
+        return dt.date(self.year, self.month, _days_in_month(self.year, self.month))
 
     @property
     def daily(self) -> Self:
@@ -278,7 +292,7 @@ class Monthly(Release):
         return NotImplemented
 
     def __next__(self) -> Self:
-        year, month, day = self.ymd
+        year, month, day = self.inner.ymd
         month += 1
         if 12 < month:
             year += 1
@@ -361,7 +375,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
         name: str,
         filter: str,
         progress: Progress = NO_PROGRESS,
-    ) -> Counter:
+    ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
 
     @abstractmethod

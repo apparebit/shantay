@@ -1,17 +1,18 @@
 from collections import Counter
 import csv
+import hashlib
 import logging
 from pathlib import Path
 
 import polars as pl
 
 from .collector import Collector
+from .metadata import Entry
 from .model import Coverage, Daily, Dataset, Release
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, ContentLanguageType, ContentType, CountryGroups, DecisionVisibility,
-    EXTRA_KEYWORDS_MINOR_PROTECTION, Keyword, KEYWORDS_MINOR_PROTECTION, SCHEMA,
-    SCHEMA_OVERRIDES, StatementCategory, TerritorialScopeType
+    Keyword, SCHEMA, SCHEMA_OVERRIDES, StatementCategory, TerritorialScopeType
 )
 from .util import annotate_error
 
@@ -47,9 +48,9 @@ class StatementsOfReasons(Dataset[Daily]):
         release: Daily,
         index: int,
         name: str,
-        filter: str,
+        filter: str | pl.Expr,
         progress: Progress = NO_PROGRESS
-    ) -> Counter:
+    ) -> tuple[str, Counter]:
         path = root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
@@ -61,9 +62,16 @@ class StatementsOfReasons(Dataset[Daily]):
         self._validate_schema(frame)
         path = root / release.directory
         path.mkdir(parents=True, exist_ok=True)
-        frame.write_parquet(path / release.batch_file(index))
+        path = path / release.batch_file(index)
 
-        return self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
+        # Write the parquet file and immediately read it again to compute
+        # digest. Experiments with a large file suggest that this performs at
+        # least as well as intercepting writes for computing the digest.
+        frame.write_parquet(path)
+        with open(path, mode="rb") as file:
+            digest = hashlib.file_digest(file, "sha256").hexdigest()
+
+        return digest, self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
 
     def _extract_row_counts(
         self, csv_files: str, index: int, name: str, progress: Progress = NO_PROGRESS
@@ -95,20 +103,22 @@ class StatementsOfReasons(Dataset[Daily]):
         csv_files: str,
         index: int,
         name: str,
-        category: str,
+        filter: str | pl.Expr,
         progress: Progress = NO_PROGRESS
     ) -> pl.DataFrame:
         """
-        Extract rows with the category of interest across all CSV files in the
-        batch. This method first does the expedient thing and tries to process
-        all CSV files in one Polars operation. If that fails, it tries again,
-        processing one CSV file at a time, first with Polars and then with
-        Python's standard library.
+        Extract rows with the filter applied across all CSV files in the batch.
+        This method first does the expedient thing and tries to process all CSV
+        files in one Polars operation. If that fails, it tries again, processing
+        one CSV file at a time, first with Polars and then with Python's
+        standard library.
         """
         # Fast path: Process several CSV files in one lazy Polars operation
-        progress.step(self.extract_data_step_number(index, 2), extra="extracting category data")
+        progress.step(self.extract_data_step_number(index, 2), extra="extracting working data")
         try:
-            frame = self._finish_frame(self._scan_csv_with_polars(csv_files, category))
+            frame = self.finish_frame(
+                self._scan_csv_with_polars(csv_files, filter)
+            ).collect()
             _logger.debug(
                 'extracted rows=%d, using="Pola.rs with glob", file="%s"',
                 frame.height, name
@@ -135,7 +145,9 @@ class StatementsOfReasons(Dataset[Daily]):
             )
 
             try:
-                frame = self._finish_frame(self._scan_csv_with_polars(file_path, category))
+                frame = self.finish_frame(
+                    self._scan_csv_with_polars(file_path, filter)
+                ).collect()
                 frames.append(frame)
 
                 _logger.debug(
@@ -147,7 +159,9 @@ class StatementsOfReasons(Dataset[Daily]):
                 _logger.warning('failed to read CSV using="Pola.rs", file="%s"', file_path.name)
 
             try:
-                frame = self._finish_frame(self._read_csv_row_by_row(file_path, category))
+                frame = self.finish_frame(
+                    self._read_csv_row_by_row(file_path, filter).lazy()
+                )
                 frames.append(frame)
 
                 _logger.debug(
@@ -163,33 +177,33 @@ class StatementsOfReasons(Dataset[Daily]):
 
         return pl.concat(frames, how="vertical")
 
-    def _scan_csv_with_polars(self, path: str | Path, category: str) -> pl.LazyFrame:
+    def _scan_csv_with_polars(self, path: str | Path, filter: str | pl.Expr) -> pl.LazyFrame:
         """
-        Read one or more CSV files with Polars' CSV reader, filtering for the
-        given category.
+        Read one or more CSV files with Polars' CSV reader, while also applying
+        the filter.
 
         The path string may include a wildcard to read more than one CSV file at
         the same time. The returned LazyFrame has not been collect()ed.
         """
-        return (
-            pl.scan_csv(
-                str(path),
-                null_values=["", "[]"],
-                schema_overrides=SCHEMA_OVERRIDES,
-                infer_schema=False,
+        if isinstance(filter, str):
+            filter = (
+                (pl.col("category") == filter)
+                | pl.col("category_addition").str.contains(filter, literal=True)
             )
-            .filter(
-                (pl.col("category") == category)
-                | pl.col("category_addition").str.contains(category, literal=True)
-            )
-        )
 
-    def _read_csv_row_by_row(self, path: str | Path, category: str) -> pl.DataFrame:
-        """
-        Read a CSV file using Python's CSV reader row by row.
+        return pl.scan_csv(
+            str(path),
+            null_values=["", "[]"],
+            schema_overrides=SCHEMA_OVERRIDES,
+            infer_schema=False,
+        ).filter(filter)
 
-        This method filters out all rows but those that have the given category.
+    def _read_csv_row_by_row(self, path: str | Path, filter: str | pl.Expr) -> pl.DataFrame:
         """
+        Read a CSV file using Python's CSV reader row by row, while also
+        applying the filter.
+        """
+        has_category = isinstance(filter, str)
         header = None
         rows = []
 
@@ -201,27 +215,35 @@ class StatementsOfReasons(Dataset[Daily]):
             reader = csv.reader(file)
             header = next(reader)
 
-            category_index = header.index("category")
-            addition_index = header.index("category_addition")
-            if category_index < 0:
-                raise ValueError(f'"{path}" does not include "category" column')
-            if addition_index < 0:
-                raise ValueError(f'"{path}" does not include "category_addition" column')
+            if has_category:
+                category_index = header.index("category")
+                addition_index = header.index("category_addition")
+                if category_index < 0:
+                    raise ValueError(f'"{path}" does not include "category" column')
+                if addition_index < 0:
+                    raise ValueError(f'"{path}" does not include "category_addition" column')
+
+                predicate = (
+                    lambda row: row[category_index] == filter or filter in row[addition_index]
+                )
+            else:
+                predicate = lambda _row: True
 
             for row in reader:
-                if row[category_index] == category or category in row[addition_index]:
+                if predicate(row):
                     row = [None if field in ("", "[]") else field for field in row]
                     rows.append(row)
 
-        return pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
+        frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
+        return frame if has_category else frame.filter(filter)
 
-    def _finish_frame(self, frame: pl.LazyFrame | pl.DataFrame) -> pl.DataFrame:
+    def finish_frame(self, frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
         """
         Finish the frame by patching in the names of country groups, parsing
         list-valued columns, as well as casting list elements and date columns
-        to their types,
+        to their types. This method does not collect lazy frames.
         """
-        frame = (
+        return (
             frame
             # Patch in the names of country groups
             .with_columns(
@@ -268,10 +290,6 @@ class StatementsOfReasons(Dataset[Daily]):
             )
         )
 
-        if isinstance(frame, pl.LazyFrame):
-            frame = frame.collect()
-        return frame
-
     def _validate_schema(self, frame: pl.DataFrame) -> None:
         """Validate the schema of the given data frame."""
         for name in frame.columns:
@@ -299,11 +317,39 @@ class StatementsOfReasons(Dataset[Daily]):
 
     @annotate_error(filename_arg="root")
     def analyze_release[R: Release](
-        self, root: Path, release: R, collector: Collector
+        self, root: Path, release: R, metadata: Entry, collector: Collector
     ) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
         frame = pl.read_parquet(f"{root}/{release.batch_glob}")
         with_keywords = frame.filter(pl.col("category_specification").list.len() != 0)
+
+        stats = frame.select(
+            pl.lit(release.first_day).alias("first_day"),
+            pl.lit(release.last_day).alias("last_day"),
+            pl.lit(metadata.get("total_rows")).alias("total_rows"),
+            pl.lit(metadata.get("total_rows_with_keywords")).alias("total_rows_with_keywords"),
+            pl.lit(metadata["batch_count"]).alias("batch_count"),
+            pl.len().alias("rows"),
+            pl.col("category_specification").list.len().sum().alias("keywords"),
+            pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
+            pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
+        ),
+
+        keywords = frame.select(
+            pl.col("category_specification")
+            .list.explode().drop_nulls()
+            .value_counts()
+            .struct.unnest()
+        )
+
+        collector.release(release)
+        collector.frames(
+            stats=stats,
+            keywords=keywords,
+            platforms=frame.select(pl.col("platform_name").unique()),
+            platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
+        )
+
         # with_csam = with_keywords.filter(
         #     pl.col("category_specification").list.contains("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
         # ).select(
@@ -312,75 +358,23 @@ class StatementsOfReasons(Dataset[Daily]):
         #     pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").count(),
         # )
 
-        # Collect value counts for keywords
-        keyword_counts = {}
-        keyword_count_total = 0
-        for keyword, count in (
-            with_keywords.select(
-                pl.col("category_specification")
-                .list.explode()
-                .value_counts()
-            )
-            .unnest("category_specification")
-            .rows()
-        ):
-            if keyword is None:
-                keyword = "NO_KEYWORD"
-            keyword_count_total += count
-            keyword_counts[keyword.lower()] = count
-
-        # Make sure that all columns are represented so that they have same length
-        for keyword in KEYWORDS_MINOR_PROTECTION + EXTRA_KEYWORDS_MINOR_PROTECTION:
-            keyword_counts.setdefault(keyword.lower(), 0)
-
-        # Actually collect statistics
-        collector.release(release)
-        collector.values(
-            # Platforms
-            platforms=frame.select(pl.col("platform_name").n_unique()).item(),
-            platforms_with_keywords=with_keywords.select(pl.col("platform_name").n_unique()).item(),
-
-            # Rows
-            rows=frame.height,
-            rows_with_keywords=with_keywords.height,
-            rows_with_keywords_old=with_keywords.select(pl.col("category_specification")).count().item(),
-
-            # Keywords
-            max_keywords_per_row=frame.select(pl.col("category_specification").list.len().max()).item(),
-            keyword_count=keyword_count_total,
-            **keyword_counts,
-
-            # CSAM
-            #csam_count=with_csam.height,
-            #csam_count=with_csam.ite
-
-        )
-        collector.frames(
-            platforms=frame.select(pl.col("platform_name").unique()),
-            platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
-        )
-
     @annotate_error(filename_arg="root")
     def combine_releases(
         self, root: Path, coverage: Coverage, collector: Collector
-    ) -> pl.DataFrame:
+    ) -> dict[str, pl.DataFrame]:
         from IPython.display import display
 
-        print("\n")
-        for key, value in collector.consume_frames():
-            if key in ("platforms", "platforms_with_keywords"):
-                series = value.select(pl.col("platform_name").unique())
-                print(f"{key} reporting category SoRs:")
-                for index in range(series.height):
-                    print(f"    {series.item(index, 0)}")
-                print()
+        summary = {}
+        for key, frame in collector.consume_frames():
+            if key == "stats":
+                summary[key] = frame
+            elif key == "keywords":
+                summary[key] = frame.group_by("category_specification").agg(pl.col("count").sum())
+            elif key == "platforms":
+                summary[key] = frame.select(pl.col("platform_name").unique())
+            elif key == "platforms_with_keywords":
+                summary[key] = frame.select(pl.col("platform_name").unique())
             else:
-                raise ValueError(f"unknown collection {key}")
+                raise ValueError(f"unexpected frame {key}")
 
-        df = collector.frame_for_values()
-        tmp = root / "stats.tmp.parquet"
-        df.write_parquet(tmp)
-        tmp.replace(root / "stats.parquet")
-
-        display(df)
-        return df
+        return summary

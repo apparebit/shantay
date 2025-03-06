@@ -8,40 +8,28 @@ _DEBUG = False
 
 class Collector:
     """
-    A class to simplify the piecemeal construction of data series and frames.
+    A class to simplify the piecemeal construction of data frames.
     """
 
     def __init__(self) -> None:
-        self._timeline = []
-        self._series = {}
-        self._frames = {}
+        self._all = {}
+        self._current = None
 
     def release(self, release: object) -> None:
         """Register the release for subsequent value and frame registrations."""
         # Using mid-month as the date is less bad than the extremes
-        self._timeline.append(release)
-
-    def values(self, **kwargs: float) -> None:
-        """Register values for named series."""
-        for k, v in kwargs.items():
-            self._series.setdefault(k, []).append(v)
+        self._current = self._all.setdefault(release, {})
 
     def frames(self, **kwargs: pl.DataFrame) -> None:
         """Register partial, named data frames."""
-        for k, v in kwargs.items():
-            self._frames.setdefault(k, []).append(v)
-
-    def frame_for_values(self) -> pl.DataFrame:
-        """Return a data frame comprising individually registered values."""
-        if _DEBUG:
-            for k, v in self._series.items():
-                print(f"{k:>50} :: {len(v)}")
-        return pl.DataFrame({
-            "date": self._timeline,
-            **self._series
-        })
+        self._current |= kwargs
 
     def consume_frames(self) -> Iterator[tuple[str, pl.DataFrame]]:
         """Iterate over data frames after concatenation of partial frames."""
-        for k, v in self._frames.items():
+        frames = {}
+        for release in self._all.values():
+            for k, v in release.items():
+                frames.setdefault(k, []).append(v)
+
+        for k, v in frames.items():
             yield k, pl.concat(v, how="vertical")

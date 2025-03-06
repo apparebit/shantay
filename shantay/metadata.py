@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import re
 import shutil
-from typing import Callable, Required, Self, TypedDict
+from typing import Callable, Optional, Required, Self, TypedDict
 
 import polars as pl
 
@@ -14,6 +14,8 @@ from .model import MetadataConflict, Release
 
 class Entry(TypedDict, total=False):
     batch_count: Required[int]
+    total_rows: Optional[int]
+    total_rows_with_keywords: Optional[int]
 
 
 class FullEntry(Entry):

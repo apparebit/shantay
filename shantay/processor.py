@@ -227,11 +227,12 @@ class Processor[R: Release]:
         self._progress.start(steps * batch_count)
 
         # Archived files are archives, too. Unarchive one at a time.
-        counters = Counter(batch_count=batch_count)
+        batch_digests = []
+        full_counters = Counter(batch_count=batch_count)
         for index, name in enumerate(filenames):
             self._progress.step(steps * index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
-            counters += self._dataset.extract_file_data(
+            digest, counters = self._dataset.extract_file_data(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
@@ -239,8 +240,15 @@ class Processor[R: Release]:
                 filter=self._coverage.filter,
                 progress=self._progress
             )
+            batch_digests.append(digest)
+            full_counters += counters
 
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
+
+        digest_file = self._storage.staging_root / release.directory / "digest.txt"
+        with open(digest_file, mode="w", encoding="utf8") as file:
+            for index, digest in enumerate(batch_digests):
+                file.write(f"{digest} {release.id}-{index:05}.parquet\n")
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
         self._metadata[release] = counters
