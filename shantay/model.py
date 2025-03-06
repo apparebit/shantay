@@ -53,16 +53,6 @@ class Release(metaclass=ABCMeta):
 
     @property
     @abstractmethod
-    def year(self) -> int:
-        """The year of the release."""
-
-    @property
-    @abstractmethod
-    def month(self) -> int:
-        """The month of the release."""
-
-    @property
-    @abstractmethod
     def parent_directory(self) -> Path:
         """
         A directory for grouping files at release granularity, e.g., "2000/03"
@@ -227,6 +217,10 @@ class Daily(Release):
         return dt.date(self.year, self.month, self.day)
 
     @property
+    def daily(self) -> Self:
+        return self
+
+    @property
     def monthly(self) -> "Monthly":
         return Monthly(self)
 
@@ -284,6 +278,10 @@ class Monthly(Release):
     @property
     def daily(self) -> Self:
         return self.inner
+
+    @property
+    def monthly(self) -> Self:
+        return self
 
     def __sub__(self, other) -> int:
         if type(self) is type(other):
