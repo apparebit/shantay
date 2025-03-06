@@ -89,9 +89,9 @@ def _parse_options(args: list[str]) -> Any:
 def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
     # Handle --archive, --working, and --staging options
     storage = Storage(
-        archive_root=options.archive if options.archive else Path.cwd() / "dsa_db-archive",
-        working_root=options.working if options.working else Path.cwd() / "dsa_db-working",
-        staging_root=options.staging if options.staging else Path.cwd() / "dsa_db-staging",
+        archive_root=options.archive if options.archive else Path.cwd() / "dsa-db-archive",
+        working_root=options.working if options.working else Path.cwd() / "dsa-db-working",
+        staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
     )
 
     # Handle --category and --filter options
