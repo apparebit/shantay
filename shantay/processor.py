@@ -251,7 +251,7 @@ class Processor[R: Release]:
                 file.write(f"{digest} {release.id}-{index:05}.parquet\n")
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
-        self._metadata[release] = counters
+        self._metadata[release] = full_counters
         self._metadata.write_json(self._storage.staging_root)
         _logger.info('extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive_name(release))
 
@@ -303,11 +303,13 @@ class Processor[R: Release]:
     @annotate_error(filename_arg="target")
     def copy_extracted_data(self, source: Path, target: Path, release: R, count: int) -> None:
         """Copy the batch files between root directories."""
-        path = target / release.directory
-        path.mkdir(parents=True, exist_ok=True)
+        source_dir = source / release.directory
+        target_dir = target / release.directory
+        target_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy(source_dir / "digest.txt", target_dir / "digest.txt")
         for index in range(count):
             batch = release.batch_file(index)
-            shutil.copy(source / release.directory / batch, path / batch)
+            shutil.copy(source_dir / batch, target_dir / batch)
             self._progress.step(index)
 
     def analyze(self) -> Any:
