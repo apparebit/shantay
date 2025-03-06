@@ -20,6 +20,7 @@ _logger = logging.getLogger(__package__)
 class Processor[R: Release]:
 
     CHUNK_SIZE = 64 * 1_024
+    DIGEST_FILE = "sha256.txt"
 
     def __init__(
         self,
@@ -245,7 +246,7 @@ class Processor[R: Release]:
 
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
-        digest_file = self._storage.staging_root / release.directory / "digest.txt"
+        digest_file = self._storage.staging_root / release.directory / self.DIGEST_FILE
         with open(digest_file, mode="w", encoding="utf8") as file:
             for index, digest in enumerate(batch_digests):
                 file.write(f"{digest} {release.id}-{index:05}.parquet\n")
@@ -306,7 +307,7 @@ class Processor[R: Release]:
         source_dir = source / release.directory
         target_dir = target / release.directory
         target_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source_dir / "digest.txt", target_dir / "digest.txt")
+        shutil.copy(source_dir / self.DIGEST_FILE, target_dir / self.DIGEST_FILE)
         for index in range(count):
             batch = release.batch_file(index)
             shutil.copy(source_dir / batch, target_dir / batch)
