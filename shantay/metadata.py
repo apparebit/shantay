@@ -159,50 +159,67 @@ class Metadata[R: Release]:
         shutil.copy(source / cls.FILENAME, tmp)
         tmp.replace(path)
 
-    @classmethod
-    def recover(cls, root: Path, *, verbose: bool = False) -> Self:
-        """
-        Recover the batch_count data for all daily releases stored under the
-        root directory.
 
-        This method inspects all directories and files matching the naming
-        convention for storing daily releases, i.e.,
-        "YYYY/mm/dd/YYYY-mm-dd-nnnnn.parquet", with the one-based months and
-        days always two decimal digits and the zero-based sequence numbers in
-        batch files always five decimal digits. It reports file system entities
-        that are files but should be directories and vice versa, empty
-        directories, month and day numbers that are out of range (accounting for
-        different months having different numbers of days, including February in
-        leap years), as well as missing month, day, and sequence numbers.
-        """
-        return _DailyFileSystemScan(root, cls(), verbose=verbose).run()
+def fsck(
+    root: Path,
+    *,
+    metadata: None | Metadata = None,
+    progress: Progress = NO_PROGRESS,
+) -> Metadata:
+    """
+    Validate the directory hierarchy at the given root.
+
+    This function validates the directory hierarchy at the given root by
+    checking the following properties:
+
+      - Directories representing years have consecutive four digit names and
+        are, in fact, directories
+      - Directories representing months have consecutive two digit names between
+        1 and 12 and are, in fact, directories
+      - Directories representing days have consecutive two digit names between 1
+        and the number of days for that particular month and are, in fact,
+        directories
+      - At most one monthly directory starts with a day other than 01
+      - At most one monthly directory ends with a day other than that month's
+        number of days.
+      - A day's parquet files are, in fact, files and have consecutive indexes
+        starting with 0.
+      - The number of parquet files matches the `batch_count` property of that
+        day's metadata record. If missing, it is automatically filled in.
+      - The list of SHA-256 hashes for a day's parquet files matches the files'
+        actual SHA-256 hashes. If missing, the list is automatically created.
+    """
+    return _Fsck(root, metadata=metadata, progress=progress).run()
 
 
 _TWO_DIGITS = re.compile(r"^[0-9]{2}$")
 _FOUR_DIGITS = re.compile(r"^[0-9]{4}$")
 _BATCH_FILE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{5}.parquet$")
 
-class _DailyFileSystemScan:
-    def __init__(self, root: Path, metadata: Metadata, *, verbose: bool = False) -> None:
+class _Fsck:
+    """Validate a directory hierarchy of parquet files."""
+
+    def __init__(
+        self,
+        root: Path,
+        *,
+        metadata: None | Metadata = None,
+        progress: Progress = NO_PROGRESS,
+    ) -> None:
         self._root = root
         self._first_date = None
         self._last_date = None
-        self._metadata = metadata
+        self._metadata = metadata or Metadata()
         self._errors = []
-        self._verbose = verbose
+        self._progress = progress
 
     def error(self, msg: str) -> None:
-        self._errors.append(msg)
-        if self._verbose:
-            print(f"ERROR: {msg}")
-
-    def signal(self, msg: None | str = None) -> None:
-        if msg:
-            self.error(msg)
-        if 0 < len(self._errors):
-            raise ValueError("\n".join(self._errors))
+        """Record an error."""
+        self._errors.append(ValueError(msg))
+        self._progress.error(msg)
 
     def run(self) -> Metadata:
+        """Run the file system analysis."""
         years = self.scandir(self._root, "????", _FOUR_DIGITS)
         self.check_children(self._root, years, 1800, 3000, int)
 
@@ -228,23 +245,16 @@ class _DailyFileSystemScan:
                     if not self.check_is_directory(day):
                         continue
 
-                    day_no = int(day.name)
-                    batches = self.scandir(day, "*.parquet", _BATCH_FILE)
-                    self.check_children(day, batches, 0, 99_999, lambda n: int(n[-13:-8]))
 
-                    batch_no = 0
-                    for batch in batches:
-                        if self.check_is_file(batch):
-                            batch_no += 1
+        if 0 < len(self._errors):
+            raise ExceptionGroup(
+                f'working data in "{self._root}" has problems', self._errors
+            )
 
-                    if self._metadata._filter is None and 0 < batch_no:
-                        self.update_filter(day)
-                    self.update_batch_count(year_no, month_no, day_no, batch_no)
-
-        self.signal()
         return self._metadata
 
     def scandir(self, path: Path, glob: str, pattern: re.Pattern) -> list[Path]:
+        """Scan the given directory with the glob and file name pattern."""
         children = sorted(p for p in path.glob(glob) if pattern.match(p.name))
         if len(children) == 0:
             self.error(f'directory "{path}" is empty')
@@ -258,18 +268,22 @@ class _DailyFileSystemScan:
         max_value: int,
         extract: Callable[[str], int],
     ) -> None:
+        """Check that children are indexed correctly."""
         index = None
+
         for child in children:
             current = extract(child.name)
             if not min_value <= current <= max_value:
-                self.signal(f'"{child}" has invalid index')
+                self.error(f'"{child}" has out-of-bounds index')
             if index is None and min_value == 0 and current != 0:
-                self.error(f'"{child}" has index other than 0')
+                # Only batch files have a min index of 0 and always start with it.
+                self.error(f'"{child}" has non-zero index')
             if index is not None and current != index:
-                self.error(f'entries of "{path}" are not consecutively numbered')
+                self.error(f'"{child}" has non-consecutive index {current}')
             index = current + 1
 
     def check_is_directory(self, path: Path) -> bool:
+        """Validate path is directory."""
         if path.is_dir():
             return True
 
@@ -277,13 +291,84 @@ class _DailyFileSystemScan:
         return False
 
     def check_is_file(self, path: Path) -> bool:
+        """Validate path is file."""
         if path.is_file():
             return True
 
         self.error(f'"{path}" is not a file')
         return False
 
+    def check_batch_files(self, day: Path) -> None:
+        # Determine error count so far
+        error_count = len(self._errors)
+
+        batches = self.scandir(day, "*.parquet", _BATCH_FILE)
+        self.check_children(day, batches, 0, 99_999, lambda n: int(n[-13:-8]))
+
+        expected_digests = self.read_digest_file(day)
+        actual_digests = {}
+
+        batch_no = 0
+        for batch in batches:
+            if not self.check_is_file(batch):
+                continue
+
+            batch_no += 1
+
+            actual_digests[batch.name] = actual = self.compute_digest(batch)
+            if expected_digests is None:
+                pass
+            elif batch.name not in expected_digests:
+                self.error(f'digest for "{batch}" is missing')
+                expected_digests[batch.name] = actual
+            elif expected_digests[batch.name] != actual:
+                self.error(f'digests for "{batch}" doesn\'t match')
+
+            self._progress.perform(f"scanned {batch}")
+
+        if error_count == len(self._errors) and expected_digests is None:
+            # Only write a new digest file if there were no errors and no file
+            self.write_digest_file(day, actual_digests)
+
+        if self._metadata._filter is None and 0 < batch_no:
+            self.update_filter(day)
+
+        year_no = int(day.parent.parent.name)
+        month_no = int(day.parent.name)
+        day_no = int(day.name)
+        self.update_batch_count(year_no, month_no, day_no, batch_no)
+
+    def read_digest_file(self, directory: Path) -> None | dict[str, str]:
+        """Read the text file with a list of batchfile digests."""
+        digests = {}
+
+        try:
+            with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
+                for line in file.readlines():
+                    digest, batchfile = line.split(" ")
+                    digests[batchfile] = digest
+            return digests
+        except FileNotFoundError:
+            return None
+
+    def write_digest_file(self, directory: Path, digests: dict[str, str]) -> None:
+        """Write the text file with the list of batchfile digests."""
+        path = directory / DIGEST_FILE
+        tmp = path.with_suffix(".tmp.txt")
+
+        with open(tmp, mode="w", encoding="utf8") as file:
+            for batchfile, digest in digests.items():
+                file.write(f"{digest} {batchfile}\n")
+
+        tmp.replace(path)
+
+    def compute_digest(self, path: Path) -> str:
+        """Compute the batchfile digest."""
+        with open(path, mode="rb") as file:
+            return hashlib.file_digest(file, "sha256").hexdigest()
+
     def update_filter(self, path: Path) -> None:
+        """Update the filter expression for this working set."""
         self._metadata._filter = (
             pl.scan_parquet(path)
             .select(
@@ -303,6 +388,7 @@ class _DailyFileSystemScan:
         day: int,
         batch_count: int,
     ) -> None:
+        """Update the batch count for a given release."""
         if batch_count == 0:
             return
 
@@ -320,8 +406,6 @@ class _DailyFileSystemScan:
 
         key = f"{year}-{month:02}-{day:02}"
         self._metadata[key] = { "batch_count": batch_count }
-        if self._verbose:
-            print(f"{key}: {batch_count:6,d}")
 
 
 def _get_days_in_month(year, month) -> int:
@@ -338,4 +422,4 @@ if __name__ == "__main__":
     if len(sys.argv) != 2:
         print("ERROR: invoke as `python -m shantay.metadata <directory-to-scan>`")
     else:
-        Metadata.recover(Path(sys.argv[1]), verbose=True)
+        fsck(Path(sys.argv[1]))
