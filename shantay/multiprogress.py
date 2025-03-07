@@ -74,9 +74,10 @@ class ShimManager(AbstractContextManager):
         After this method has been invoked, any progress shim previously
         allocated by this context manager won't function anymore.
         """
-        self._shim._id = None
-        self._shim._queue = None
+        self._shim._id = None # type: ignore
+        self._shim._queue = None # type: ignore
         self._shim = None
+        assert isinstance(self._slot, int)
         self._server._slots |= (1 << self._slot)
         self._slot = None
 
@@ -118,7 +119,7 @@ class ProgressServer:
             args=(self._queue, trackers)
         )
         self._runner.daemon = True
-        self._runner._keep_running = True
+        self._runner._keep_running = True # type: ignore
         self._runner.start()
 
         self._slots = (1 << size) - 1
@@ -144,7 +145,7 @@ class ProgressServer:
             except (OSError, EOFError):
                 break
 
-            if not thread._keep_running:
+            if not thread._keep_running: # type: ignore
                 break
             id, op, *args = msg
             if not 0 <= id < tracker_count or op not in _VALID_OPS:
@@ -165,7 +166,7 @@ class ProgressServer:
             return
 
         self._keep_running = False
-        self._runner._keep_running = False
+        self._runner._keep_running = False # type: ignore
         try:
             self._queue.put(None)
         except:
