@@ -1,7 +1,6 @@
 from collections.abc import Iterable
 import functools
 import inspect
-from textwrap import dedent
 from typing import Callable
 
 
@@ -59,26 +58,28 @@ def scale(value: float) -> tuple[float, str]:
         return value / 1_000_000_000, "giga"
 
 
-def to_markdown_table(rows: list[list[object]], column_names: list[str], title: str) -> str:
-    columns = [[it for it in column] for column in zip(*rows)]
-    if len(columns) == 0:
+def to_markdown_table(
+    *rows: list[object], columns: list[str], title: None | str = None
+) -> str:
+    column_data = [[it for it in column] for column in zip(*rows)]
+    if len(column_data) == 0:
         raise ValueError("no data columns to format")
-    if len(columns) != len(column_names):
-        raise ValueError(f"{len(columns)} columns but {len(column_names)} column names")
+    if len(column_data) != len(columns):
+        raise ValueError(f"{len(column_data)} columns but {len(columns)} column names")
 
-    types = [_get_type(column) for column in columns]
-    columns = [
+    types = [_get_type(column) for column in column_data]
+    column_data = [
         [fmt(it) for it in column]
-        for fmt, column in zip((_get_format(tp) for tp in types), columns)
+        for fmt, column in zip((_get_format(tp) for tp in types), column_data)
     ]
     widths = [
-        max(len(name) + 6, *(len(it) + 2 for it in column))
-        for name, column in zip(column_names, columns)
+        max(len(name) + 2, *(len(it) + 2 for it in column))
+        for name, column in zip(columns, column_data)
     ]
 
     def format_row(data: Iterable[str]) -> str:
         items = (
-            (f"{it:<{w}}" if tp is str else f"{it:>{w}}")
+            (f"{it:<{w-2}}" if tp is str else f"{it:>{w}}")
             for it, w, tp in zip(data, widths, types)
         )
         return f'| {" | ".join(items)} |'
@@ -89,17 +90,15 @@ def to_markdown_table(rows: list[list[object]], column_names: list[str], title: 
             before = ":" if tp is str else ""
             dashes = "-" * (width - 3)
             after = "" if tp is str else ":"
-            items.append(f" {before}{dashes}{after} ")
+            items.append(f"{before}{dashes}{after}")
         return f'| {" | ".join(items)} |'
 
-    return dedent(f"""\
-        __{title}__
-
-        {format_row(column_names)}
-        {format_div()}
-        {"\n".join(format_row(row) for row in zip(*columns))}
-    """)
-
+    return "\n".join([
+        *(() if title is None else (f"__{title}__:", "")),
+        format_row(columns),
+        format_div(),
+        *(format_row(row) for row in zip(*column_data)),
+    ])
 
 def _get_type(column: list[object]) -> type[int] | type[float] | type[str]:
     tp = None
