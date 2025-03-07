@@ -35,3 +35,6 @@ dynamic = ["version"]
 [project.urls]
 repository = "https://github.com/apparebit/shantay"
 
+
+[tool.pyright]
+pythonVersion = "3.12"

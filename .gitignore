@@ -2,6 +2,7 @@ __pycache__
 .venv
 tmp
 dsa-db-*
+node_modules/
 shantay.log
 dist
 target

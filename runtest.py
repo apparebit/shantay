@@ -1,5 +1,7 @@
 #!./.venv/bin/python
 
+import os
+import subprocess
 import sys
 import traceback
 import unittest
@@ -11,6 +13,14 @@ if __name__ == "__main__":
     stream = sys.stdout
     styled = StyledStream(stream)
 
+    if os.name != "nt":
+        print(styled.h0("Type Checking…"))
+        try:
+            subprocess.run(["npm", "run", "pyright"], check=True)
+        except subprocess.CalledProcessError:
+            print(styled.failure("shantay failed to type check!"))
+            sys.exit(1)
+
     print(styled.h0("Tests Are Running…"))
     print()
 
@@ -19,7 +29,7 @@ if __name__ == "__main__":
             module="test",
             exit=False,
             testRunner=unittest.TextTestRunner(
-                stream=stream, resultclass=ResultAdapter
+                stream=stream, resultclass=ResultAdapter # type: ignore
             ),
         )
         successful = runner.result.wasSuccessful()
