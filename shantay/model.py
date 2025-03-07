@@ -14,6 +14,7 @@ from .progress import NO_PROGRESS, Progress
 # ================================================================================================
 # Release, Daily, Monthly
 
+
 class Release(metaclass=ABCMeta):
     """
     A release capturing the periodical aspects of a dataset.
@@ -86,12 +87,12 @@ class Release(metaclass=ABCMeta):
 
     @property
     @abstractmethod
-    def first_day(self) -> dt.date:
+    def first_day(self) -> "Daily":
         """Get the first day for this release."""
 
     @property
     @abstractmethod
-    def last_day(self) -> dt.date:
+    def last_day(self) -> "Daily":
         """Get the last day for this release."""
 
     @property
@@ -177,6 +178,9 @@ class Daily(Release):
     def ymd(self) -> tuple[int, int, int]:
         return self.year, self.month, self.day
 
+    def to_date(self) -> dt.date:
+        return dt.date(*self.ymd)
+
     @property
     def batch_glob(self) -> str:
         year = self.year
@@ -184,12 +188,12 @@ class Daily(Release):
         return f"{year}/{month:02}/??/{year}-{month:02}-??-*.parquet"
 
     @property
-    def first_day(self) -> dt.date:
-        return dt.date(self.year, self.month, self.day)
+    def first_day(self) -> Self:
+        return self
 
     @property
-    def last_day(self) -> dt.date:
-        return dt.date(self.year, self.month, self.day)
+    def last_day(self) -> Self:
+        return self
 
     @property
     def daily(self) -> Self:
@@ -270,6 +274,15 @@ class Monthly(Release):
 
     inner: Daily
 
+    @classmethod
+    def of(cls, year: int, month: int) -> Self:
+        """
+        Create a new monthly release for the year and month. The day for the
+        underlying daily release is the last day of the month.
+        """
+        last_day = _days_in_month(year, month)
+        return cls(Daily(year, month, last_day))
+
     @property
     def year(self) -> int:
         return self.inner.year
@@ -294,13 +307,23 @@ class Monthly(Release):
     def batch_glob(self) -> str:
         return self.inner.batch_glob
 
-    @property
-    def first_day(self) -> dt.date:
-        return dt.date(self.year, self.month, 1)
+    def days(self) -> Iterator[Daily]:
+        """Get an iterator over this month's days"""
+        last_day = _days_in_month(self.year, self.month)
+        cursor = Daily(self.year, self.month, 1)
+        while True:
+            yield cursor
+            if cursor.day == last_day:
+                break
+            cursor = next(cursor)
 
     @property
-    def last_day(self) -> dt.date:
-        return dt.date(self.year, self.month, _days_in_month(self.year, self.month))
+    def first_day(self) -> Daily:
+        return Daily(self.year, self.month, 1)
+
+    @property
+    def last_day(self) -> Daily:
+        return Daily(self.year, self.month, _days_in_month(self.year, self.month))
 
     @property
     def daily(self) -> Daily:
@@ -414,6 +437,10 @@ class Coverage[R: Release]:
 
     def __post_init__(self) -> None:
         assert self.first <= self.last
+
+    @property
+    def monthly(self) -> "Coverage[Monthly]":
+        return Coverage(self.first.monthly, self.last.monthly, self.filter)
 
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
