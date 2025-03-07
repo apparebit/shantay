@@ -9,7 +9,7 @@ from typing import Any
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
-from .metadata import Metadata
+from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, Daily, DownloadFailed, MetadataConflict, Storage
 )
@@ -25,30 +25,27 @@ def _parse_options(args: list[str]) -> Any:
     group.add_argument(
         "--archive",
         type=Path,
-        help="set directory for storing downloaded archives (defaults to "
-        "`dsa-db-archive` in current working directory)"
+        help="set directory for downloaded archives (`./dsa-db-archive` by default)",
     )
     group.add_argument(
         "--working",
         type=Path,
-        help="set directory for storing extracted working set (defaults to "
-        "`dsa-db-working` in current working directory)"
+        help="set directory for parquet files with working data (`./dsa-db-working` by default)"
     )
     group.add_argument(
         "--staging",
         type=Path,
-        help="set directory for storing temporary files (`dsa_db-staging` in current "
-        "working directory)"
+        help="set directory for temporary files (`./dsa_db-staging` by default)"
     )
 
     group = parser.add_argument_group("coverage of working set")
     group.add_argument(
         "--first",
-        help="set the start date (defaults to earliest possible date)"
+        help="set the start date (2023-09-25 by default)"
     )
     group.add_argument(
         "--last",
-        help="set the stop date (inclusive, defaults to day before yesterday)",
+        help="set the stop date (the day before yesterday by default)",
     )
     group.add_argument(
         "--filter",
@@ -66,8 +63,7 @@ def _parse_options(args: list[str]) -> Any:
         "--logfile",
         default="shantay.log",
         type=Path,
-        help="set file receiving log output (defaults to `shantay.log` in current "
-        "working directory)"
+        help="set file receiving log output (`./shantay.log` by default)",
     )
     group.add_argument(
         "--quiet",
@@ -78,21 +74,27 @@ def _parse_options(args: list[str]) -> Any:
 
     parser.add_argument(
         "task",
-        choices=["prepare", "analyze"],
+        choices=["recover", "prepare", "analyze"],
         default="prepare",
-        help="select the task to execute",
+        help="select the task to execute: recover validates parquet files and restores "
+        "metadata; prepare downloads distributions and extracts working data; analyze "
+        "processes the working data",
     )
 
     return parser.parse_args(args)
 
 
-def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
-    # Handle --archive, --working, and --staging options
-    storage = Storage(
+def get_storage(options: Any) -> Storage:
+    return Storage(
         archive_root=options.archive if options.archive else Path.cwd() / "dsa-db-archive",
         working_root=options.working if options.working else Path.cwd() / "dsa-db-working",
         staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
     )
+
+
+def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
+    # Handle --archive, --working, and --staging options
+    storage = get_storage(options)
 
     # Handle --category and --filter options
     if options.category is not None and options.filter is not None:
@@ -185,6 +187,13 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
 def _run(args: list[str]) -> None:
     options = _parse_options(args)
     configure_logging(options.logfile, verbose=options.verbose)
+
+    # Handle recovery task before getting configuration
+    if options.task == "recover":
+        storage = get_storage(options)
+        fsck(storage.working_root, progress=Progress())
+        return
+
     storage, coverage, metadata, progress = get_configuration(options)
 
     processor = Processor(
