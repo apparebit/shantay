@@ -9,7 +9,7 @@ import polars as pl
 from .collector import Collector
 from .model import (
     Coverage, Daily, Dataset, KEYWORDS_FILE, MetadataEntry, PLATFORMS_FILE, Release,
-    STATS_FILE
+    STATISTICS_FILE
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
@@ -403,7 +403,7 @@ class StatementsOfReasons(Dataset[Daily]):
         for key, frame in collector.consume_frames():
             if key == "stats":
                 summary[key] = frame
-                self.write_parquet(frame, root / STATS_FILE)
+                self.write_parquet(frame, root / STATISTICS_FILE)
             elif key == "keywords":
                 summary[key] = (
                     frame.select(pl.exclude("year", "month"))
