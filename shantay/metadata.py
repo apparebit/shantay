@@ -74,6 +74,19 @@ class Metadata[R: Release]:
         """Get the number of releases covered."""
         return len(self._releases)
 
+    def to_frame(self) -> pl.DataFrame:
+        """
+        Convert the per-release records into a data frame. The `release` column
+        is date-valued, the `sha256` column string-valued, and all other columns
+        are i64-valued. While i128 would be preferable, it cannot currently be
+        written to parquet files.
+        """
+        # FIXME: Consider i128 when that type can be written to parquet.
+        return pl.json_normalize([*self.records]).with_columns(
+            pl.col("release").str.to_date("%Y-%m-%d"),
+            pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.Int64),
+        )
+
     @classmethod
     def merge(cls, *sources: Path, not_exist_ok: bool = False) -> Self:
         """Merge the metadata from the given directories."""
@@ -153,6 +166,9 @@ class Metadata[R: Release]:
         tmp = path.with_suffix(".tmp.json")
         shutil.copy(source / META_FILE, tmp)
         tmp.replace(path)
+
+    def __repr__(self) -> str:
+        return f"Metadata({self._filter}, {len(self._releases):,} releases)"
 
 
 def fsck(

@@ -7,10 +7,13 @@ from typing import Any, cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
+import polars as pl
+
 from .collector import Collector
 from .metadata import Metadata
 from .model import (
-    Coverage, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry, Release, Storage
+    Coverage, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry, Monthly, Release,
+    Storage
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
@@ -39,8 +42,8 @@ class Processor[R: Release]:
         self._metadata = metadata
         self._progress = progress
 
-    def start(self, task: str) -> None:
-        _logger.info('starting runner=%d, task="%s"', self._id, task)
+    def run(self, task: str) -> None | dict[str, pl.DataFrame]:
+        _logger.info('running processor=%d, task="%s"', self._id, task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
         _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
@@ -50,11 +53,11 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
 
         if task == "prepare":
-            self.prepare()
+            return self.prepare()
         elif task == "analyze":
-            self.analyze()
+            return self.analyze()
         else:
-            pass
+            raise ValueError(f'invalid task "{task}"')
 
     def prepare(self) -> None:
         for release in self._coverage:
@@ -315,16 +318,31 @@ class Processor[R: Release]:
             self._progress.step(index)
 
     def analyze(self) -> Any:
+        # Prepare metadata for analysis
+        metadata = (
+            self._metadata.to_frame()
+            .select(
+                pl.col("release").dt.year().alias("year"),
+                pl.col("release").dt.month().alias("month"),
+                pl.exclude("release", "sha256"),
+            )
+            .sort(pl.col("year", "month"))
+            .group_by("year", "month", maintain_order=True)
+            .agg(pl.col("*").sum())
+        )
+
+        # Prepare progress tracker
         self._progress.activity(
             "analyzing monthly batches", "analyzing batches", "batch", with_rate=False
         )
-        self._progress.start(len(self._coverage))
+        self._progress.start(metadata.height)
 
         collector = Collector()
-        for index, release in enumerate(self._coverage):
-            entry = self._metadata[release]
+        for index, stats in enumerate(metadata.iter_rows(named=True)):
+            release = Monthly.of(stats["year"], stats["month"])
+
             self._dataset.analyze_release(
-                self._storage.working_root, release, entry, collector
+                self._storage.working_root, release, cast(MetadataEntry, stats), collector
             )
             self._progress.step(index + 1, extra=release.id)
 
