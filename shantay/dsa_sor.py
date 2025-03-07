@@ -325,8 +325,8 @@ class StatementsOfReasons(Dataset[Daily]):
         with_keywords = frame.filter(pl.col("category_specification").list.len() != 0)
 
         stats = frame.select(
-            pl.lit(release.first_day).alias("first_day"),
-            pl.lit(release.last_day).alias("last_day"),
+            pl.lit(release.first_day.to_date()).alias("first_day"),
+            pl.lit(release.last_day.to_date()).alias("last_day"),
             pl.lit(metadata.get("total_rows")).alias("total_rows"),
             pl.lit(metadata.get("total_rows_with_keywords")).alias("total_rows_with_keywords"),
             pl.lit(metadata["batch_count"]).alias("batch_count"),
@@ -334,6 +334,10 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("category_specification").list.len().sum().alias("keywords"),
             pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
             pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
+        ).with_columns(
+            pl.exclude("first_day", "last_day", "batch_count", "max_keywords_per_row").cast(pl.Int64),
+            pl.col("batch_count").cast(pl.Int64),
+            pl.col("max_keywords_per_row").cast(pl.Int32),
         )
 
         keywords = frame.select(
@@ -363,10 +367,9 @@ class StatementsOfReasons(Dataset[Daily]):
     def combine_releases(
         self, root: Path, coverage: Coverage, collector: Collector
     ) -> dict[str, pl.DataFrame]:
-        from IPython.display import display
-
         summary = {}
         stats = None
+
         for key, frame in collector.consume_frames():
             if key == "stats":
                 summary[key] = stats = frame
