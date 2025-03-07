@@ -107,26 +107,28 @@ class Metadata[R: Release]:
                 self._releases[release] = entry2
                 continue
 
+            mismatch = False
             entry1 = self._releases[release]
-            if entry1["batch_count"] == entry2["batch_count"]:
-                if 1 == len(entry1) and 1 == len(entry2):
-                    continue
-                if 1 == len(entry1) and 1 < len(entry2):
-                    self._releases[release] = entry2
-                    continue
-                elif 1 < len(entry1) and 1 == len(entry2):
-                    continue
-                elif all(
-                    entry1.get(k) == entry2.get(k) for k in (
-                        "total_rows",
-                        "total_rows_with_keywords",
-                        "batch_rows",
-                        "batch_rows_with_keywords"
-                    )
-                ):
-                    continue
+            for key in (
+                "batch_count",
+                "total_rows",
+                "total_rows_with_keywords",
+                "batch_rows",
+                "batch_rows_with_keywords",
+                "batch_memory",
+                "sha256",
+            ):
+                # Copy over missing fields, check existing fields for consistency
+                if key not in entry1 and key in entry2:
+                    entry1[key] = entry2[key] # type: ignore
+                elif key == "batch_memory":
+                    # Don't compare for equality since only an estimate
+                    pass
+                elif key in entry1 and key in entry2 and entry1[key] != entry2[key]: # type: ignore
+                    mismatch = True
 
-            raise MetadataConflict(f"divergent metadata for release {release}")
+            if mismatch:
+                raise MetadataConflict(f"divergent metadata for release {release}")
 
     @classmethod
     def read_json(cls, root: Path) -> Self:
@@ -156,7 +158,6 @@ class Metadata[R: Release]:
 def fsck(
     root: Path,
     *,
-    metadata: None | Metadata = None,
     progress: Progress = NO_PROGRESS,
 ) -> Metadata:
     """
@@ -182,7 +183,7 @@ def fsck(
       - The list of SHA-256 hashes for a day's parquet files matches the files'
         actual SHA-256 hashes. If missing, the list is automatically created.
     """
-    return _Fsck(root, metadata=metadata, progress=progress).run()
+    return _Fsck(root, progress=progress).run()
 
 
 _TWO_DIGITS = re.compile(r"^[0-9]{2}$")
@@ -196,15 +197,14 @@ class _Fsck:
         self,
         root: Path,
         *,
-        metadata: None | Metadata = None,
         progress: Progress = NO_PROGRESS,
     ) -> None:
         self._root = root
         self._first_date = None
         self._last_date = None
-        self._metadata = metadata or Metadata()
         self._errors = []
         self._progress = progress
+        self._throttle = 0
 
     def error(self, msg: str) -> None:
         """Record an error."""
@@ -213,6 +213,11 @@ class _Fsck:
 
     def run(self) -> Metadata:
         """Run the file system analysis."""
+        try:
+            self._metadata = Metadata.read_json(self._root)
+        except FileNotFoundError:
+            self._metadata = Metadata()
+
         years = self.scandir(self._root, "????", _FOUR_DIGITS)
         self.check_children(self._root, years, 1800, 3000, int)
 
@@ -238,13 +243,32 @@ class _Fsck:
                     if not self.check_is_directory(day):
                         continue
 
+                    self.check_batch_files(day)
 
-        if 0 < len(self._errors):
-            raise ExceptionGroup(
-                f'working data in "{self._root}" has problems', self._errors
+        # If there were no errors, save metadata and be done.
+        if len(self._errors) == 0:
+            self._metadata.write_json(self._root)
+            self._progress.perform(
+                f'wrote "meta.json" with updated metadata to "{self._root}"'
             )
+            print()
+            return self._metadata
 
-        return self._metadata
+        # There were errors. Metadata may still be useful, so save under another name.
+        with open(Path.cwd() / "fsck.json", mode="w", encoding="utf8") as file:
+            json.dump({
+                "filter": self._metadata._filter,
+                "releases": self._metadata._releases
+            }, file, indent=2)
+
+        self._progress.perform(
+            'wrote "fsck.json" with recovered metadata to current directory'
+        )
+        print()
+
+        raise ExceptionGroup(
+            f'working data in "{self._root}" has problems', self._errors
+        )
 
     def scandir(self, path: Path, glob: str, pattern: re.Pattern) -> list[Path]:
         """Scan the given directory with the glob and file name pattern."""
@@ -292,7 +316,7 @@ class _Fsck:
         return False
 
     def check_batch_files(self, day: Path) -> None:
-        # Determine error count so far
+        # Determine error count so far.
         error_count = len(self._errors)
 
         batches = self.scandir(day, "*.parquet", _BATCH_FILE)
@@ -315,21 +339,27 @@ class _Fsck:
                 self.error(f'digest for "{batch}" is missing')
                 expected_digests[batch.name] = actual
             elif expected_digests[batch.name] != actual:
-                self.error(f'digests for "{batch}" doesn\'t match')
+                self.error(f'digests for "{batch}" don\'t match')
 
-            self._progress.perform(f"scanned {batch}")
+            self._throttle += 1
+            if self._throttle % 47 == 0:
+                self._progress.perform(f"scanned {batch}")
 
         if error_count == len(self._errors) and expected_digests is None:
-            # Only write a new digest file if there were no errors and no file
+            # Only write a new digest file if there were no errors and no file.
             self.write_digest_file(day, actual_digests)
 
         if self._metadata._filter is None and 0 < batch_no:
-            self.update_filter(day)
+            self.update_filter(f"{day}/*.parquet")
+
+        digest_of_digests = None
+        if (day / DIGEST_FILE).exists():
+            digest_of_digests = self.compute_digest(day / DIGEST_FILE)
 
         year_no = int(day.parent.parent.name)
         month_no = int(day.parent.name)
         day_no = int(day.name)
-        self.update_batch_count(year_no, month_no, day_no, batch_no)
+        self.update_batch_count(year_no, month_no, day_no, batch_no, digest_of_digests)
 
     def read_digest_file(self, directory: Path) -> None | dict[str, str]:
         """Read the text file with a list of batchfile digests."""
@@ -338,7 +368,7 @@ class _Fsck:
         try:
             with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
                 for line in file.readlines():
-                    digest, batchfile = line.split(" ")
+                    digest, batchfile = line.strip().split(" ")
                     digests[batchfile] = digest
             return digests
         except FileNotFoundError:
@@ -360,19 +390,17 @@ class _Fsck:
         with open(path, mode="rb") as file:
             return hashlib.file_digest(file, "sha256").hexdigest()
 
-    def update_filter(self, path: Path) -> None:
+    def update_filter(self, glob: str) -> None:
         """Update the filter expression for this working set."""
-        self._metadata._filter = (
-            pl.scan_parquet(path)
-            .select(
-                pl.col("filter")
-                .value_counts(sort=True)
-                .first()
-                .struct.field("filter")
-            )
-            .collect()
-            .item()
-        )
+        counts = pl.scan_parquet(glob).select(
+            pl.col("category")
+            .drop_nulls()
+            .value_counts(sort=True)
+            .struct.field("category")
+        ).collect()
+
+        if counts.height == 1:
+            self._metadata._filter = counts.item()
 
     def update_batch_count(
         self,
@@ -380,6 +408,7 @@ class _Fsck:
         month: int,
         day: int,
         batch_count: int,
+        digest_of_digests: None | str,
     ) -> None:
         """Update the batch count for a given release."""
         if batch_count == 0:
@@ -398,8 +427,25 @@ class _Fsck:
         self._last_date = current
 
         key = f"{year}-{month:02}-{day:02}"
-        self._metadata[key] = { "batch_count": batch_count }
+        if key not in self._metadata:
+            # Just create entry from scratch.
+            self._metadata[key] = {
+                "batch_count": batch_count,
+                "sha256": digest_of_digests
+            }
+            return
 
+        # Entry exists: Validate existing properties and update missing ones.
+        entry = self._metadata[key]
+        for key, value in [
+            ("batch_count", batch_count),
+            ("sha256", digest_of_digests),
+        ]:
+            if key in entry:
+                if entry[key] != value:
+                    self.error(f'{key} is {value}, but was {entry["batch_count"]}')
+            else:
+                entry[key] = value
 
 def _get_days_in_month(year, month) -> int:
     month += 1

@@ -390,9 +390,12 @@ DIGEST_FILE = "sha256.txt"
 
 class MetadataEntry(TypedDict, total=False):
     batch_count: Required[int]
-    batch_memory: Optional[int]
     total_rows: Optional[int]
     total_rows_with_keywords: Optional[int]
+    batch_rows: Optional[int]
+    batch_rows_with_keywords: Optional[int]
+    batch_memory: Optional[int]
+    sha256: Optional[str]
 
 
 class FullMetadataEntry(MetadataEntry):
