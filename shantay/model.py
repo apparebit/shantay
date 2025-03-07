@@ -80,10 +80,9 @@ class Release(metaclass=ABCMeta):
         return f"{self.id}-{index:05}.parquet"
 
     @property
+    @abstractmethod
     def batch_glob(self) -> str:
-        year = self.year
-        month = self.month
-        return f"{year}/{month:02}/??/{year}-{month:02}-??-*.parquet"
+        """Get a glob for all batch files for the release."""
 
     @property
     @abstractmethod
@@ -105,53 +104,23 @@ class Release(metaclass=ABCMeta):
     def monthly(self) -> "Monthly":
         """Get the monthly release corresponding to this one."""
 
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Release):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 == y2 and m1 == m2 and d1 == d2
+    @abstractmethod
+    def __eq__(self, other: object) -> bool: ...
 
-        return NotImplemented
+    @abstractmethod
+    def __ne__(self, other: object) -> bool: ...
 
-    def __ne__(self, other: object) -> bool:
-        if isinstance(other, Release):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 != y2 and m1 != m2 and d1 != d2
+    @abstractmethod
+    def __lt__(self, other: object) -> bool: ...
 
-        return NotImplemented
+    @abstractmethod
+    def __le__(self, other: object) -> bool: ...
 
-    def __lt__(self, other: object) -> bool:
-        if isinstance(other, Release):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 < y2 or (y1 == y2 and m1 < m2 or m1 == m2 and d1 < d2)
+    @abstractmethod
+    def __gt__(self, other: object) -> bool: ...
 
-        return NotImplemented
-
-    def __le__(self, other: object) -> bool:
-        if isinstance(other, Release):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 < y2 or (y1 == y2 and m1 < m2 or m1 == m2 and d1 <= d2)
-
-        return NotImplemented
-
-    def __gt__(self, other: object) -> bool:
-        if isinstance(other, Release):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 > y2 or (y1 == y2 and m1 > m2 or m1 == m2 and d1 > d2)
-
-        return NotImplemented
-
-    def __ge__(self, other: object) -> bool:
-        if isinstance(other, Release):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 > y2 or (y1 == y2 and m1 > m2 or m1 == m2 and d1 >= d2)
-
-        return NotImplemented
+    @abstractmethod
+    def __ge__(self, other: object) -> bool: ...
 
     @abstractmethod
     def __sub__(self, other: object) -> int: ...
@@ -209,6 +178,12 @@ class Daily(Release):
         return self.year, self.month, self.day
 
     @property
+    def batch_glob(self) -> str:
+        year = self.year
+        month = self.month
+        return f"{year}/{month:02}/??/{year}-{month:02}-??-*.parquet"
+
+    @property
     def first_day(self) -> dt.date:
         return dt.date(self.year, self.month, self.day)
 
@@ -224,9 +199,57 @@ class Daily(Release):
     def monthly(self) -> "Monthly":
         return Monthly(self)
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Daily):
+            y1, m1, d1 = self.ymd
+            y2, m2, d2 = other.ymd
+            return y1 == y2 and m1 == m2 and d1 == d2
+
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        if isinstance(other, Daily):
+            y1, m1, d1 = self.ymd
+            y2, m2, d2 = other.ymd
+            return y1 != y2 and m1 != m2 and d1 != d2
+
+        return NotImplemented
+
+    def __lt__(self, other: object) -> bool:
+        if isinstance(other, Daily):
+            y1, m1, d1 = self.ymd
+            y2, m2, d2 = other.ymd
+            return y1 < y2 or (y1 == y2 and m1 < m2 or m1 == m2 and d1 < d2)
+
+        return NotImplemented
+
+    def __le__(self, other: object) -> bool:
+        if isinstance(other, Daily):
+            y1, m1, d1 = self.ymd
+            y2, m2, d2 = other.ymd
+            return y1 < y2 or (y1 == y2 and m1 < m2 or m1 == m2 and d1 <= d2)
+
+        return NotImplemented
+
+    def __gt__(self, other: object) -> bool:
+        if isinstance(other, Daily):
+            y1, m1, d1 = self.ymd
+            y2, m2, d2 = other.ymd
+            return y1 > y2 or (y1 == y2 and m1 > m2 or m1 == m2 and d1 > d2)
+
+        return NotImplemented
+
+    def __ge__(self, other: object) -> bool:
+        if isinstance(other, Daily):
+            y1, m1, d1 = self.ymd
+            y2, m2, d2 = other.ymd
+            return y1 > y2 or (y1 == y2 and m1 > m2 or m1 == m2 and d1 >= d2)
+
+        return NotImplemented
+
     def __sub__(self, other) -> int:
-        if type(self) is type(other):
-            return (dt.date(*other.ymd) - dt.date(*self.ymd)).days
+        if isinstance(other, Daily):
+            return (dt.date(*other.daily.ymd) - dt.date(*self.ymd)).days
 
         return NotImplemented
 
@@ -239,7 +262,7 @@ class Daily(Release):
         if 12 < month:
             year += 1
             month = 1
-        return Daily(year, month, day)
+        return type(self)(year, month, day)
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +291,10 @@ class Monthly(Release):
         return self.inner.parent_directory
 
     @property
+    def batch_glob(self) -> str:
+        return self.inner.batch_glob
+
+    @property
     def first_day(self) -> dt.date:
         return dt.date(self.year, self.month, 1)
 
@@ -276,15 +303,57 @@ class Monthly(Release):
         return dt.date(self.year, self.month, _days_in_month(self.year, self.month))
 
     @property
-    def daily(self) -> Self:
+    def daily(self) -> Daily:
         return self.inner
 
     @property
     def monthly(self) -> Self:
         return self
 
+    def __eq__(self, other: object) -> bool:
+        if isinstance(other, Monthly):
+            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
+            return y1 == y2 and m1 == m2
+
+        return NotImplemented
+
+    def __ne__(self, other: object) -> bool:
+        if isinstance(other, Monthly):
+            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
+            return y1 != y2 or m1 != m2
+
+        return NotImplemented
+
+    def __lt__(self, other: object) -> bool:
+        if isinstance(other, Monthly):
+            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
+            return y1 < y2 or (y1 == y2 and m1 < m2)
+
+        return NotImplemented
+
+    def __le__(self, other: object) -> bool:
+        if isinstance(other, Monthly):
+            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
+            return y1 < y2 or (y1 == y2 and m1 <= m2)
+
+        return NotImplemented
+
+    def __gt__(self, other: object) -> bool:
+        if isinstance(other, Monthly):
+            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
+            return y1 > y2 or (y1 == y2 and m1 > m2)
+
+        return NotImplemented
+
+    def __ge__(self, other: object) -> bool:
+        if isinstance(other, Monthly):
+            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
+            return y1 > y2 or (y1 == y2 and m1 >= m2)
+
+        return NotImplemented
+
     def __sub__(self, other) -> int:
-        if type(self) is type(other):
+        if isinstance(other, Monthly):
             return (other.year - self.year) * 12 + other.month - self.month
 
         return NotImplemented
@@ -299,7 +368,7 @@ class Monthly(Release):
         if max_days < day:
             day = max_days
 
-        return Monthly(Daily(year, month, day))
+        return type(self)(Daily(year, month, day))
 
 
 def _days_in_month(year: int, month: int) -> int:
