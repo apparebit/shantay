@@ -3,6 +3,7 @@ import datetime as dt
 from importlib import import_module
 import logging
 from pathlib import Path
+from pprint import pprint
 import traceback
 from typing import Any
 
@@ -203,9 +204,22 @@ def _run(args: list[str]) -> None:
         metadata=metadata,
         progress=progress,
     )
-    processor.start(options.task)
+
+    result = processor.run(options.task)
+
     if options.task == "prepare":
         Metadata.copy_json(storage.staging_root, storage.working_root)
+    elif options.task == "analyze":
+        assert isinstance(result, dict)
+        pl.Config.set_thousands_separator(",")
+        pl.Config.set_tbl_rows(100)
+
+        pprint("\nKeywords: Protection of Minors")
+        pprint(result["keywords"].sort(pl.col("count"), descending=True))
+        pprint("\nAll Platforms")
+        pprint(result["platforms"])
+        pprint("\nPlatforms w/Keywords")
+        pprint(result["platforms_with_keywords"])
 
 
 def run(args: list[str]) -> int:
