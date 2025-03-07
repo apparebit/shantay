@@ -325,19 +325,32 @@ class StatementsOfReasons(Dataset[Daily]):
     ) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
         frame = pl.read_parquet(f"{root}/{release.batch_glob}")
+        last_day = release.last_day.to_date()
 
         stats = frame.select(
+            # Timing the data
             pl.lit(release.first_day.to_date()).alias("first_day"),
-            pl.lit(release.last_day.to_date()).alias("last_day"),
+            pl.lit(last_day).alias("last_day"),
+            pl.lit(release.monthly.year).alias("year"),
+            pl.lit(release.monthly.month).alias("month"),
+
+            # Stats about archival data
             pl.lit(metadata.get("total_rows")).alias("total_rows"),
             pl.lit(metadata.get("total_rows_with_keywords")).alias("total_rows_with_keywords"),
+
+            # Stats about batching
             pl.lit(metadata["batch_count"]).alias("batch_count"),
+
+            # Stats about working set
             pl.len().alias("rows"),
             pl.col("category_specification").list.len().sum().alias("keywords"),
             pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
             pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
         ).with_columns(
-            pl.exclude("first_day", "last_day", "batch_count", "max_keywords_per_row").cast(pl.UInt64),
+            pl.exclude(
+                "first_day", "last_day", "year", "month", "batch_count",
+                "max_keywords_per_row"
+            ).cast(pl.UInt64),
             pl.col("batch_count").cast(pl.UInt64),
             pl.col("max_keywords_per_row").cast(pl.UInt32),
         )
@@ -347,18 +360,23 @@ class StatementsOfReasons(Dataset[Daily]):
             .list.explode().drop_nulls()
             .value_counts()
             .struct.unnest()
+        ).with_columns(
+            # date vs year/month are redundant but simplify aggregations
+            pl.lit(last_day).alias("date"),
+            pl.lit(release.monthly.year).alias("year"),
+            pl.lit(release.monthly.month).alias("month"),
         )
 
-        platforms = (frame.select(
-                pl.col("platform_name"),
-                pl.col("category_specification").is_null().not_().alias("has_keyword"),
-            )
-            .group_by("platform_name", "has_keyword")
-            .agg(pl.len().alias("count")) # Count rows
-            .with_columns(
-                pl.lit(release.monthly.year).alias("year"),
-                pl.lit(release.monthly.month).alias("month"),
-            )
+        platforms = frame.select(
+            pl.col("platform_name"),
+            pl.col("category_specification").is_null().not_().alias("has_keyword"),
+        ).group_by("platform_name", "has_keyword").agg(
+            pl.len().alias("count")
+        ).with_columns(
+            # date vs year/month are redundant but simplify aggregations
+            pl.lit(last_day).alias("date"),
+            pl.lit(release.monthly.year).alias("year"),
+            pl.lit(release.monthly.month).alias("month"),
         )
 
         collector.release(release)
@@ -388,14 +406,16 @@ class StatementsOfReasons(Dataset[Daily]):
                 self.write_parquet(frame, root / STATS_FILE)
             elif key == "keywords":
                 summary[key] = (
-                    frame.group_by("category_specification")
+                    frame.select(pl.exclude("year", "month"))
+                    .group_by("category_specification")
                     .agg(pl.col("count").sum())
                     .sort("count", descending=True)
                 )
                 self.write_parquet(frame, root / KEYWORDS_FILE)
             elif key == "platforms":
                 summary[key] = (
-                    frame.group_by("platform_name", "has_keyword")
+                    frame.select(pl.exclude("year", "month"))
+                    .group_by("platform_name", "has_keyword")
                     .agg(pl.col("count").sum()) # Sum up partial aggregates
                     .sort(["platform_name", "has_keyword"])
                 )

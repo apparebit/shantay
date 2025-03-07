@@ -408,9 +408,9 @@ def _days_in_month(year: int, month: int) -> int:
 
 
 META_FILE = "meta.json"
-KEYWORDS_FILE = "keywords.parquet"
-PLATFORMS_FILE = "platforms.parquet"
-STATS_FILE = "stats.parquet"
+KEYWORDS_FILE = "meta-keywords.parquet"
+PLATFORMS_FILE = "meta-platforms.parquet"
+STATS_FILE = "meta-statistics.parquet"
 DIGEST_FILE = "sha256.txt"
 
 
