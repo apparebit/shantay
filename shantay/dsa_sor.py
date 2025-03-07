@@ -7,7 +7,10 @@ from pathlib import Path
 import polars as pl
 
 from .collector import Collector
-from .model import Coverage, Daily, Dataset, MetadataEntry, Release, STATS_FILE
+from .model import (
+    Coverage, Daily, Dataset, KEYWORDS_FILE, MetadataEntry, PLATFORMS_FILE, Release,
+    STATS_FILE
+)
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, ContentLanguageType, ContentType, CountryGroups, DecisionVisibility,
@@ -378,30 +381,31 @@ class StatementsOfReasons(Dataset[Daily]):
         self, root: Path, coverage: Coverage, collector: Collector
     ) -> dict[str, pl.DataFrame]:
         summary = {}
-        stats = None
 
         for key, frame in collector.consume_frames():
             if key == "stats":
-                summary[key] = stats = frame
+                summary[key] = frame
+                self.write_parquet(frame, root / STATS_FILE)
             elif key == "keywords":
                 summary[key] = (
                     frame.group_by("category_specification")
                     .agg(pl.col("count").sum())
                     .sort("count", descending=True)
                 )
+                self.write_parquet(frame, root / KEYWORDS_FILE)
             elif key == "platforms":
                 summary[key] = (
                     frame.group_by("platform_name", "has_keyword")
                     .agg(pl.col("count").sum()) # Sum up partial aggregates
                     .sort(["platform_name", "has_keyword"])
                 )
+                self.write_parquet(frame, root / PLATFORMS_FILE)
             else:
                 raise ValueError(f"unexpected frame {key}")
 
-        if stats is not None:
-            path = root / STATS_FILE
-            tmp = path.with_suffix(".tmp.parquet")
-            stats.write_parquet(tmp)
-            tmp.replace(path)
-
         return summary
+
+    def write_parquet(self, frame: pl.DataFrame, path: Path) -> None:
+        tmp = path.with_suffix(".tmp.parquet")
+        frame.write_parquet(tmp)
+        tmp.replace(path)
