@@ -183,7 +183,7 @@ class TestPrepare(unittest.TestCase):
                     )
                 elif key == "keywords":
                     self.assertListEqual(
-                        value.rows(),
+                        value.sort("category_specification").rows(),
                         [
                             ("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL", 1),
                             ("KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS", 1),
