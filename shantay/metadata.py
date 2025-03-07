@@ -1,37 +1,29 @@
 from collections.abc import Iterator
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 import re
 import shutil
-from typing import Callable, Optional, Required, Self, TypedDict
+from typing import Callable, cast, Self
 
 import polars as pl
 
 
-from .model import MetadataConflict, Release
-
-
-class Entry(TypedDict, total=False):
-    batch_count: Required[int]
-    total_rows: Optional[int]
-    total_rows_with_keywords: Optional[int]
-
-
-class FullEntry(Entry):
-    release: str
+from .model import (
+    DIGEST_FILE, FullMetadataEntry, META_FILE, MetadataConflict, MetadataEntry, Release
+)
+from .progress import NO_PROGRESS, Progress
 
 
 class Metadata[R: Release]:
-
-    FILENAME = "meta.json"
 
     __slots__ = ("_filter", "_releases")
 
     def __init__(
         self,
         filter: None | str = None,
-        releases: None | dict[str, Entry] = None,
+        releases: None | dict[str, MetadataEntry] = None,
     ) -> None:
         self._filter = filter
         self._releases = releases or {}
@@ -42,9 +34,10 @@ class Metadata[R: Release]:
         return self._filter
 
     @property
-    def records(self) -> Iterator[FullEntry]:
+    def records(self) -> Iterator[FullMetadataEntry]:
         """Get an iterator over the release records."""
-        return (dict(release=k) | v for k, v in self._releases.items())
+        for release, entry in self._releases.items():
+            yield cast(FullMetadataEntry, dict(release=release, **entry))
 
     @property
     def range(self) -> tuple[dt.date, dt.date]:
@@ -52,7 +45,7 @@ class Metadata[R: Release]:
         if len(self._releases) == 0:
             raise ValueError("no coverage available")
         releases = sorted(self._releases)
-        return releases[0].date, releases[-1].date
+        return dt.date.fromisoformat(releases[0]), dt.date.fromisoformat(releases[-1])
 
     def set_filter(self, filter: str) -> None:
         """Set the not yet configured category."""
@@ -69,11 +62,11 @@ class Metadata[R: Release]:
         """Determine whether the given release has an entry."""
         return str(key) in self._releases
 
-    def __getitem__(self, key: R) -> Entry:
+    def __getitem__(self, key: R) -> MetadataEntry:
         """Get the entry for the given release."""
         return self._releases[str(key)]
 
-    def __setitem__(self, key: R, value: Entry) -> None:
+    def __setitem__(self, key: R, value: MetadataEntry) -> None:
         """Set the entry for the given release."""
         self._releases[str(key)] = value
 
@@ -86,7 +79,7 @@ class Metadata[R: Release]:
         """Merge the metadata from the given directories."""
         merged = cls()
         for source in sources:
-            if not_exist_ok and not (source / cls.FILENAME).exists():
+            if not_exist_ok and not (source / META_FILE).exists():
                 continue
             source_data = cls.read_json(source)
             merged._merge_filter(source_data._filter)
@@ -108,7 +101,7 @@ class Metadata[R: Release]:
         else:
             raise MetadataConflict(f"divergent categories {self._filter} and {other}")
 
-    def _merge_releases(self, other: dict[str, Entry]) -> None:
+    def _merge_releases(self, other: dict[str, MetadataEntry]) -> None:
         for release, entry2 in other.items():
             if release not in self._releases:
                 self._releases[release] = entry2
@@ -137,12 +130,12 @@ class Metadata[R: Release]:
 
     @classmethod
     def read_json(cls, root: Path) -> Self:
-        with open(root / cls.FILENAME, mode="r", encoding="utf8") as file:
+        with open(root / META_FILE, mode="r", encoding="utf8") as file:
             data = json.load(file)
         return cls(data["filter"], data["releases"])
 
     def write_json(self, root: Path, *, sort_keys: bool = False) -> None:
-        path = root / self.FILENAME
+        path = root / META_FILE
         tmp = path.with_suffix(".tmp.json")
         with open(tmp, mode="w", encoding="utf8") as file:
             json.dump({
@@ -154,9 +147,9 @@ class Metadata[R: Release]:
     @classmethod
     def copy_json(cls, source: Path, target: Path) -> None:
         """Copy the metadata in JSON format from source to target directory."""
-        path = target / cls.FILENAME
+        path = target / META_FILE
         tmp = path.with_suffix(".tmp.json")
-        shutil.copy(source / cls.FILENAME, tmp)
+        shutil.copy(source / META_FILE, tmp)
         tmp.replace(path)
 
 

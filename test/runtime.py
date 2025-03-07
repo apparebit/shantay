@@ -237,7 +237,7 @@ class ResultAdapter(unittest.TestResult if TYPE_CHECKING else object):
         return getattr(self._result, name)
 
     @property
-    def testsRun(self) -> int:
+    def testsRun(self) -> int:  # type: ignore
         # Without this property, unittest.TestProgram gets "Ran N tests" wrong
         return self._test_count
 

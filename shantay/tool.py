@@ -97,6 +97,8 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
     # Handle --category and --filter options
     if options.category is not None and options.filter is not None:
         raise ConfigError("--category and --filter are mutually exclusive")
+
+    filter_name = filter_value = None
     if options.category is not None:
         filter_name = filter_value = normalize_category(options.category)
     if options.filter is not None:
@@ -113,7 +115,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
         metadata.set_filter(filter_name)
     elif filter_name is None:
         filter_name = metadata.filter
-        if filter_name.startwith("STATEMENT_CATEGORY"):
+        if filter_name.startswith("STATEMENT_CATEGORY"):
             filter_value = filter_name
         else:
             filter_value = _resolve_module_binding(filter_name)

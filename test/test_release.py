@@ -7,7 +7,7 @@ class TestRelease(unittest.TestCase):
 
     def check_daily(self, release: Release) -> None:
         self.assertIsInstance(release, Daily)
-        self.assertTupleEqual(release.ymd, (1999, 12, 31))
+        self.assertTupleEqual(release.daily.ymd, (1999, 12, 31))
 
     def test_from_string(self) -> None:
         r = Daily.of("1999-12-31")

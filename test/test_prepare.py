@@ -1,6 +1,8 @@
 from collections import Counter
+import datetime as dt
 from pathlib import Path
 import shutil
+from typing import cast
 import unittest
 
 import polars as pl
@@ -8,7 +10,7 @@ import polars as pl
 from shantay.collector import Collector
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
-from shantay.model import Coverage, Daily, Monthly, Storage
+from shantay.model import Coverage, Daily, MetadataEntry, Storage
 from shantay.processor import Processor
 from shantay.tool import configure_logging
 
@@ -131,7 +133,7 @@ class TestPrepare(unittest.TestCase):
             self.assertFalse(batch1.exists())
 
             processor.unarchive_file(STAGING, release, 1, ZIP_FILES[1])
-            counters += dataset.extract_file_data(
+            digest, more_counters = dataset.extract_file_data(
                 root=STAGING,
                 release=release,
                 index=1,
@@ -139,10 +141,13 @@ class TestPrepare(unittest.TestCase):
                 filter=FILTER,
             )
 
+            self.assertEqual(digest, "1d58cfeccb6a50b39d3ea72dec8178631b4292d5b4856b2e5c9272eb94b2c1f0")
+
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
             self.assertFileEqual(workdir / CSV_FILES[2], FIXTURE / "csv" / CSV_FILES[2])
             self.assertFileEqual(workdir / CSV_FILES[3], FIXTURE / "csv" / CSV_FILES[3])
 
+            counters += more_counters
             self.assertEqual(counters["batch_count"], 2)
             self.assertEqual(counters["total_rows"], 100 + 102)
             self.assertEqual(counters["total_rows_with_keywords"], 12 + 1)
@@ -157,26 +162,54 @@ class TestPrepare(unittest.TestCase):
 
         with self.subTest("analyze release data"):
             collector = Collector()
-            dataset.analyze_release(STAGING, release.monthly, collector)
+            metadata_entry = cast(MetadataEntry, {"batch_count": 2})
+            dataset.analyze_release(STAGING, release.monthly, metadata_entry, collector)
 
             for key, value in collector.consume_frames():
-                self.assertIn(key, ("platforms", "platforms_with_keywords"))
-                platforms = value.select(
-                    pl.col("platform_name").unique()
-                ).to_series().to_list()
+                if key == "stats":
+                    self.assertDictEqual(
+                        value.to_dict(as_series=False),
+                        {
+                            "batch_count": [2],
+                            "first_day": [dt.date(2024, 3, 1)],
+                            "last_day": [dt.date(2024, 3, 31)],
+                            "total_rows": [None],
+                            "total_rows_with_keywords": [None],
+                            "rows": [17],
+                            "keywords": [2],
+                            "rows_with_keywords": [2],
+                            "max_keywords_per_row": [1],
+                        }
+                    )
+                elif key == "keywords":
+                    self.assertListEqual(
+                        value.rows(),
+                        [
+                            ("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL", 1),
+                            ("KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS", 1),
+                        ]
+                    )
+                elif key in ("platforms", "platforms_with_keywords"):
+                    platforms = value.select(
+                        pl.col("platform_name").unique()
+                    ).to_series().to_list()
 
-                if key == "platforms":
-                    self.assertListEqual(sorted(platforms), [
-                        "Google Shopping", "Snapchat", "TikTok"
-                    ])
-                elif key == "platforms_with_keywords":
-                    self.assertListEqual(platforms, ["Snapchat"])
+                    if key == "platforms":
+                        self.assertListEqual(sorted(platforms), [
+                            "Google Shopping", "Snapchat", "TikTok"
+                        ])
+                    elif key == "platforms_with_keywords":
+                        self.assertListEqual(platforms, ["Snapchat"])
+                else:
+                    self.assertIn(
+                        key, ("stats", "keywords", "platforms", "platforms_with_keywords")
+                    )
 
         with self.subTest("check log file"):
             with LOGFILE.open(mode="r", encoding="utf8") as file:
                 lines = file.readlines()
 
-            self.assertEqual(len(lines), 36)
+            self.assertEqual(len(lines), 33)
             self.assertIn("staged file", lines[0])
             self.assertIn("validated file", lines[1])
             self.assertIn('unarchived type="nested archive"', lines[2])
@@ -190,30 +223,27 @@ class TestPrepare(unittest.TestCase):
             self.assertIn('[WARNING] failed to read CSV using="Pola.rs with glob"', lines[9])
             self.assertTrue(lines[10].startswith('Traceback'))
             self.assertTrue(lines[11].startswith('  File'))
-            self.assertTrue(lines[12].startswith('    frame = self'))
-            self.assertTrue(lines[13].startswith('            ^^^^'))
+            self.assertTrue(lines[12].startswith('    ).collect()'))
+            self.assertTrue(lines[13].startswith('      ^^^^^^^'))
             self.assertTrue(lines[14].startswith('  File'))
-            self.assertTrue(lines[15].startswith('    frame = frame'))
-            self.assertTrue(lines[16].startswith('            ^^^^^'))
-            self.assertTrue(lines[17].startswith('  File'))
-            self.assertTrue(lines[18].startswith('    return wrap_df(ldf'))
-            self.assertTrue(lines[19].startswith('                   ^^^'))
-            self.assertTrue(lines[20].startswith('polars.exceptions.ComputeError: could not parse'))
-            self.assertTrue(lines[21].startswith(''))
-            self.assertTrue(lines[22].startswith('The current offset in the file is 131 bytes'))
-            self.assertTrue(lines[23].startswith(''))
-            self.assertTrue(lines[24].startswith('You might want to try'))
-            self.assertTrue(lines[25].startswith('- increasing'))
-            self.assertTrue(lines[26].startswith('- specifying'))
-            self.assertTrue(lines[27].startswith('- setting'))
-            self.assertTrue(lines[28].startswith('- adding'))
-            self.assertTrue(lines[29].startswith(''))
-            self.assertTrue(lines[30].startswith('Original error: ```invalid csv file'))
-            self.assertTrue(lines[31].startswith(''))
-            self.assertTrue(lines[32].startswith('Field `"Napodobňovanie'))
+            self.assertTrue(lines[15].startswith('    return wrap_df(ldf'))
+            self.assertTrue(lines[16].startswith('                   ^^^'))
+            self.assertTrue(lines[17].startswith('polars.exceptions.ComputeError: could not parse'))
+            self.assertTrue(lines[18].startswith(''))
+            self.assertTrue(lines[19].startswith('The current offset in the file is 131 bytes'))
+            self.assertTrue(lines[20].startswith(''))
+            self.assertTrue(lines[21].startswith('You might want to try'))
+            self.assertTrue(lines[22].startswith('- increasing'))
+            self.assertTrue(lines[23].startswith('- specifying'))
+            self.assertTrue(lines[24].startswith('- setting'))
+            self.assertTrue(lines[25].startswith('- adding'))
+            self.assertTrue(lines[26].startswith(''))
+            self.assertTrue(lines[27].startswith('Original error: ```invalid csv file'))
+            self.assertTrue(lines[28].startswith(''))
+            self.assertTrue(lines[29].startswith('Field `"Napodobňovanie'))
             # Parsing the first CSV file by itself with Pola.rs works:
-            self.assertIn('extracted rows=8, using="Pola.rs"', lines[33])
+            self.assertIn('extracted rows=8, using="Pola.rs"', lines[30])
             # Parsing the second CSV file by itself with Pola.rs fails:
-            self.assertIn('failed to read CSV using="Pola.rs"', lines[34])
+            self.assertIn('failed to read CSV using="Pola.rs"', lines[31])
             # Parsing the second CSV fail by itself with Python's csv works:
-            self.assertIn('extracted rows=1, using="Python\'s CSV module"', lines[35])
+            self.assertIn('extracted rows=1, using="Python\'s CSV module"', lines[32])

@@ -3,13 +3,15 @@ import hashlib
 import logging
 from pathlib import Path
 import shutil
-from typing import Any, NoReturn
+from typing import Any, cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
 from .collector import Collector
 from .metadata import Metadata
-from .model import Coverage, Dataset, DownloadFailed, Release, Storage
+from .model import (
+    Coverage, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry, Release, Storage
+)
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
 
@@ -20,7 +22,6 @@ _logger = logging.getLogger(__package__)
 class Processor[R: Release]:
 
     CHUNK_SIZE = 64 * 1_024
-    DIGEST_FILE = "sha256.txt"
 
     def __init__(
         self,
@@ -81,7 +82,7 @@ class Processor[R: Release]:
 
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
         self._progress.perform(f"done with {release.id}").done()
-        return release
+        return
 
     def download_archive(self, release: R) -> None:
         if self.is_archive_downloaded(release):
@@ -246,13 +247,13 @@ class Processor[R: Release]:
 
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
-        digest_file = self._storage.staging_root / release.directory / self.DIGEST_FILE
+        digest_file = self._storage.staging_root / release.directory / DIGEST_FILE
         with open(digest_file, mode="w", encoding="utf8") as file:
             for index, digest in enumerate(batch_digests):
                 file.write(f"{digest} {release.id}-{index:05}.parquet\n")
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
-        self._metadata[release] = full_counters
+        self._metadata[release] = cast(MetadataEntry, full_counters)
         self._metadata.write_json(self._storage.staging_root)
         _logger.info('extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive_name(release))
 
@@ -307,7 +308,7 @@ class Processor[R: Release]:
         source_dir = source / release.directory
         target_dir = target / release.directory
         target_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source_dir / self.DIGEST_FILE, target_dir / self.DIGEST_FILE)
+        shutil.copy(source_dir / DIGEST_FILE, target_dir / DIGEST_FILE)
         for index in range(count):
             batch = release.batch_file(index)
             shutil.copy(source_dir / batch, target_dir / batch)
@@ -321,9 +322,12 @@ class Processor[R: Release]:
 
         collector = Collector()
         for index, release in enumerate(self._coverage):
-            self.dataset.analyze_release(self._storage.working_root, release, collector)
+            entry = self._metadata[release]
+            self._dataset.analyze_release(
+                self._storage.working_root, release, entry, collector
+            )
             self._progress.step(index + 1, extra=release.id)
 
-        return self.dataset.combine_releases(
+        return self._dataset.combine_releases(
             self._storage.working_root, self._coverage, collector
         )

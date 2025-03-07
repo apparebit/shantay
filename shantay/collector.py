@@ -22,6 +22,7 @@ class Collector:
 
     def frames(self, **kwargs: pl.DataFrame) -> None:
         """Register partial, named data frames."""
+        assert isinstance(self._current, dict)
         self._current |= kwargs
 
     def consume_frames(self) -> Iterator[tuple[str, pl.DataFrame]]:

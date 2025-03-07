@@ -4,7 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
-from typing import Any, Self
+from typing import Any, Optional, Required, Self, TypedDict
 
 
 from .collector import Collector
@@ -384,6 +384,21 @@ def _days_in_month(year: int, month: int) -> int:
 # Dataset, Coverage
 
 
+META_FILE = "meta.json"
+DIGEST_FILE = "sha256.txt"
+
+
+class MetadataEntry(TypedDict, total=False):
+    batch_count: Required[int]
+    batch_memory: Optional[int]
+    total_rows: Optional[int]
+    total_rows_with_keywords: Optional[int]
+
+
+class FullMetadataEntry(MetadataEntry):
+    release: str
+
+
 @dataclass(frozen=True, slots=True)
 class Coverage[R: Release]:
     """The matter of interest."""
@@ -416,7 +431,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
         """The dataset name."""
 
     @abstractmethod
-    def url(self, release: R) -> str:
+    def url(self, filename: str) -> str:
         """The URL for the release."""
 
     @abstractmethod
@@ -440,14 +455,14 @@ class Dataset[R: Release](metaclass=ABCMeta):
         release: R,
         index: int,
         name: str,
-        filter: str,
+        filter: str | Any,
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
 
     @abstractmethod
-    def analyze_release[T: Release](
-        self, root: Path, release: T, collector: Collector
+    def analyze_release(
+        self, root: Path, release: Release, metadata: MetadataEntry, collector: Collector
     ) -> None:
         """
         Analyze a release's data. The release may have a different type than the

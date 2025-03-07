@@ -60,7 +60,7 @@ class TestMetadata(unittest.TestCase):
         metadata_too["2000-01-01"]["batch_memory"] = 666
 
         metadata.merge_with(metadata_too)
-        self.assertEqual(metadata["2000-01-01"]["batch_memory"], 1_234_567)
+        self.assertEqual(metadata["2000-01-01"].get("batch_memory"), 1_234_567)
 
     def test_merge_with_inconsistent_data(self) -> None:
         # Fields must not diverge when they are part of the core schema

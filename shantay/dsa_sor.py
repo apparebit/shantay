@@ -7,8 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from .collector import Collector
-from .metadata import Entry
-from .model import Coverage, Daily, Dataset, Release
+from .model import Coverage, Daily, Dataset, MetadataEntry, Release
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, ContentLanguageType, ContentType, CountryGroups, DecisionVisibility,
@@ -161,7 +160,7 @@ class StatementsOfReasons(Dataset[Daily]):
             try:
                 frame = self.finish_frame(
                     self._read_csv_row_by_row(file_path, filter).lazy()
-                )
+                ).collect()
                 frames.append(frame)
 
                 _logger.debug(
@@ -237,7 +236,7 @@ class StatementsOfReasons(Dataset[Daily]):
         frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
         return frame if has_category else frame.filter(filter)
 
-    def finish_frame(self, frame: pl.LazyFrame | pl.DataFrame) -> pl.LazyFrame | pl.DataFrame:
+    def finish_frame(self, frame: pl.LazyFrame) -> pl.LazyFrame:
         """
         Finish the frame by patching in the names of country groups, parsing
         list-valued columns, as well as casting list elements and date columns
@@ -312,12 +311,12 @@ class StatementsOfReasons(Dataset[Daily]):
             total_rows_with_keywords=total_rows_with_keywords,
             batch_rows=batch_rows,
             batch_rows_with_keywords=batch_rows_with_keywords,
-            batch_memory=batch_memory,
+            batch_memory=int(batch_memory),
         )
 
     @annotate_error(filename_arg="root")
-    def analyze_release[R: Release](
-        self, root: Path, release: R, metadata: Entry, collector: Collector
+    def analyze_release(
+        self, root: Path, release: Release, metadata: MetadataEntry, collector: Collector
     ) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
         frame = pl.read_parquet(f"{root}/{release.batch_glob}")
@@ -333,7 +332,7 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("category_specification").list.len().sum().alias("keywords"),
             pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
             pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
-        ),
+        )
 
         keywords = frame.select(
             pl.col("category_specification")

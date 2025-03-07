@@ -4,7 +4,10 @@ from typing import Callable, Self
 
 from .util import scale
 
+
 _BLOCKS = " ▎▌▊█"
+_SECOND_NS = 1_000_000_000
+
 
 def _bar(percent: float, color: str = "38;5;69") -> str:
     """
@@ -18,9 +21,6 @@ def _bar(percent: float, color: str = "38;5;69") -> str:
         bar += _BLOCKS[partial]
     bar = bar.ljust(25, _BLOCKS[0])
     return f"┫\x1b[{color}m{bar}\x1b[39m┣ {percent:5.1f}%"
-
-
-_SECOND_NS = 1_000_000_000
 
 
 class Progress:
@@ -57,7 +57,7 @@ class Progress:
 
     def _reset_stats(self) -> None:
         self._showing_bar = False
-        self._timestamp = None
+        self._timestamp = self._timer()
         self._processed = 0
         self._total = None
         self._samples = 0
@@ -95,26 +95,25 @@ class Progress:
         """Update a previously started activity with processed steps."""
         assert self._label is not None
 
-        # Determine whether progress bar should be shown
-        timestamp = None
-        duration = None
+        # Handle timings: Should we update screen? What's the processing rate?
         if not self._showing_bar or self._with_rate:
             timestamp = self._timer()
             duration = (timestamp - self._timestamp) / _SECOND_NS
 
-        if not self._showing_bar:
-            if duration < 0.2:
-                return
-            self._showing_bar = True
+            # Only show progress bar after some delay
+            if not self._showing_bar:
+                if duration < 0.2:
+                    return self
+                self._showing_bar = True
 
-        # Update the processing rate
-        if self._with_rate and 0.5 < duration:
-            rate = (processed - self._processed) / duration
-            self._processed = processed
-            self._timestamp = timestamp
+            # Update the processing rate
+            elif 0.5 < duration:
+                rate = (processed - self._processed) / duration
+                self._processed = processed
+                self._timestamp = timestamp
 
-            self._samples +=1
-            self._rate += (rate - self._rate) / self._samples
+                self._samples +=1
+                self._rate += (rate - self._rate) / self._samples
 
         # Format progress bar or fallback
         msg = f"{self._prefix}{self._label} "
@@ -158,6 +157,12 @@ class Progress:
         self._render(f"{self._prefix}{activity}{self._suffix}")
         return self
 
+    def error(self, msg: str) -> Self:
+        """Report a non-fatal error."""
+        # Render newline so that error message scrolls up one line
+        self._render(f"{self._prefix}ERROR: {msg}{self._suffix}\n")
+        return self
+
     def done(self) -> None:
         """Finish."""
         self._reset_activity()
@@ -169,7 +174,7 @@ class Progress:
 
 
 class _NoProgress(Progress):
-    def activity(self, description: str, label: str, unit: str, with_rate: bool) -> Self:
+    def activity(self, *args, **kwargs) -> Self:
         return self
 
     def start(self, total: None | int = None) -> Self:
@@ -179,6 +184,10 @@ class _NoProgress(Progress):
         return self
 
     def perform(self, activity: str) -> Self:
+        return self
+
+    def error(self, msg: str) -> Self:
+        print(f"ERROR: {msg}")
         return self
 
     def done(self) -> None:

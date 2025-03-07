@@ -1,11 +1,13 @@
+from collections.abc import Iterable
 import functools
 import inspect
+from textwrap import dedent
 from typing import Callable
 
 
-def annotate_error[**P, R, F: Callable[P, R]](
+def annotate_error[**P, R](
     filename_arg: None | str = None
-) -> Callable[[F], F]:
+) -> Callable[[Callable[P, R]], Callable[P, R]]:
     """
     Annotate errors with missing information.
 
@@ -20,7 +22,7 @@ def annotate_error[**P, R, F: Callable[P, R]](
     named argument. That is, unless the filename is already set, in which case
     the wrapper does nothing.
     """
-    def wrapper(fn: F) -> F:
+    def wrapper(fn: Callable[P, R]) -> Callable[P, R]:
         # No argument, nothing to annotate with
         if filename_arg is None:
             return fn
@@ -33,8 +35,10 @@ def annotate_error[**P, R, F: Callable[P, R]](
                 return fn(*args, **kwargs)
             except OSError as x:
                 if x.filename is None:
+                    assert filename_arg is not None
                     value = sig.bind(*args, **kwargs).arguments[filename_arg]
                     x.filename = str(value)
+                raise x
         return inner
     return wrapper
 
