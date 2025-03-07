@@ -249,7 +249,7 @@ class Daily(Release):
 
     def __sub__(self, other) -> int:
         if isinstance(other, Daily):
-            return (dt.date(*other.daily.ymd) - dt.date(*self.ymd)).days
+            return (dt.date(*self.daily.ymd) - dt.date(*other.ymd)).days
 
         return NotImplemented
 
@@ -354,7 +354,7 @@ class Monthly(Release):
 
     def __sub__(self, other) -> int:
         if isinstance(other, Monthly):
-            return (other.year - self.year) * 12 + other.month - self.month
+            return (self.year - other.year) * 12 + self.month - other.month
 
         return NotImplemented
 
