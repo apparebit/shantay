@@ -20,6 +20,8 @@ _logger = logging.getLogger(__package__)
 
 
 class StatementsOfReasons(Dataset[Daily]):
+
+    @property
     def name(self) -> str:
         return "EU-DSA-SoR-DB"
 

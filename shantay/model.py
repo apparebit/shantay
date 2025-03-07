@@ -430,6 +430,7 @@ class Coverage[R: Release]:
 class Dataset[R: Release](metaclass=ABCMeta):
     """A specific dataset."""
 
+    @property
     @abstractmethod
     def name(self) -> str:
         """The dataset name."""
