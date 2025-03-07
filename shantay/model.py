@@ -385,6 +385,7 @@ def _days_in_month(year: int, month: int) -> int:
 
 
 META_FILE = "meta.json"
+STATS_FILE = "stats.parquet"
 DIGEST_FILE = "sha256.txt"
 
 

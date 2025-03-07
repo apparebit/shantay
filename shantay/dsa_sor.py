@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from .collector import Collector
-from .model import Coverage, Daily, Dataset, MetadataEntry, Release
+from .model import Coverage, Daily, Dataset, MetadataEntry, Release, STATS_FILE
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, ContentLanguageType, ContentType, CountryGroups, DecisionVisibility,
@@ -364,9 +364,10 @@ class StatementsOfReasons(Dataset[Daily]):
         from IPython.display import display
 
         summary = {}
+        stats = None
         for key, frame in collector.consume_frames():
             if key == "stats":
-                summary[key] = frame
+                summary[key] = stats = frame
             elif key == "keywords":
                 summary[key] = frame.group_by("category_specification").agg(pl.col("count").sum())
             elif key == "platforms":
@@ -375,5 +376,11 @@ class StatementsOfReasons(Dataset[Daily]):
                 summary[key] = frame.select(pl.col("platform_name").unique())
             else:
                 raise ValueError(f"unexpected frame {key}")
+
+        if stats is not None:
+            path = root / STATS_FILE
+            tmp = path.with_suffix(".tmp.parquet")
+            stats.write_parquet(tmp)
+            tmp.replace(path)
 
         return summary
