@@ -322,7 +322,6 @@ class StatementsOfReasons(Dataset[Daily]):
     ) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
         frame = pl.read_parquet(f"{root}/{release.batch_glob}")
-        with_keywords = frame.filter(pl.col("category_specification").list.len() != 0)
 
         stats = frame.select(
             pl.lit(release.first_day.to_date()).alias("first_day"),
@@ -335,9 +334,9 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
             pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
         ).with_columns(
-            pl.exclude("first_day", "last_day", "batch_count", "max_keywords_per_row").cast(pl.Int64),
-            pl.col("batch_count").cast(pl.Int64),
-            pl.col("max_keywords_per_row").cast(pl.Int32),
+            pl.exclude("first_day", "last_day", "batch_count", "max_keywords_per_row").cast(pl.UInt64),
+            pl.col("batch_count").cast(pl.UInt64),
+            pl.col("max_keywords_per_row").cast(pl.UInt32),
         )
 
         keywords = frame.select(
@@ -347,12 +346,23 @@ class StatementsOfReasons(Dataset[Daily]):
             .struct.unnest()
         )
 
+        platforms = (frame.select(
+                pl.col("platform_name"),
+                pl.col("category_specification").is_null().not_().alias("has_keyword"),
+            )
+            .group_by("platform_name", "has_keyword")
+            .agg(pl.len().alias("count")) # Count rows
+            .with_columns(
+                pl.lit(release.monthly.year).alias("year"),
+                pl.lit(release.monthly.month).alias("month"),
+            )
+        )
+
         collector.release(release)
         collector.frames(
             stats=stats,
             keywords=keywords,
-            platforms=frame.select(pl.col("platform_name").unique()),
-            platforms_with_keywords=with_keywords.select(pl.col("platform_name").unique()),
+            platforms=platforms,
         )
 
         # with_csam = with_keywords.filter(
@@ -374,11 +384,17 @@ class StatementsOfReasons(Dataset[Daily]):
             if key == "stats":
                 summary[key] = stats = frame
             elif key == "keywords":
-                summary[key] = frame.group_by("category_specification").agg(pl.col("count").sum())
+                summary[key] = (
+                    frame.group_by("category_specification")
+                    .agg(pl.col("count").sum())
+                    .sort("count", descending=True)
+                )
             elif key == "platforms":
-                summary[key] = frame.select(pl.col("platform_name").unique())
-            elif key == "platforms_with_keywords":
-                summary[key] = frame.select(pl.col("platform_name").unique())
+                summary[key] = (
+                    frame.group_by("platform_name", "has_keyword")
+                    .agg(pl.col("count").sum()) # Sum up partial aggregates
+                    .sort(["platform_name", "has_keyword"])
+                )
             else:
                 raise ValueError(f"unexpected frame {key}")
 

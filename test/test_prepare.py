@@ -181,6 +181,7 @@ class TestPrepare(unittest.TestCase):
                             "max_keywords_per_row": [1],
                         }
                     )
+
                 elif key == "keywords":
                     self.assertListEqual(
                         value.sort("category_specification").rows(),
@@ -189,17 +190,15 @@ class TestPrepare(unittest.TestCase):
                             ("KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS", 1),
                         ]
                     )
-                elif key in ("platforms", "platforms_with_keywords"):
+
+                elif key == "platforms":
                     platforms = value.select(
                         pl.col("platform_name").unique()
                     ).to_series().to_list()
+                    self.assertListEqual(sorted(platforms), [
+                        "Google Shopping", "Snapchat", "TikTok"
+                    ])
 
-                    if key == "platforms":
-                        self.assertListEqual(sorted(platforms), [
-                            "Google Shopping", "Snapchat", "TikTok"
-                        ])
-                    elif key == "platforms_with_keywords":
-                        self.assertListEqual(platforms, ["Snapchat"])
                 else:
                     self.assertIn(
                         key, ("stats", "keywords", "platforms", "platforms_with_keywords")
