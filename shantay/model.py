@@ -16,382 +16,287 @@ from .progress import NO_PROGRESS, Progress
 
 
 class Release(metaclass=ABCMeta):
-    """
-    A release capturing the periodical aspects of a dataset.
-
-    # Daily vs Monthly Releases
-
-    To better adjust to working set size and statistical requirements, the
-    period for analysis can be adjusted between, for now, daily and monthly
-    releases. All code works the same, only the start and stop releases change
-    granularities.
-
-    To make this as seamless as possible, monthly releases are second-class.
-    They are always backed by a daily release, only the monthly facade blocks
-    out access to the day. That way, it is possible to to convert a daily
-    release to a monthly one and back again without loss of information: The
-    final daily release is the same as the original daily release.
-
-    Alas, loss of information may still occur when converting a daily release
-    for, say, the 31st of January, March, May, August, October, or December to a
-    monthly release and then accessing the next month before converting back to
-    a daily release. Since the second month is shorter, the logic incrementing
-    the month also adjusts the day of the backing daily release, decrementing it
-    to 28, 29, or 30, depending on the month and leap year.
-
-    This approach can be easily extended to cover weeks and quarters, too. If
-    you need them for your analysis, [please file an
-    issue](https://github.com/apparebit/shantay/issues/new/choose).
-    """
 
     @property
     @abstractmethod
     def id(self) -> str:
-        """
-        A unique identifier for this release that can be used in a file name,
-        e.g., "2000-03-30" for a daily release.
-        """
+        """The ID."""
+
+    @property
+    @abstractmethod
+    def first_daily(self) -> "Daily":
+        """The first day."""
+
+    @property
+    @abstractmethod
+    def last_daily(self) -> "Daily":
+        """The last day."""
 
     @property
     @abstractmethod
     def parent_directory(self) -> Path:
-        """
-        A directory for grouping files at release granularity, e.g., "2000/03"
-        for a daily release on any day in March 2000. Use this directory for
-        storing the original archive of a distribution.
-        """
+        """The parent directory"""
 
     @property
     @abstractmethod
     def directory(self) -> Path:
-        """
-        A directory for grouping *per* release files, e.g., "2000/03/30" for a
-        daily release on March 30, 2000. Use this directory for storing
-        extracted batch files.
-        """
+        """The directory for per-"""
 
     @property
-    def temp_directory(self) -> Path:
-        """A temporary directory for grouping *per* period files."""
-        return self.directory.with_suffix(".tmp")
+    @abstractmethod
+    def temp_directory(self) -> Path: ...
 
     def batch_file(self, index: int) -> str:
+        """Get the name for the batch file with the given index."""
         if not 0 <= index <= 99_999:
             raise ValueError(f"batch {index} is out of permissible range")
         return f"{self.id}-{index:05}.parquet"
 
     @property
     @abstractmethod
-    def batch_glob(self) -> str:
-        """Get a glob for all batch files for the release."""
+    def batch_glob(self) -> str: ...
 
     @property
     @abstractmethod
-    def first_day(self) -> "Daily":
-        """Get the first day for this release."""
-
-    @property
-    @abstractmethod
-    def last_day(self) -> "Daily":
-        """Get the last day for this release."""
-
-    @property
-    @abstractmethod
-    def daily(self) -> "Daily":
-        """Get the daily release corresponding to this one."""
-
-    @property
-    @abstractmethod
-    def monthly(self) -> "Monthly":
-        """Get the monthly release corresponding to this one."""
+    def monthly(self) -> "Monthly": ...
 
     @abstractmethod
-    def __eq__(self, other: object) -> bool: ...
-
-    @abstractmethod
-    def __ne__(self, other: object) -> bool: ...
-
-    @abstractmethod
-    def __lt__(self, other: object) -> bool: ...
-
-    @abstractmethod
-    def __le__(self, other: object) -> bool: ...
-
-    @abstractmethod
-    def __gt__(self, other: object) -> bool: ...
-
-    @abstractmethod
-    def __ge__(self, other: object) -> bool: ...
+    def next(self) -> Self: ...
 
     @abstractmethod
     def __sub__(self, other: object) -> int: ...
 
-    def __iter__(self) -> Self:
-        return self
-
     @abstractmethod
-    def __next__(self) -> Self: ...
+    def __eq__(self, other: object) -> bool: ...
+    @abstractmethod
+    def __lt__(self, other: object) -> bool: ...
+    @abstractmethod
+    def __le__(self, other: object) -> bool: ...
+    @abstractmethod
+    def __gt__(self, other: object) -> bool: ...
+    @abstractmethod
+    def __ge__(self, other: object) -> bool: ...
 
-    def __str__(self) -> str:
-        return self.id
 
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=True, order=True)
 class Daily(Release):
 
-    year: int
-    month: int
+    year: int # type: ignore
+    month: int # type: ignore
     day: int
 
     def __post_init__(self) -> None:
+        assert 1600 <= self.year <= 3000
         assert 1 <= self.month <= 12
         assert 1 <= self.day <= _days_in_month(self.year, self.month)
 
     @classmethod
-    def of(
-        cls,
-        year: dt.date | dt.datetime | str | int,
-        month: None | int = None,
-        day: None | int = None,
-    ) -> Self:
-        if isinstance(year, str):
-            year = dt.date.fromisoformat(year)
-        if isinstance(year, (dt.date, dt.datetime)):
-            return cls(year.year, year.month, year.day)
-
-        assert isinstance(year, int) and isinstance(month, int) and isinstance(day, int)
-        return cls(year, month, day)
+    def of(cls, date: str | dt.date | dt.datetime) -> Self:
+        """
+        Create a new daily occurrence from the given string, date, or date
+        time.
+        """
+        if isinstance(date, str):
+            date = dt.date.fromisoformat(date)
+        return cls(date.year, date.month, date.day)
 
     @property
     def id(self) -> str:
+        """The ID."""
         return f"{self.year}-{self.month:02}-{self.day:02}"
+
+    # @property
+    # def ymd(self) -> tuple[int, int, int]:
+    #     """Get the year, month, and day as a tuple."""
+    #     return self.year, self.month, self.day
+
+    @property
+    def first_daily(self) -> "Daily":
+        return self
+
+    @property
+    def last_daily(self) -> "Daily":
+        return self
 
     @property
     def parent_directory(self) -> Path:
+        """The directory for monthly artifacts."""
         return Path(f"{self.year}") / f"{self.month:02}"
 
     @property
     def directory(self) -> Path:
-        return self.parent_directory / f"{self.day:02}"
+        """The directory for daily artifacts."""
+        return Path(f"{self.year}") / f"{self.month:02}" / f"{self.day:02}"
 
     @property
-    def ymd(self) -> tuple[int, int, int]:
-        return self.year, self.month, self.day
-
-    def to_date(self) -> dt.date:
-        return dt.date(*self.ymd)
+    def temp_directory(self) -> Path:
+        """A temporary directory for grouping *per* period files."""
+        return Path(f"{self.year}") / f"{self.month:02}" / "{self.day:02}.tmp"
 
     @property
     def batch_glob(self) -> str:
-        year = self.year
-        month = self.month
-        return f"{year}/{month:02}/??/{year}-{month:02}-??-*.parquet"
+        """Get a glob for all batch files for the release."""
+        return f"{self.year}/{self.month:02}/{self.day:02}/{self.id}-?????.parquet"
 
-    @property
-    def first_day(self) -> Self:
-        return self
+    def to_full_first_month(self) -> "Monthly":
+        monthly = Monthly(self.year, self.month)
+        if self.day != 1:
+            monthly = monthly.next()
+        return monthly
 
-    @property
-    def last_day(self) -> Self:
-        return self
+    def to_full_last_month(self) -> "Monthly":
+        monthly = Monthly(self.year, self.month)
+        if self.day != _days_in_month(self.year, self.month):
+            monthly = monthly.previous()
+        return monthly
 
-    @property
-    def daily(self) -> Self:
-        return self
+    def to_date(self) -> dt.date:
+        return dt.date(self.year, self.month, self.day)
 
     @property
     def monthly(self) -> "Monthly":
-        return Monthly(self)
+        return Monthly(self.year, self.month)
 
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Daily):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 == y2 and m1 == m2 and d1 == d2
-
+    def __sub__(self, other: object) -> int:
+        if type(other) is Daily:
+            return (
+                dt.date(self.year, self.month, self.day)
+                - dt.date(other.year, other.month, other.day)
+            ).days
         return NotImplemented
 
-    def __ne__(self, other: object) -> bool:
-        if isinstance(other, Daily):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 != y2 and m1 != m2 and d1 != d2
+    def previous(self) -> Self:
+        year = self.year
+        month = self.month
+        day = self.day - 1
+        if day == 0:
+            month -= 1
+            day = _days_in_month(year, month)
+            if month == 0:
+                year -= 1
+                month = 12
+        return type(self)(year, month, day)
 
-        return NotImplemented
-
-    def __lt__(self, other: object) -> bool:
-        if isinstance(other, Daily):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 < y2 or (y1 == y2 and m1 < m2 or m1 == m2 and d1 < d2)
-
-        return NotImplemented
-
-    def __le__(self, other: object) -> bool:
-        if isinstance(other, Daily):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 < y2 or (y1 == y2 and m1 < m2 or m1 == m2 and d1 <= d2)
-
-        return NotImplemented
-
-    def __gt__(self, other: object) -> bool:
-        if isinstance(other, Daily):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 > y2 or (y1 == y2 and m1 > m2 or m1 == m2 and d1 > d2)
-
-        return NotImplemented
-
-    def __ge__(self, other: object) -> bool:
-        if isinstance(other, Daily):
-            y1, m1, d1 = self.ymd
-            y2, m2, d2 = other.ymd
-            return y1 > y2 or (y1 == y2 and m1 > m2 or m1 == m2 and d1 >= d2)
-
-        return NotImplemented
-
-    def __sub__(self, other) -> int:
-        if isinstance(other, Daily):
-            return (dt.date(*self.daily.ymd) - dt.date(*other.ymd)).days
-
-        return NotImplemented
-
-    def __next__(self) -> Self:
-        year, month, day = self.ymd
-        day += 1
+    def next(self) -> Self:
+        year = self.year
+        month = self.month
+        day = self.day + 1
         if _days_in_month(year, month) < day:
             month += 1
             day = 1
-        if 12 < month:
-            year += 1
-            month = 1
+            if 12 < month:
+                year += 1
+                month = 1
         return type(self)(year, month, day)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=True, order=True)
 class Monthly(Release):
 
-    inner: Daily
+    year: int
+    month: int
 
-    @classmethod
-    def of(cls, year: int, month: int) -> Self:
-        """
-        Create a new monthly release for the year and month. The day for the
-        underlying daily release is the last day of the month.
-        """
-        last_day = _days_in_month(year, month)
-        return cls(Daily(year, month, last_day))
-
-    @property
-    def year(self) -> int:
-        return self.inner.year
-
-    @property
-    def month(self) -> int:
-        return self.inner.month
+    def __post_init__(self) -> None:
+        assert 1600 <= self.year <= 3000
+        assert 1 <= self.month <= 12
 
     @property
     def id(self) -> str:
-        return f"{self.inner.year}-{self.inner.month:02}"
+        return f"{self.year}-{self.month:02}"
 
     @property
-    def parent_directory(self) -> Path:
-        return Path(f"{self.inner.year}")
-
-    @property
-    def directory(self) -> Path:
-        return self.inner.parent_directory
-
-    @property
-    def batch_glob(self) -> str:
-        return self.inner.batch_glob
-
-    def days(self) -> Iterator[Daily]:
-        """Get an iterator over this month's days"""
-        last_day = _days_in_month(self.year, self.month)
-        cursor = Daily(self.year, self.month, 1)
-        while True:
-            yield cursor
-            if cursor.day == last_day:
-                break
-            cursor = next(cursor)
-
-    @property
-    def first_day(self) -> Daily:
+    def first_daily(self) -> "Daily":
         return Daily(self.year, self.month, 1)
 
     @property
-    def last_day(self) -> Daily:
+    def last_daily(self) -> "Daily":
         return Daily(self.year, self.month, _days_in_month(self.year, self.month))
 
     @property
-    def daily(self) -> Daily:
-        return self.inner
+    def parent_directory(self) -> Path:
+        """The directory for monthly artifacts."""
+        return Path(f"{self.year}")
+
+    @property
+    def directory(self) -> Path:
+        """The directory for daily artifacts."""
+        return Path(f"{self.year}") / f"{self.month:02}"
+
+    @property
+    def temp_directory(self) -> Path:
+        """A temporary directory for grouping *per* period files."""
+        return Path(f"{self.year}") / f"{self.month:02}.tmp"
+
+    @property
+    def batch_glob(self) -> str:
+        """Get a glob for all batch files for the release."""
+        return f"{self.year}/{self.month:02}/??/{self.year}-{self.month:02}-??-?????.parquet"
 
     @property
     def monthly(self) -> Self:
         return self
 
-    def __eq__(self, other: object) -> bool:
-        if isinstance(other, Monthly):
-            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
-            return y1 == y2 and m1 == m2
+    def previous(self) -> Self:
+        year = self.year
+        month = self.month - 1
+        if month == 0:
+            year -= 1
+            month = 12
 
-        return NotImplemented
+        return type(self)(year, month)
 
-    def __ne__(self, other: object) -> bool:
-        if isinstance(other, Monthly):
-            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
-            return y1 != y2 or m1 != m2
+    def next(self) -> Self:
+        year = self.year
+        month = self.month + 1
+        if 12 < month:
+            year += 1
+            month = 1
 
-        return NotImplemented
+        return type(self)(year, month)
 
-    def __lt__(self, other: object) -> bool:
-        if isinstance(other, Monthly):
-            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
-            return y1 < y2 or (y1 == y2 and m1 < m2)
-
-        return NotImplemented
-
-    def __le__(self, other: object) -> bool:
-        if isinstance(other, Monthly):
-            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
-            return y1 < y2 or (y1 == y2 and m1 <= m2)
-
-        return NotImplemented
-
-    def __gt__(self, other: object) -> bool:
-        if isinstance(other, Monthly):
-            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
-            return y1 > y2 or (y1 == y2 and m1 > m2)
-
-        return NotImplemented
-
-    def __ge__(self, other: object) -> bool:
-        if isinstance(other, Monthly):
-            y1, m1, y2, m2 = self.year, self.month, other.year, other.month
-            return y1 > y2 or (y1 == y2 and m1 >= m2)
-
-        return NotImplemented
-
-    def __sub__(self, other) -> int:
-        if isinstance(other, Monthly):
+    def __sub__(self, other: object) -> int:
+        if type(other) == Monthly:
             return (self.year - other.year) * 12 + self.month - other.month
 
         return NotImplemented
 
-    def __next__(self) -> Self:
-        year, month, day = self.inner.ymd
-        month += 1
-        if 12 < month:
-            year += 1
-            month = 1
-        max_days = _days_in_month(year, month)
-        if max_days < day:
-            day = max_days
 
-        return type(self)(Daily(year, month, day))
+@dataclass(frozen=True, slots=True)
+class DailyRange:
+
+    first: Daily
+    last: Daily
+
+    def __post_init__(self) -> None:
+        assert self.first <= self.last
+
+    def __iter__(self) -> Iterator[Daily]:
+        cursor = self.first
+        last = self.last
+        while True:
+            yield cursor
+            if cursor == last:
+                break
+            cursor = cursor.next()
+
+
+@dataclass(frozen=True, slots=True)
+class MonthlyRange:
+
+    first: Monthly
+    last: Monthly
+
+    def __post_init__(self) -> None:
+        assert self.first <= self.last
+
+    def __iter__(self) -> Iterator[Monthly]:
+        cursor = self.first
+        last = self.last
+        while True:
+            yield cursor
+            if cursor == last:
+                break
+            cursor = cursor.next()
 
 
 def _days_in_month(year: int, month: int) -> int:
@@ -440,17 +345,13 @@ class Coverage[R: Release]:
     def __post_init__(self) -> None:
         assert self.first <= self.last
 
-    @property
-    def monthly(self) -> "Coverage[Monthly]":
-        return Coverage(self.first.monthly, self.last.monthly, self.filter)
-
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
         while True:
             yield cursor
             if cursor == self.last:
                 break
-            cursor = next(cursor)
+            cursor = cursor.next()
 
     def __len__(self) -> int:
         return self.last - self.first + 1

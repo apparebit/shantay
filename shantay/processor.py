@@ -17,7 +17,7 @@ from .model import (
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
-
+from .viz import render
 
 _logger = logging.getLogger(__package__)
 
@@ -56,6 +56,8 @@ class Processor[R: Release]:
             return self.prepare()
         elif task == "analyze":
             return self.analyze()
+        elif task == "visualize":
+            return self.visualize()
         else:
             raise ValueError(f'invalid task "{task}"')
 
@@ -339,7 +341,7 @@ class Processor[R: Release]:
 
         collector = Collector()
         for index, stats in enumerate(metadata.iter_rows(named=True)):
-            release = Monthly.of(stats["year"], stats["month"])
+            release = Monthly(stats["year"], stats["month"])
 
             self._dataset.analyze_release(
                 self._storage.working_root, release, cast(MetadataEntry, stats), collector
@@ -349,3 +351,6 @@ class Processor[R: Release]:
         return self._dataset.combine_releases(
             self._storage.working_root, self._coverage, collector
         )
+
+    def visualize(self) -> None:
+        render(self._storage.working_root)

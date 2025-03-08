@@ -79,12 +79,17 @@ class Metadata[R: Release]:
         Convert the per-release records into a data frame. The `release` column
         is date-valued, the `sha256` column string-valued, and all other columns
         are u64-valued. While u128 would be preferable, it cannot currently be
-        written to parquet files.
+        written to parquet files. Also, in addition to the date-valued
+        `release`, the data frame also includes the redundant `year` and `month`
+        columns. They are included because they simplify grouping.
         """
         # FIXME: Consider i128 when that type can be written to parquet.
         return pl.json_normalize([*self.records]).with_columns(
             pl.col("release").str.to_date("%Y-%m-%d"),
             pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.UInt64),
+        ).with_columns(
+            pl.col("release").dt.year().alias("year"),
+            pl.col("release").dt.month().alias("month"),
         )
 
     @classmethod

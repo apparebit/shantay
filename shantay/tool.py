@@ -74,11 +74,11 @@ def _parse_options(args: list[str]) -> Any:
 
     parser.add_argument(
         "task",
-        choices=["recover", "prepare", "analyze"],
+        choices=["recover", "prepare", "analyze", "visualize"],
         default="prepare",
         help="select the task to execute: recover validates parquet files and restores "
         "metadata; prepare downloads distributions and extracts working data; analyze "
-        "processes the working data",
+        "processes the working data; visualize graphs the analysis results",
     )
 
     return parser.parse_args(args)
@@ -217,6 +217,8 @@ def _run(args: list[str]) -> None:
         print(result["keywords"])
         print("\nPlatforms with or w/o Keywords")
         print(result["platforms"])
+    elif options.task == "visualize":
+        pass
 
 
 def run(args: list[str]) -> int:

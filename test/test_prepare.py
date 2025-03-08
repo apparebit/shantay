@@ -63,7 +63,7 @@ class TestPrepare(unittest.TestCase):
                 working_root=STAGING,
                 staging_root=STAGING
             )
-            release = Daily.of(2024, 3, 14)
+            release = Daily(2024, 3, 14)
             coverage = Coverage(release, release, FILTER)
             metadata = Metadata(FILTER, {})
             processor = Processor(
@@ -179,6 +179,8 @@ class TestPrepare(unittest.TestCase):
                             "keywords": [2],
                             "rows_with_keywords": [2],
                             "max_keywords_per_row": [1],
+                            "month": [3],
+                            "year": [2024],
                         }
                     )
 
@@ -186,8 +188,14 @@ class TestPrepare(unittest.TestCase):
                     self.assertListEqual(
                         value.sort("category_specification").rows(),
                         [
-                            ("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL", 1),
-                            ("KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS", 1),
+                            (
+                                "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL", 1,
+                                dt.date(2024, 3, 31), 2024, 3
+                            ),
+                            (
+                                "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS", 1,
+                                dt.date(2024, 3, 31), 2024, 3
+                            ),
                         ]
                     )
 

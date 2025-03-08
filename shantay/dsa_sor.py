@@ -325,11 +325,11 @@ class StatementsOfReasons(Dataset[Daily]):
     ) -> None:
         # Read all Parquet files for entire month, filter rows with keywords
         frame = pl.read_parquet(f"{root}/{release.batch_glob}")
-        last_day = release.last_day.to_date()
+        last_day = release.last_daily.to_date()
 
         stats = frame.select(
             # Timing the data
-            pl.lit(release.first_day.to_date()).alias("first_day"),
+            pl.lit(release.first_daily.to_date()).alias("first_day"),
             pl.lit(last_day).alias("last_day"),
             pl.lit(release.monthly.year).alias("year"),
             pl.lit(release.monthly.month).alias("month"),
