@@ -172,7 +172,7 @@ class TestPrepare(unittest.TestCase):
                 "total_rows": [665],
                 "total_rows_with_keywords": [212],
             })
-            dataset.analyze_release(STAGING, release.monthly, release_metadata, collector)
+            dataset.analyze_release(STAGING, release.to_monthly(), release_metadata, collector)
 
             for key, value in collector.consume_frames():
                 if key == "stats":

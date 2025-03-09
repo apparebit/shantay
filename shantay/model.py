@@ -5,7 +5,7 @@ from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
 import re
-from typing import Optional, overload, Protocol, Required, Self, TypedDict
+from typing import cast, Optional, overload, Protocol, Required, Self, TypedDict
 
 from .progress import NO_PROGRESS, Progress
 
@@ -101,9 +101,8 @@ class Release(Period):
     @abstractmethod
     def batch_glob(self) -> str: ...
 
-    @property
     @abstractmethod
-    def monthly(self) -> "Monthly": ...
+    def to_monthly(self) -> "Monthly": ...
 
     @abstractmethod
     def next(self) -> Self: ...
@@ -183,8 +182,7 @@ class Daily(Release):
             monthly = monthly.previous()
         return monthly
 
-    @property
-    def monthly(self) -> "Monthly":
+    def to_monthly(self) -> "Monthly":
         return Monthly(self.year, self.month)
 
     def __sub__(self, other: object) -> int:
@@ -262,8 +260,7 @@ class Monthly(Release):
         """Get a glob for all batch files for the release."""
         return f"{self.year}/{self.month:02}/??/{self.year}-{self.month:02}-??-?????.parquet"
 
-    @property
-    def monthly(self) -> Self:
+    def to_monthly(self) -> Self:
         return self
 
     def previous(self) -> Self:
@@ -308,6 +305,12 @@ class ReleaseRange[R: Release](Period):
     def end_date(self) -> dt.date:
         return self.last.end_date
 
+    def to_monthly(self) -> "ReleaseRange[Monthly]":
+        if isinstance(self.first, Monthly):
+            return cast(ReleaseRange[Monthly], self)
+        else:
+            return ReleaseRange(self.first.to_monthly(), self.last.to_monthly())
+
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
         last = self.last
@@ -316,6 +319,40 @@ class ReleaseRange[R: Release](Period):
             if cursor == last:
                 break
             cursor = cursor.next()
+
+
+@dataclass(frozen=True, slots=True)
+class DateRange(Period):
+
+    first: dt.date
+    last: dt.date
+
+    @property
+    def start_date(self) -> dt.date:
+        """
+        Return the first date. This alias exists to turn date ranges into
+        periods.
+        """
+        return self.first
+
+    @property
+    def end_date(self) -> dt.date:
+        """
+        Return the last date. This alias exists to turn date ranges into
+        periods.
+        """
+        return self.last
+
+    def to_release_range(self) -> ReleaseRange[Daily]:
+        """Convert to the corresponding daily release range."""
+        return ReleaseRange(Daily.of(self.first), Daily.of(self.last))
+
+    def to_full_monthly_range(self) -> ReleaseRange[Monthly]:
+        """Convert to a monthly release range with fully covered months."""
+        return ReleaseRange(
+            Daily.of(self.first).to_full_first_month(),
+            Daily.of(self.last).to_full_last_month(),
+        )
 
 
 def _days_in_month(year: int, month: int) -> int:

@@ -14,18 +14,17 @@ also are a few places that need to mediate between API surface and data frames.
 This module collects the functions necessary for the latter.
 """
 from collections.abc import Iterator
-import datetime as dt
 from importlib import import_module
 
 import polars as pl
 
 from .metadata import FullMetadataEntry
-from .model import ConfigError, Period, QueryExpression, Release, ReleaseRange
+from .model import ConfigError, DateRange, Period, QueryExpression
 
 
 def collect_release_metadata(
     records: Iterator[FullMetadataEntry]
-) -> tuple[dt.date, dt.date, pl.DataFrame]:
+) -> tuple[DateRange, pl.DataFrame]:
     """
     Collect metadata release records into a data frame.
 
@@ -39,25 +38,18 @@ def collect_release_metadata(
     frame = pl.json_normalize([*records]).with_columns(
         pl.col("release").str.to_date("%Y-%m-%d"),
         pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.UInt64),
+    ).select(
+        pl.col("release").alias("start_date"),
+        pl.col("release").alias("end_date"),
+        pl.exclude("release"),
     )
 
     start_date, end_date = frame.select(
-        pl.col("release").min().alias("start_date"),
-        pl.col("release").max().alias("end_date"),
+        pl.col("start_date").min().alias("start_date"),
+        pl.col("end_date").max().alias("end_date"),
     ).row(0)
 
-    return start_date, end_date, frame
-
-
-def filter_release_metadata(metadata: pl.DataFrame, period: Period) -> pl.DataFrame:
-    """
-    Filter all release records that do not fall into the given range.
-
-    This function does *not* depend on the particulars of the DSA SoR DB schema.
-    """
-    return metadata.filter(
-        (period.start_date <= pl.col("release")) & (pl.col("release") <= period.end_date)
-    )
+    return DateRange(start_date, end_date), frame
 
 
 def extract_category_from_parquet(glob: str) -> None | str:
@@ -78,9 +70,18 @@ def extract_category_from_parquet(glob: str) -> None | str:
 
 
 def is_row_within_period(period: Period) -> pl.Expr:
+    """
+    Create the query predicate testing whether a row's `start_date` and
+    `end_date` fall within the given period.
+    """
     return (
         (period.start_date <= pl.col("start_date")) & (pl.col("end_date") <= period.end_date)
     )
+
+
+def filter_period(frame: pl.DataFrame, period: Period) -> pl.DataFrame:
+    """Filter the data frame for rows that fall within the given period."""
+    return frame.filter(is_row_within_period(period))
 
 
 class Collector:

@@ -12,7 +12,7 @@ import polars as pl
 from .metadata import Metadata
 from .model import (
     Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry,
-    Release, ReleaseRange, Storage
+    Release, Storage
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
@@ -320,10 +320,10 @@ class Processor[R: Release]:
 
     def analyze(self) -> dict[str, DataFrameType]:
         # Prepare metadata for analysis
-        from .framing import Collector, collect_release_metadata, filter_release_metadata
+        from .framing import Collector, collect_release_metadata, filter_period
 
-        start_date, end_date, metadata = collect_release_metadata(self._metadata.records)
-        range = ReleaseRange(Release.of(start_date).monthly, Release.of(end_date).monthly)
+        range, metadata = collect_release_metadata(self._metadata.records)
+        range = range.to_release_range().to_monthly()
 
         # Prepare progress tracker
         self._progress.activity(
@@ -333,7 +333,7 @@ class Processor[R: Release]:
 
         collector = Collector()
         for index, release in enumerate(range):
-            release_metadata = filter_release_metadata(metadata, release)
+            release_metadata = filter_period(metadata, release)
 
             self._dataset.analyze_release(
                 self._storage.working_root, release, release_metadata, collector

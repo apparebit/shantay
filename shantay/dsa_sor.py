@@ -394,9 +394,10 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("category_specification").is_null().not_().alias("has_keyword"),
         ).group_by("platform", "has_keyword").agg(
             pl.len().alias("count")
-        ).with_columns(
+        ).select(
             start_date,
             end_date,
+            pl.col("platform", "has_keyword", "count")
         )
 
         collector.add_frames(
