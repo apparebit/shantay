@@ -2,15 +2,14 @@ from collections import Counter
 import datetime as dt
 from pathlib import Path
 import shutil
-from typing import cast
 import unittest
 
 import polars as pl
 
-from shantay.collector import Collector
 from shantay.dsa_sor import StatementsOfReasons
+from shantay.framing import Collector
 from shantay.metadata import Metadata
-from shantay.model import Coverage, Daily, MetadataEntry, Storage
+from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
 from shantay.tool import configure_logging
 
@@ -109,7 +108,13 @@ class TestPrepare(unittest.TestCase):
             self.assertEqual(count2, 12)
 
         with self.subTest("extract first batch of category data"):
-            frame = dataset._extract_filtered_rows(glob, 0, ZIP_FILES[0], FILTER)
+            frame = dataset._extract_filtered_rows(
+                csv_files=glob,
+                release=release,
+                index=0,
+                name=ZIP_FILES[0],
+                filter=FILTER,
+            )
             dataset._validate_schema(frame)
 
             counters = Counter(batch_count = 2)
@@ -141,7 +146,7 @@ class TestPrepare(unittest.TestCase):
                 filter=FILTER,
             )
 
-            self.assertEqual(digest, "1d58cfeccb6a50b39d3ea72dec8178631b4292d5b4856b2e5c9272eb94b2c1f0")
+            self.assertEqual(digest, "f8b9a455d5521a41280c67eab737ff003ff8f65b5b038b1fc8e844cd418572b5")
 
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
             self.assertFileEqual(workdir / CSV_FILES[2], FIXTURE / "csv" / CSV_FILES[2])
@@ -162,46 +167,50 @@ class TestPrepare(unittest.TestCase):
 
         with self.subTest("analyze release data"):
             collector = Collector()
-            metadata_entry = cast(MetadataEntry, {"batch_count": 2})
-            dataset.analyze_release(STAGING, release.monthly, metadata_entry, collector)
+            release_metadata = pl.DataFrame({
+                "batch_count": [2],
+                "total_rows": [665],
+                "total_rows_with_keywords": [212],
+            })
+            dataset.analyze_release(STAGING, release.monthly, release_metadata, collector)
 
             for key, value in collector.consume_frames():
                 if key == "stats":
                     self.assertDictEqual(
                         value.to_dict(as_series=False),
                         {
+                            "start_date": [dt.date(2024, 3, 1)],
+                            "end_date": [dt.date(2024, 3, 31)],
                             "batch_count": [2],
-                            "first_day": [dt.date(2024, 3, 1)],
-                            "last_day": [dt.date(2024, 3, 31)],
-                            "total_rows": [None],
-                            "total_rows_with_keywords": [None],
+                            "total_rows": [665],
+                            "total_rows_with_keywords": [212],
                             "rows": [17],
                             "keywords": [2],
                             "rows_with_keywords": [2],
                             "max_keywords_per_row": [1],
-                            "month": [3],
-                            "year": [2024],
                         }
                     )
 
                 elif key == "keywords":
                     self.assertListEqual(
-                        value.sort("category_specification").rows(),
+                        # start_date, end_date, keyword, count
+                        value.sort("keyword").rows(),
                         [
                             (
+                                dt.date(2024, 3, 1), dt.date(2024, 3, 31),
                                 "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL", 1,
-                                dt.date(2024, 3, 31), 2024, 3
+
                             ),
                             (
+                                dt.date(2024, 3, 1), dt.date(2024, 3, 31),
                                 "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS", 1,
-                                dt.date(2024, 3, 31), 2024, 3
                             ),
                         ]
                     )
 
                 elif key == "platforms":
                     platforms = value.select(
-                        pl.col("platform_name").unique()
+                        pl.col("platform").unique()
                     ).to_series().to_list()
                     self.assertListEqual(sorted(platforms), [
                         "Google Shopping", "Snapchat", "TikTok"

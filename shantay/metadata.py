@@ -7,9 +7,7 @@ import re
 import shutil
 from typing import Callable, cast, Self
 
-import polars as pl
-
-
+# from .framing import below within method
 from .model import (
     DIGEST_FILE, FullMetadataEntry, META_FILE, MetadataConflict, MetadataEntry, Release
 )
@@ -74,24 +72,6 @@ class Metadata[R: Release]:
         """Get the number of releases covered."""
         return len(self._releases)
 
-    def to_frame(self) -> pl.DataFrame:
-        """
-        Convert the per-release records into a data frame. The `release` column
-        is date-valued, the `sha256` column string-valued, and all other columns
-        are u64-valued. While u128 would be preferable, it cannot currently be
-        written to parquet files. Also, in addition to the date-valued
-        `release`, the data frame also includes the redundant `year` and `month`
-        columns. They are included because they simplify grouping.
-        """
-        # FIXME: Consider i128 when that type can be written to parquet.
-        return pl.json_normalize([*self.records]).with_columns(
-            pl.col("release").str.to_date("%Y-%m-%d"),
-            pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.UInt64),
-        ).with_columns(
-            pl.col("release").dt.year().alias("year"),
-            pl.col("release").dt.month().alias("month"),
-        )
-
     @classmethod
     def merge(cls, *sources: Path, not_exist_ok: bool = False) -> Self:
         """Merge the metadata from the given directories."""
@@ -152,7 +132,9 @@ class Metadata[R: Release]:
     def read_json(cls, root: Path) -> Self:
         with open(root / META_FILE, mode="r", encoding="utf8") as file:
             data = json.load(file)
-        return cls(data["filter"], data["releases"])
+        filter = data["filter"]
+        releases = data["releases"]
+        return cls(filter, releases)
 
     def write_json(self, root: Path, *, sort_keys: bool = False) -> None:
         path = root / META_FILE
@@ -412,16 +394,14 @@ class _Fsck:
             return hashlib.file_digest(file, "sha256").hexdigest()
 
     def update_filter(self, glob: str) -> None:
-        """Update the filter expression for this working set."""
-        counts = pl.scan_parquet(glob).select(
-            pl.col("category")
-            .drop_nulls()
-            .value_counts(sort=True)
-            .struct.field("category")
-        ).collect()
-
-        if counts.height == 1:
-            self._metadata._filter = counts.item()
+        """
+        Scan data frames matching glob to extract only category name. If the
+        frames do not have a unique category name, do nothing.
+        """
+        from .framing import extract_category_from_parquet
+        category = extract_category_from_parquet(glob)
+        if category:
+            self._metadata._filter = category
 
     def update_batch_count(
         self,
@@ -467,6 +447,7 @@ class _Fsck:
                     self.error(f'{key} is {value}, but was {entry["batch_count"]}')
             else:
                 entry[key] = value
+
 
 def _get_days_in_month(year, month) -> int:
     month += 1

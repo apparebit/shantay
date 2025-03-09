@@ -6,10 +6,9 @@ from pathlib import Path
 
 import polars as pl
 
-from .collector import Collector
 from .model import (
-    Coverage, Daily, Dataset, KEYWORDS_FILE, MetadataEntry, PLATFORMS_FILE, Release,
-    STATISTICS_FILE
+    CollectorProtocol, Coverage, Daily, Dataset, KEYWORDS_FILE, MetadataEntry,
+    PLATFORMS_FILE, Release, STATISTICS_FILE
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
@@ -61,7 +60,14 @@ class StatementsOfReasons(Dataset[Daily]):
         total_rows, total_rows_with_keywords = self._extract_row_counts(
             csv_files, index, name, progress
         )
-        frame = self._extract_filtered_rows(csv_files, index, name, filter, progress)
+        frame = self._extract_filtered_rows(
+            csv_files=csv_files,
+            release=release,
+            index=index,
+            name=name,
+            filter=filter,
+            progress=progress
+        )
 
         self._validate_schema(frame)
         path = root / release.directory
@@ -104,7 +110,9 @@ class StatementsOfReasons(Dataset[Daily]):
 
     def _extract_filtered_rows(
         self,
+        *,
         csv_files: str,
+        release: Daily,
         index: int,
         name: str,
         filter: str | pl.Expr,
@@ -121,6 +129,7 @@ class StatementsOfReasons(Dataset[Daily]):
         progress.step(self.extract_data_step_number(index, 2), extra="extracting working data")
         try:
             frame = self.finish_frame(
+                release,
                 self._scan_csv_with_polars(csv_files, filter)
             ).collect()
             _logger.debug(
@@ -150,6 +159,7 @@ class StatementsOfReasons(Dataset[Daily]):
 
             try:
                 frame = self.finish_frame(
+                    release,
                     self._scan_csv_with_polars(file_path, filter)
                 ).collect()
                 frames.append(frame)
@@ -164,6 +174,7 @@ class StatementsOfReasons(Dataset[Daily]):
 
             try:
                 frame = self.finish_frame(
+                    release,
                     self._read_csv_row_by_row(file_path, filter).lazy()
                 ).collect()
                 frames.append(frame)
@@ -241,7 +252,7 @@ class StatementsOfReasons(Dataset[Daily]):
         frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
         return frame if has_category else frame.filter(filter)
 
-    def finish_frame(self, frame: pl.LazyFrame) -> pl.LazyFrame:
+    def finish_frame(self, release: Daily, frame: pl.LazyFrame) -> pl.LazyFrame:
         """
         Finish the frame by patching in the names of country groups, parsing
         list-valued columns, as well as casting list elements and date columns
@@ -274,7 +285,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     .str.replace_all('"', "", literal=True)
                     .str.split(","),
             )
-            # Cast list elements and date columns to their types
+            # Cast list elements and date columns to their types. Add released_on.
             .with_columns(
                 pl.col("decision_visibility").cast(pl.List(DecisionVisibility)),
                 pl.col("category_addition").cast(pl.List(StatementCategory)),
@@ -290,13 +301,17 @@ class StatementsOfReasons(Dataset[Daily]):
                     "content_date",
                     "application_date",
                     "created_at",
-                ).str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms")
+                ).str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms"),
+                pl.lit(release.start_date).alias("released_on"),
             )
         )
 
     def _validate_schema(self, frame: pl.DataFrame) -> None:
         """Validate the schema of the given data frame."""
         for name in frame.columns:
+            # FIXME: Remove exemption when production data has been upgraded
+            if name == "released_on":
+                continue
             actual = frame.schema[name]
             expected = SCHEMA[name]
             if actual != expected:
@@ -321,25 +336,33 @@ class StatementsOfReasons(Dataset[Daily]):
 
     @annotate_error(filename_arg="root")
     def analyze_release(
-        self, root: Path, release: Release, metadata: MetadataEntry, collector: Collector
+        self,
+        root: Path,
+        release: Release,
+        metadata: pl.DataFrame,
+        collector: CollectorProtocol,
     ) -> None:
-        # Read all Parquet files for entire month, filter rows with keywords
         frame = pl.read_parquet(f"{root}/{release.batch_glob}")
-        last_day = release.last_daily.to_date()
+        start_date = pl.lit(release.start_date).alias("start_date")
+        end_date = pl.lit(release.end_date).alias("end_date")
+
+        batch_count, total_rows, total_rows_with_keywords = metadata.select(
+            pl.col("batch_count").sum(),
+            pl.col("total_rows").sum(),
+            pl.col("total_rows_with_keywords").sum(),
+        ).row(0)
 
         stats = frame.select(
-            # Timing the data
-            pl.lit(release.first_daily.to_date()).alias("first_day"),
-            pl.lit(last_day).alias("last_day"),
-            pl.lit(release.monthly.year).alias("year"),
-            pl.lit(release.monthly.month).alias("month"),
+            # Age the data
+            start_date,
+            end_date,
 
             # Stats about archival data
-            pl.lit(metadata.get("total_rows")).alias("total_rows"),
-            pl.lit(metadata.get("total_rows_with_keywords")).alias("total_rows_with_keywords"),
+            pl.lit(total_rows).alias("total_rows"),
+            pl.lit(total_rows_with_keywords).alias("total_rows_with_keywords"),
 
             # Stats about batching
-            pl.lit(metadata["batch_count"]).alias("batch_count"),
+            pl.lit(batch_count).alias("batch_count"),
 
             # Stats about working set
             pl.len().alias("rows"),
@@ -347,40 +370,37 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
             pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
         ).with_columns(
-            pl.exclude(
-                "first_day", "last_day", "year", "month", "batch_count",
-                "max_keywords_per_row"
-            ).cast(pl.UInt64),
+            # FIXME Update to UInt128 when that type can be written to parquet files.
+            pl.exclude("start_date", "end_date", "batch_count", "max_keywords_per_row").cast(pl.UInt64),
             pl.col("batch_count").cast(pl.UInt64),
             pl.col("max_keywords_per_row").cast(pl.UInt32),
         )
 
         keywords = frame.select(
             pl.col("category_specification")
-            .list.explode().drop_nulls()
+            .list.explode()
+            .drop_nulls()
             .value_counts()
             .struct.unnest()
-        ).with_columns(
-            # date vs year/month are redundant but simplify aggregations
-            pl.lit(last_day).alias("date"),
-            pl.lit(release.monthly.year).alias("year"),
-            pl.lit(release.monthly.month).alias("month"),
+        ).select(
+            start_date,
+            end_date,
+            pl.col("category_specification").alias("keyword"),
+            pl.col("count"),
         )
 
         platforms = frame.select(
-            pl.col("platform_name"),
+            pl.col("platform_name").alias("platform"),
             pl.col("category_specification").is_null().not_().alias("has_keyword"),
-        ).group_by("platform_name", "has_keyword").agg(
+        ).group_by("platform", "has_keyword").agg(
             pl.len().alias("count")
         ).with_columns(
-            # date vs year/month are redundant but simplify aggregations
-            pl.lit(last_day).alias("date"),
-            pl.lit(release.monthly.year).alias("year"),
-            pl.lit(release.monthly.month).alias("month"),
+            start_date,
+            end_date,
         )
 
-        collector.release(release)
-        collector.frames(
+        collector.add_frames(
+            release,
             stats=stats,
             keywords=keywords,
             platforms=platforms,
@@ -396,7 +416,7 @@ class StatementsOfReasons(Dataset[Daily]):
 
     @annotate_error(filename_arg="root")
     def combine_releases(
-        self, root: Path, coverage: Coverage, collector: Collector
+        self, root: Path, coverage: Coverage, collector: CollectorProtocol
     ) -> dict[str, pl.DataFrame]:
         summary = {}
 
@@ -406,19 +426,27 @@ class StatementsOfReasons(Dataset[Daily]):
                 self.write_parquet(frame, root / STATISTICS_FILE)
             elif key == "keywords":
                 summary[key] = (
-                    frame.select(pl.exclude("year", "month"))
-                    .group_by("category_specification")
-                    .agg(pl.col("count").sum())
+                    frame.group_by("keyword")
+                    .agg(
+                        pl.col("start_date").min(),
+                        pl.col("end_date").max(),
+                        pl.col("count").sum(),
+                    )
                     .sort("count", descending=True)
                 )
+                # Write frame, not just computed summary
                 self.write_parquet(frame, root / KEYWORDS_FILE)
             elif key == "platforms":
                 summary[key] = (
-                    frame.select(pl.exclude("year", "month"))
-                    .group_by("platform_name", "has_keyword")
-                    .agg(pl.col("count").sum()) # Sum up partial aggregates
-                    .sort(["platform_name", "has_keyword"])
+                    frame.group_by("platform", "has_keyword")
+                    .agg(
+                        pl.col("start_date").min(),
+                        pl.col("end_date").max(),
+                        pl.col("count").sum()
+                    )
+                    .sort(["platform", "has_keyword"])
                 )
+                # Write frame, not just computed summary
                 self.write_parquet(frame, root / PLATFORMS_FILE)
             else:
                 raise ValueError(f"unexpected frame {key}")

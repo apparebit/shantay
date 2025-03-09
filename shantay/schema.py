@@ -419,25 +419,25 @@ KEYWORDS_V2 = frozenset([
 ])
 
 
-KEYWORDS_MINOR_PROTECTION = tuple([
-    "NO_KEYWORD",
-    "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE",
-    "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS",
-    "KEYWORD_UNSAFE_CHALLENGES",
-    "KEYWORD_OTHER",
-])
+KEYWORDS_MINOR_PROTECTION = {
+    "NO_KEYWORD": "None",
+    "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS": "Age-Restricted",
+    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL": "CSAM",
+    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE": "Deepfake",
+    "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS": "Grooming",
+    "KEYWORD_UNSAFE_CHALLENGES": "Unsafe Challenges",
+    "KEYWORD_OTHER": "Other",
+}
 
-# Keywords found to overlap in practice
-EXTRA_KEYWORDS_MINOR_PROTECTION = tuple([
-    "KEYWORD_ADULT_SEXUAL_MATERIAL",
-    "KEYWORD_HATE_SPEECH",
-    "KEYWORD_HUMAN_TRAFFICKING",
-    "KEYWORD_NUDITY",
-    "KEYWORD_ONLINE_BULLYING_INTIMIDATION",
-    "KEYWORD_REGULATED_GOODS_SERVICES",
-])
+# Plus keywords found to overlap in practice
+KEYWORDS_MINOR_PROTECTION_PLUS = KEYWORDS_MINOR_PROTECTION | {
+    "KEYWORD_ADULT_SEXUAL_MATERIAL": "Adult Material",
+    "KEYWORD_HATE_SPEECH": "Hate Speech",
+    "KEYWORD_HUMAN_TRAFFICKING": "Trafficking",
+    "KEYWORD_NUDITY": "Nudity",
+    "KEYWORD_ONLINE_BULLYING_INTIMIDATION": "Bullying",
+    "KEYWORD_REGULATED_GOODS_SERVICES": "Regulated",
+}
 
 class TerritorialScope(enum.Enum):
     EU = "EU"
@@ -686,46 +686,6 @@ YesNo = pl.Enum([
 ])
 
 
-COLUMNS = tuple([
-    "uuid",
-    "decision_visibility",
-    "decision_visibility_other",
-    "end_date_visibility_restriction",
-    "decision_monetary",
-    "decision_monetary_other",
-    "end_date_monetary_restriction",
-    "decision_provision",
-    "end_date_service_restriction",
-    "decision_account",
-    "end_date_account_restriction",
-    "account_type",
-    "decision_ground",
-    "decision_ground_reference_url",
-    "illegal_content_legal_ground",
-    "illegal_content_explanation",
-    "incompatible_content_ground",
-    "incompatible_content_explanation",
-    "incompatible_content_illegal",
-    "category",
-    "category_addition",
-    "category_specification",
-    "category_specification_other",
-    "content_type",
-    "content_type_other",
-    "content_language",
-    "content_date",
-    "territorial_scope",
-    "application_date",
-    "decision_facts",
-    "source_type",
-    "source_identity",
-    "automated_detection",
-    "automated_decision",
-    "platform_name",
-    "platform_uid",
-    "created_at",
-])
-
 SCHEMA_OVERRIDES = {
     "decision_monetary": DecisionMonetary,
     "decision_provision": DecisionProvision,
@@ -739,16 +699,6 @@ SCHEMA_OVERRIDES = {
     "automated_detection": YesNo,
     "automated_decision": AutomatedDecision,
 }
-
-
-def base_schema() -> pl.Schema:
-    schema = {}
-    for column in COLUMNS:
-        override = SCHEMA_OVERRIDES.get(column)
-        schema[column] = override if override else pl.String
-    return pl.Schema(schema)
-
-BASE_SCHEMA = base_schema()
 
 
 SCHEMA = pl.Schema({
@@ -803,7 +753,20 @@ SCHEMA = pl.Schema({
     "platform_uid": pl.String,
 
     "created_at": pl.Datetime(time_unit="ms"),
+    #"release_on": pl.Datetime(time_unit="ms"),
 })
+
+
+def base_schema() -> pl.Schema:
+    schema = {}
+    for column in SCHEMA.names():
+        if column == "released_on":
+            continue
+        override = SCHEMA_OVERRIDES.get(column)
+        schema[column] = override if override else pl.String
+    return pl.Schema(schema)
+
+BASE_SCHEMA = base_schema()
 
 # --------------------------------------------------------------------------------------
 

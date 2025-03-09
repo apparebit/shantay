@@ -1,6 +1,5 @@
 from argparse import ArgumentParser
 import datetime as dt
-from importlib import import_module
 import logging
 from pathlib import Path
 import traceback
@@ -9,9 +8,10 @@ from typing import Any
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
+from .framing import resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, Daily, DownloadFailed, MetadataConflict, Storage
+    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
 )
 from .processor import Processor
 from .progress import Progress
@@ -105,7 +105,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
         filter_name = filter_value = normalize_category(options.category)
     if options.filter is not None:
         filter_name = options.filter
-        filter_value = _resolve_module_binding(options.filter)
+        filter_value = resolve_query_binding(options.filter)
 
     # Prepare metadata
     metadata = Metadata.merge(storage.staging_root, storage.working_root, not_exist_ok=True)
@@ -120,7 +120,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
         if filter_name.startswith("STATEMENT_CATEGORY"):
             filter_value = filter_name
         else:
-            filter_value = _resolve_module_binding(filter_name)
+            filter_value = resolve_query_binding(filter_name)
     elif metadata.filter != filter_name:
         raise ConfigError(
             f'metadata from previous run is incompatible with --category/--filter option'
@@ -149,29 +149,10 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
         raise ConfigError("cannot determine last date, please provide --last option")
 
     # Finish it all up
-    coverage = Coverage(Daily.of(first), Daily.of(last), filter_value)
+    assert filter_value is not None
+    coverage = Coverage(Release.of(first), Release.of(last), filter_value)
     progress = Progress()
     return storage, coverage, metadata, progress
-
-
-def _resolve_module_binding(s: str) -> object:
-    module, _, binding = s.partition(":")
-    if not module:
-        raise ConfigError(f'module binding "{s}" without module (before colon)')
-    if not binding:
-        raise ConfigError(f'module binding "{s}" without binding (after colon)')
-
-    try:
-        m = import_module(module)
-    except ImportError:
-        raise ConfigError(f'unable to import module for module binding "{s}"')
-    try:
-        v = getattr(m, binding)
-    except AttributeError:
-        raise ConfigError(f'attribute not found for module binding "{s}"')
-    if not isinstance(v, pl.Expr):
-        raise ConfigError(f'value of module binding "{s}" is not a Pola.rs expression')
-    return v
 
 
 def configure_logging(logfile: str, *, verbose: bool) -> None:

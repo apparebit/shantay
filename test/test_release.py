@@ -11,17 +11,26 @@ class TestRelease(unittest.TestCase):
         daily = cast(Daily, release)
         self.assertTupleEqual((daily.year, daily.month, daily.day), (1999, 12, 31))
 
+    def check_monthly(self, release: Release, year: int = 1999, month: int = 12) -> None:
+        self.assertIsInstance(release, Monthly)
+        monthly = cast(Monthly, release)
+        self.assertTupleEqual((monthly.year, monthly.month), (year, month))
+
     def test_from_string(self) -> None:
-        r = Daily.of("1999-12-31")
+        r = Release.of("1999-12-31")
         self.check_daily(r)
 
     def test_from_date(self) -> None:
-        r = Daily.of(dt.date(1999, 12, 31))
+        r = Release.of(dt.date(1999, 12, 31))
         self.check_daily(r)
 
-    def test_from_datetime(self) -> None:
-        r = Daily.of(dt.datetime(1999, 12, 31, 23, 59, 59))
-        self.check_daily(r)
+    def test_to_string(self) -> None:
+        r = Daily(1999, 12, 31)
+        self.assertEqual(str(r), "1999-12-31")
+
+    def test_to_monthly(self) -> None:
+        r = Daily(1999, 12, 31).monthly
+        self.check_monthly(r)
 
     def test_leap_years(self) -> None:
         self.assertEqual(Daily(1899, 2, 28).next().month, 3)

@@ -4,33 +4,78 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
-from typing import Any, Optional, Required, Self, TypedDict
+import re
+from typing import Optional, overload, Protocol, Required, Self, TypedDict
 
-
-from .collector import Collector
 from .progress import NO_PROGRESS, Progress
+
+
+import polars
+type DataFrameType = polars.DataFrame
+type QueryExpression = polars.Expr
+del polars
 
 
 # ================================================================================================
 # Release, Daily, Monthly
 
 
-class Release(metaclass=ABCMeta):
+class Period(metaclass=ABCMeta):
+
+    @property
+    @abstractmethod
+    def start_date(self) -> dt.date: ...
+
+    @property
+    @abstractmethod
+    def end_date(self) -> dt.date: ...
+
+
+_RELEASE = re.compile(r"(?P<year>[0-9]{4})-(?P<month>[0-9]{2})(?:-(?P<day>[0-9]{2}))?")
+
+class Release(Period):
+
+    @overload
+    @staticmethod
+    def of(year: int, month: int, day: int, /) -> "Daily": ...
+    @overload
+    @staticmethod
+    def of(year: int, month: int, /) -> "Monthly": ...
+    @overload
+    @staticmethod
+    def of(release: str, /) -> "Release": ...
+    @overload
+    @staticmethod
+    def of(date: dt.date, /) -> "Daily": ...
+    @staticmethod
+    def of(
+        year: int | str | dt.date,
+        month: None | int = None,
+        day: None | int = None,
+        /
+    ) -> "Release":
+        if isinstance(year, dt.date):
+            return Daily(year.year, year.month, year.day)
+        if isinstance(year, int):
+            assert month is not None
+            if day is None:
+                return Monthly(year, month)
+            else:
+                return Daily(year, month, day)
+        match = _RELEASE.match(year)
+        if match is None:
+            raise ValueError(f'"{year}" does not denote a daily or monthly release')
+        year = int(match.group("year"))
+        month = int(match.group("month"))
+        if match.group("day") is None:
+            return Monthly(year, month)
+        else:
+            return Daily(year, month, int(match.group("day")))
 
     @property
     @abstractmethod
     def id(self) -> str:
         """The ID."""
-
-    @property
-    @abstractmethod
-    def first_daily(self) -> "Daily":
-        """The first day."""
-
-    @property
-    @abstractmethod
-    def last_daily(self) -> "Daily":
-        """The last day."""
 
     @property
     @abstractmethod
@@ -77,6 +122,9 @@ class Release(metaclass=ABCMeta):
     @abstractmethod
     def __ge__(self, other: object) -> bool: ...
 
+    def __str__(self) -> str:
+        return self.id
+
 
 @dataclass(frozen=True, slots=True, eq=True, order=True)
 class Daily(Release):
@@ -90,33 +138,18 @@ class Daily(Release):
         assert 1 <= self.month <= 12
         assert 1 <= self.day <= _days_in_month(self.year, self.month)
 
-    @classmethod
-    def of(cls, date: str | dt.date | dt.datetime) -> Self:
-        """
-        Create a new daily occurrence from the given string, date, or date
-        time.
-        """
-        if isinstance(date, str):
-            date = dt.date.fromisoformat(date)
-        return cls(date.year, date.month, date.day)
-
     @property
     def id(self) -> str:
         """The ID."""
         return f"{self.year}-{self.month:02}-{self.day:02}"
 
-    # @property
-    # def ymd(self) -> tuple[int, int, int]:
-    #     """Get the year, month, and day as a tuple."""
-    #     return self.year, self.month, self.day
+    @property
+    def start_date(self) -> dt.date:
+        return dt.date(self.year, self.month, self.day)
 
     @property
-    def first_daily(self) -> "Daily":
-        return self
-
-    @property
-    def last_daily(self) -> "Daily":
-        return self
+    def end_date(self) -> dt.date:
+        return dt.date(self.year, self.month, self.day)
 
     @property
     def parent_directory(self) -> Path:
@@ -131,7 +164,7 @@ class Daily(Release):
     @property
     def temp_directory(self) -> Path:
         """A temporary directory for grouping *per* period files."""
-        return Path(f"{self.year}") / f"{self.month:02}" / "{self.day:02}.tmp"
+        return Path(f"{self.year}") / f"{self.month:02}" / f"{self.day:02}.tmp"
 
     @property
     def batch_glob(self) -> str:
@@ -149,9 +182,6 @@ class Daily(Release):
         if self.day != _days_in_month(self.year, self.month):
             monthly = monthly.previous()
         return monthly
-
-    def to_date(self) -> dt.date:
-        return dt.date(self.year, self.month, self.day)
 
     @property
     def monthly(self) -> "Monthly":
@@ -205,12 +235,12 @@ class Monthly(Release):
         return f"{self.year}-{self.month:02}"
 
     @property
-    def first_daily(self) -> "Daily":
-        return Daily(self.year, self.month, 1)
+    def start_date(self) -> dt.date:
+        return dt.date(self.year, self.month, 1)
 
     @property
-    def last_daily(self) -> "Daily":
-        return Daily(self.year, self.month, _days_in_month(self.year, self.month))
+    def end_date(self) -> dt.date:
+        return dt.date(self.year, self.month, _days_in_month(self.year, self.month))
 
     @property
     def parent_directory(self) -> Path:
@@ -262,34 +292,23 @@ class Monthly(Release):
 
 
 @dataclass(frozen=True, slots=True)
-class DailyRange:
+class ReleaseRange[R: Release](Period):
 
-    first: Daily
-    last: Daily
-
-    def __post_init__(self) -> None:
-        assert self.first <= self.last
-
-    def __iter__(self) -> Iterator[Daily]:
-        cursor = self.first
-        last = self.last
-        while True:
-            yield cursor
-            if cursor == last:
-                break
-            cursor = cursor.next()
-
-
-@dataclass(frozen=True, slots=True)
-class MonthlyRange:
-
-    first: Monthly
-    last: Monthly
+    first: R
+    last: R
 
     def __post_init__(self) -> None:
         assert self.first <= self.last
 
-    def __iter__(self) -> Iterator[Monthly]:
+    @property
+    def start_date(self) -> dt.date:
+        return self.first.start_date
+
+    @property
+    def end_date(self) -> dt.date:
+        return self.last.end_date
+
+    def __iter__(self) -> Iterator[R]:
         cursor = self.first
         last = self.last
         while True:
@@ -313,20 +332,24 @@ def _days_in_month(year: int, month: int) -> int:
 
 
 META_FILE = "meta.json"
-KEYWORDS_FILE = "meta-keywords.parquet"
-PLATFORMS_FILE = "meta-platforms.parquet"
 STATISTICS_FILE = "meta-statistics.parquet"
 DIGEST_FILE = "sha256.txt"
+
+# Specific to DSA SoR DB
+KEYWORDS_FILE = "meta-keywords.parquet"
+PLATFORMS_FILE = "meta-platforms.parquet"
 
 
 class MetadataEntry(TypedDict, total=False):
     batch_count: Required[int]
     total_rows: Optional[int]
-    total_rows_with_keywords: Optional[int]
     batch_rows: Optional[int]
-    batch_rows_with_keywords: Optional[int]
     batch_memory: Optional[int]
     sha256: Optional[str]
+
+    # Specific to DSA SoR DB
+    total_rows_with_keywords: Optional[int]
+    batch_rows_with_keywords: Optional[int]
 
 
 class FullMetadataEntry(MetadataEntry):
@@ -340,7 +363,7 @@ class Coverage[R: Release]:
     first: R
     last: R
     # Really: str | pl.Expr
-    filter: str | object
+    filter: str | QueryExpression
 
     def __post_init__(self) -> None:
         assert self.first <= self.last
@@ -355,6 +378,18 @@ class Coverage[R: Release]:
 
     def __len__(self) -> int:
         return self.last - self.first + 1
+
+
+class CollectorProtocol(Protocol):
+    """The protocol for incremental data frame generation."""
+
+    def add_frames(self, release: Release, **kwargs: DataFrameType) -> None:
+        """Add named data frames for the given release."""
+        ...
+
+    def consume_frames(self) -> Iterator[tuple[str, DataFrameType]]:
+        """Consume concatenated data frames by name."""
+        ...
 
 
 class Dataset[R: Release](metaclass=ABCMeta):
@@ -390,18 +425,22 @@ class Dataset[R: Release](metaclass=ABCMeta):
         release: R,
         index: int,
         name: str,
-        filter: str | Any,
+        filter: str | QueryExpression,
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
 
     @abstractmethod
     def analyze_release(
-        self, root: Path, release: Release, metadata: MetadataEntry, collector: Collector
+        self,
+        root: Path,
+        release: Release,
+        metadata: DataFrameType,
+        collector: CollectorProtocol
     ) -> None:
         """
-        Analyze a release's data. The release may have a different type than the
-        dataset's native release.
+        Analyze a release's data. The release period need not be the original
+        release period and, in fact, is likely to be coarser.
         """
 
     @abstractmethod
@@ -409,11 +448,11 @@ class Dataset[R: Release](metaclass=ABCMeta):
         self,
         root: Path,
         coverage: Coverage[T],
-        collector: Collector,
-    ) -> Any:
+        collector: CollectorProtocol,
+    ) -> dict[str, DataFrameType]:
         """
-        Combine the analysis results. The release may have a different type than
-        the dataset's native release.
+        Combine the analysis results. The release period is the same as for
+        analysis. This method may return more than one named data frame.
         """
 
 

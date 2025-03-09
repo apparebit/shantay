@@ -3,21 +3,20 @@ import hashlib
 import logging
 from pathlib import Path
 import shutil
-from typing import Any, cast, NoReturn
+from typing import cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
 import polars as pl
 
-from .collector import Collector
 from .metadata import Metadata
 from .model import (
-    Coverage, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry, Monthly, Release,
-    Storage
+    Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry,
+    Release, ReleaseRange, Storage
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
-from .viz import render
+
 
 _logger = logging.getLogger(__package__)
 
@@ -319,32 +318,25 @@ class Processor[R: Release]:
             shutil.copy(source_dir / batch, target_dir / batch)
             self._progress.step(index)
 
-    def analyze(self) -> Any:
+    def analyze(self) -> dict[str, DataFrameType]:
         # Prepare metadata for analysis
-        metadata = (
-            self._metadata.to_frame()
-            .select(
-                pl.col("release").dt.year().alias("year"),
-                pl.col("release").dt.month().alias("month"),
-                pl.exclude("release", "sha256"),
-            )
-            .sort(pl.col("year", "month"))
-            .group_by("year", "month", maintain_order=True)
-            .agg(pl.col("*").sum())
-        )
+        from .framing import Collector, collect_release_metadata, filter_release_metadata
+
+        start_date, end_date, metadata = collect_release_metadata(self._metadata.records)
+        range = ReleaseRange(Release.of(start_date).monthly, Release.of(end_date).monthly)
 
         # Prepare progress tracker
         self._progress.activity(
             "analyzing monthly batches", "analyzing batches", "batch", with_rate=False
         )
-        self._progress.start(metadata.height)
+        self._progress.start(range.last - range.first + 1)
 
         collector = Collector()
-        for index, stats in enumerate(metadata.iter_rows(named=True)):
-            release = Monthly(stats["year"], stats["month"])
+        for index, release in enumerate(range):
+            release_metadata = filter_release_metadata(metadata, release)
 
             self._dataset.analyze_release(
-                self._storage.working_root, release, cast(MetadataEntry, stats), collector
+                self._storage.working_root, release, release_metadata, collector
             )
             self._progress.step(index + 1, extra=release.id)
 
@@ -353,4 +345,5 @@ class Processor[R: Release]:
         )
 
     def visualize(self) -> None:
-        render(self._storage.working_root)
+        #render(self._storage.working_root)
+        pass

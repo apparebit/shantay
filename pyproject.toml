@@ -22,12 +22,13 @@ classifiers = [
     "Topic :: Terminals",
 ]
 dependencies = [
-    "altair", # graphics
+    "altair", # chart creation
+    "vl-convert-python", # chart rendering
     "polars", # data frames
     "pyarrow", # underlying memory representation
     "great_tables", # table formatting
     "ipython", # interactive use
-    "ipykernel", # notebooks
+    "ipykernel", # notebook support
 ]
 
 dynamic = ["version"]
