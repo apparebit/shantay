@@ -16,6 +16,7 @@ from .model import (
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
+from .viz import visualize
 
 
 _logger = logging.getLogger(__package__)
@@ -345,5 +346,4 @@ class Processor[R: Release]:
         )
 
     def visualize(self) -> None:
-        #render(self._storage.working_root)
-        pass
+        visualize(self._storage.working_root)
