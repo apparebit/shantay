@@ -686,6 +686,7 @@ YesNo = pl.Enum([
 ])
 
 
+# A partial schema that can be safely applied when reading CSV files with Pola.rs
 SCHEMA_OVERRIDES = {
     "decision_monetary": DecisionMonetary,
     "decision_provision": DecisionProvision,
@@ -701,6 +702,7 @@ SCHEMA_OVERRIDES = {
 }
 
 
+# The complete and final schema.
 SCHEMA = pl.Schema({
     "uuid": pl.String,
 
@@ -753,7 +755,7 @@ SCHEMA = pl.Schema({
     "platform_uid": pl.String,
 
     "created_at": pl.Datetime(time_unit="ms"),
-    #"release_on": pl.Datetime(time_unit="ms"),
+    "released_on": pl.Datetime(time_unit="ms"),
 })
 
 
@@ -766,6 +768,10 @@ def base_schema() -> pl.Schema:
         schema[column] = override if override else pl.String
     return pl.Schema(schema)
 
+# The base schema declares types for all columns but the released_on column
+# (which does not appear in CSV files). For columns shared with the schema
+# overrides, the base schema has the same types. For all other columns, it uses
+# the string type.
 BASE_SCHEMA = base_schema()
 
 # --------------------------------------------------------------------------------------
