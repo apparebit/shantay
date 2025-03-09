@@ -60,7 +60,7 @@ The screenshot below shows an example directory hierarchy under the *working*
 root. It illustrates the three directory levels discussed in 2.2 as well as the
 files with digests and summary statistics discussed in 2.3.
 
-![The working root hierarchy](https://raw.githubusercontent.com/apparebit/shantay/boss/vis/screenshot/hierarchy.png)
+![The working root hierarchy](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/screenshot/hierarchy.png)
 
 
 ### 2.1 Three Root Directories: Staging, Archive, Working
