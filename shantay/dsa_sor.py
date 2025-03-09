@@ -190,7 +190,7 @@ class StatementsOfReasons(Dataset[Daily]):
                 )
                 raise
 
-        return pl.concat(frames, how="vertical")
+        return pl.concat(frames, how="vertical", rechunk=True)
 
     def _scan_csv_with_polars(self, path: str | Path, filter: str | pl.Expr) -> pl.LazyFrame:
         """

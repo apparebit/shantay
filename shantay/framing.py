@@ -105,7 +105,7 @@ class Collector:
                 all_frames.setdefault(name, []).append(frame)
 
         for name, frames in all_frames.items():
-            yield name, pl.concat(frames, how="vertical")
+            yield name, pl.concat(frames, how="vertical", rechunk=True)
 
 
 def resolve_query_binding(s: str) -> QueryExpression:
