@@ -157,7 +157,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
 
 def configure_logging(logfile: str, *, verbose: bool) -> None:
     logging.basicConfig(
-        format='%(asctime)s [%(levelname)s] %(message)s',
+        format='%(asctime)s  [%(levelname)s] %(message)s',
         datefmt='%Y-%m-%d %H:%M:%S',
         filename=logfile,
         encoding="utf8",

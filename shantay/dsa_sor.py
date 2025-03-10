@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Coverage, Daily, Dataset, KEYWORDS_FILE, MetadataEntry,
+    CollectorProtocol, Coverage, Daily, Dataset, KEYWORDS_FILE,
     PLATFORMS_FILE, Release, STATISTICS_FILE
 )
 from .progress import NO_PROGRESS, Progress
@@ -133,13 +133,14 @@ class StatementsOfReasons(Dataset[Daily]):
                 self._scan_csv_with_polars(csv_files, filter)
             ).collect()
             _logger.debug(
-                'extracted rows=%d, using="Pola.rs with glob", file="%s"',
+                'extracted rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
                 frame.height, name
             )
             return frame
         except Exception as x:
             _logger.warning(
-                'failed to read CSV using="Pola.rs with glob", file="%s"', name, exc_info=x
+                'failed to read CSV with strategy=1, using="globbing Pola.rs", file="%s"',
+                name, exc_info=x
             )
 
         # Slow path: Process each CSV file by itself, trying first with the same
@@ -165,12 +166,15 @@ class StatementsOfReasons(Dataset[Daily]):
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted rows=%d, using="Pola.rs", file="%s"',
+                    'extracted rows=%d, strategy=2, using="Pola.rs", file="%s"',
                     frame.height, file_path.name
                 )
                 continue
             except:
-                _logger.warning('failed to read CSV using="Pola.rs", file="%s"', file_path.name)
+                _logger.warning(
+                    'failed to read CSV with strategy=2, using="Pola.rs", file="%s"',
+                    file_path.name
+                )
 
             try:
                 frame = self.finish_frame(
@@ -180,12 +184,12 @@ class StatementsOfReasons(Dataset[Daily]):
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted rows=%d, using="Python\'s CSV module", file="%s"',
+                    'extracted rows=%d, strategy=3, using="Python\'s CSV module", file="%s"',
                     frame.height, file_path.name
                 )
             except Exception as x:
                 _logger.error(
-                    'failed to parse using="Python\'s CSV module", file="%s"',
+                    'failed to parse with strategy=3, using="Python\'s CSV module", file="%s"',
                     file_path.name, exc_info=x
                 )
                 raise

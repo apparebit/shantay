@@ -1,6 +1,7 @@
 from collections import Counter
 import hashlib
 import logging
+import os
 from pathlib import Path
 import shutil
 from typing import cast, NoReturn
@@ -9,10 +10,11 @@ import zipfile
 
 import polars as pl
 
+from .__init__ import __version__
 from .metadata import Metadata
 from .model import (
-    Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed, MetadataEntry,
-    Release, Storage
+    CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
+    MetadataEntry, Release, Storage
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
@@ -35,7 +37,7 @@ class Processor[R: Release]:
         metadata: Metadata,
         progress: Progress = NO_PROGRESS,
     ) -> None:
-        self._id = 0
+        self._pid = os.getpid()
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
@@ -43,7 +45,7 @@ class Processor[R: Release]:
         self._progress = progress
 
     def run(self, task: str) -> None | dict[str, pl.DataFrame]:
-        _logger.info('running processor=%d, task="%s"', self._id, task)
+        _logger.info('running processor=%d, task="%s"', self._pid, task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
         _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
@@ -97,14 +99,15 @@ class Processor[R: Release]:
             f"downloading data for release {release.id}",
             f"downloading {release.id}", "byte", with_rate=True,
         )
+        archive = self._dataset.archive_name(release)
         size = self._download_archive(self._storage.staging_root, release)
-        _logger.info('downloaded bytes=%d, file="%s"', size, self._dataset.archive_name(release))
+        _logger.info('downloaded bytes=%d, file="%s"', size, archive)
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
-        _logger.info('validated file="%s"', self._dataset.archive_name(release))
+        _logger.info('validated file="%s"', archive)
         self._progress.perform(f"copying release {release.id} to archive")
         self.copy_archive(self._storage.staging_root, self._storage.archive_root, release)
-        _logger.info('archived file="%s"', self._dataset.archive_name(release))
+        _logger.info('archived file="%s"', archive)
 
     def is_archive_downloaded(self, release: R) -> bool:
         """Determine whether the archive for the release has been downloaded."""
@@ -205,12 +208,13 @@ class Processor[R: Release]:
         if self.is_archive_staged(release):
             return
 
+        archive = self._dataset.archive_name(release)
         self._progress.perform(f"copying release {release.id} from archive to staging")
         self.copy_archive(self._storage.archive_root, self._storage.staging_root, release)
-        _logger.info('staged file="%s"', self._dataset.archive_name(release))
+        _logger.info('staged file="%s"', archive)
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
-        _logger.info('validated file="%s"', self._dataset.archive_name(release))
+        _logger.info('validated file="%s"', archive)
 
     def is_archive_staged(self, release: R) -> bool:
         """"Determine whether the archive for the given release has been staged."""
@@ -260,7 +264,9 @@ class Processor[R: Release]:
         self._progress.perform(f"updating batch metadata for release {release.id}")
         self._metadata[release] = cast(MetadataEntry, full_counters)
         self._metadata.write_json(self._storage.staging_root)
-        _logger.info('extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive_name(release))
+        _logger.info(
+            'extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive_name(release)
+        )
 
         self._progress.activity(
             f"copying batches for {release.id} out of staging",
@@ -308,7 +314,9 @@ class Processor[R: Release]:
         return True
 
     @annotate_error(filename_arg="target")
-    def copy_extracted_data(self, source: Path, target: Path, release: R, count: int) -> None:
+    def copy_extracted_data(
+        self, source: Path, target: Path, release: R, count: int
+    ) -> None:
         """Copy the batch files between root directories."""
         source_dir = source / release.directory
         target_dir = target / release.directory
@@ -345,5 +353,20 @@ class Processor[R: Release]:
             self._storage.working_root, self._coverage, collector
         )
 
+    # def analyze_release(
+    #     self,
+    #     index: int,
+    #     release: Release,
+    #     metadata: DataFrameType,
+    #     collector: CollectorProtocol,
+    # ) -> None:
+    #     from .framing import filter_period
+    #     release_metadata = filter_period(metadata, release)
+    #     self._dataset.analyze_release(
+    #         self._storage.working_root, release, release_metadata, collector
+    #     )
+    #     self._progress.step(index + 1, extra=release.id)
+
+
     def visualize(self) -> None:
-        visualize(self._storage.working_root)
+        visualize(self._storage.working_root, self._storage.staging_root)

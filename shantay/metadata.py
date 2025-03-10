@@ -2,6 +2,7 @@ from collections.abc import Iterator
 import datetime as dt
 import hashlib
 import json
+import logging
 from pathlib import Path
 import re
 import shutil
@@ -12,6 +13,9 @@ from .model import (
     DIGEST_FILE, FullMetadataEntry, META_FILE, MetadataConflict, MetadataEntry, Release
 )
 from .progress import NO_PROGRESS, Progress
+
+
+_logger = logging.getLogger(__package__)
 
 
 class Metadata[R: Release]:
@@ -212,7 +216,8 @@ class _Fsck:
     def error(self, msg: str) -> None:
         """Record an error."""
         self._errors.append(ValueError(msg))
-        self._progress.error(msg)
+        _logger.error(msg)
+        self._progress.perform(f"ERROR: {msg}")
 
     def run(self) -> Metadata:
         """Run the file system analysis."""
@@ -363,6 +368,8 @@ class _Fsck:
         month_no = int(day.parent.name)
         day_no = int(day.name)
         self.update_batch_count(year_no, month_no, day_no, batch_no, digest_of_digests)
+
+        _logger.info('checked batch_count=%d directory="%s"', batch_no, day)
 
     def read_digest_file(self, directory: Path) -> None | dict[str, str]:
         """Read the text file with a list of batchfile digests."""
