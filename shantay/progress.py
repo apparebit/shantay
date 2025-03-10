@@ -157,12 +157,6 @@ class Progress:
         self._render(f"{self._prefix}{activity}{self._suffix}")
         return self
 
-    def error(self, msg: str) -> Self:
-        """Report a non-fatal error."""
-        # Render newline so that error message scrolls up one line
-        self._render(f"{self._prefix}ERROR: {msg}{self._suffix}\n")
-        return self
-
     def done(self) -> None:
         """Finish."""
         self._reset_activity()
