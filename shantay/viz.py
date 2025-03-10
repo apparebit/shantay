@@ -55,14 +55,15 @@ KEYWORD_PALETTE = [
 # Visualization
 
 
-def visualize(root: Path) -> None:
-    Visualization(root).run()
+def visualize(working_root: Path, staging_root: Path) -> None:
+    Visualization(working_root, staging_root).run()
 
 
 class Visualization:
 
-    def __init__(self, root: Path) -> None:
-        self._root = root
+    def __init__(self, working_root: Path, staging_root: Path) -> None:
+        self._working_root = working_root
+        self._staging_root = staging_root
 
     @staticmethod
     def configure_display() -> None:
@@ -84,10 +85,10 @@ class Visualization:
 
     def ingest(self) -> None:
         range, metadata = collect_release_metadata(
-            Metadata.read_json(self._root).records
+            Metadata.read_json(self._working_root).records
         )
-        keywords = pl.read_parquet(self._root / KEYWORDS_FILE)
-        platforms = pl.read_parquet(self._root / PLATFORMS_FILE)
+        keywords = pl.read_parquet(self._working_root / KEYWORDS_FILE)
+        platforms = pl.read_parquet(self._working_root / PLATFORMS_FILE)
 
         # Restrict rendered data to *full* months. That essentially drops the
         # first week of data from the DSA SoR DB.
@@ -137,7 +138,9 @@ class Visualization:
 
         display(HTML("<h2>Keywords</h2>"))
         display(self._keyword_usage)
-        display(self.total_keyword_usage_minor_prot())
+        pie = self.total_keyword_usage_minor_prot()
+        display(pie)
+        pie.save(self._staging_root / "keyword_pie.svg")
 
         display(HTML("<h2>Platforms</h2>"))
         table = self._platforms.select(
@@ -163,6 +166,7 @@ class Visualization:
         )
 
         display(graph)
+        graph.save(self._staging_root / "timelines.svg")
 
     def daily_sor_counts_minor_prot(self) -> alt.Chart:
         table = self._metadata.select(
@@ -285,14 +289,13 @@ class Visualization:
         table = (
             self._keywords.filter(
                 pl.col("keyword").is_in(self._short_keywords)
-            ).with_columns(
-                (pl.col("start_date") + dt.timedelta(days=15)).alias("mid_date"),
             ).group_by(
-                pl.col("mid_date").dt.year().alias("year"),
-                pl.col("mid_date").dt.month().alias("month"),
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
                 pl.col("keyword")
             ).agg(
-                pl.col("mid_date").first(),
+                pl.col("start_date").min() + dt.timedelta(days=5),
+                pl.col("end_date").max() - dt.timedelta(days=5),
                 pl.col("count").sum(),
             ).with_columns(
                 pl.col("keyword").cast(pl.String).replace(self._short_keywords)
@@ -304,12 +307,13 @@ class Visualization:
                 table, title="Keywords in Protection of Minors SoRs — Monthly Counts"
             ).mark_bar(
                 tooltip=True,
-                size=45,
-                width=alt.RelativeBandSize(0.9),
+                #size=45,
+                #width=alt.RelativeBandSize(0.9),
                 #width={"band": 200},
             ).encode(
-                alt.X("mid_date:T"),
-                alt.Y("count:Q"),
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y("sum(count):Q"),
                 alt.Color("keyword:N").scale(
                     domain=[*self._short_keywords.values()],
                     range=KEYWORD_PALETTE[:len(self._short_keywords)],
