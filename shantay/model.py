@@ -505,9 +505,17 @@ class Storage:
     working_root: Path
     staging_root: Path
 
+    def isolate(self, worker: int) -> Self:
+        """Isolate the work by assigning a unique staging root."""
+        return type(self)(
+            self.archive_root,
+            self.working_root,
+            self.staging_root.with_suffix(f".{worker}")
+        )
+
 
 # ================================================================================================
-# Storage
+# Exceptions
 
 
 class ConfigError(Exception):
