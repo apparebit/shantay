@@ -8,7 +8,7 @@ from typing import Any
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
-from .framing import resolve_query_binding
+from .framing import one_column_summary, resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
@@ -193,11 +193,8 @@ def _run(args: list[str]) -> None:
         assert isinstance(result, dict)
         pl.Config.set_thousands_separator(",")
         pl.Config.set_tbl_rows(100)
-
-        print("\n\nKeywords: Protection of Minors")
-        print(result["keywords"])
-        print("\nPlatforms with or w/o Keywords")
-        print(result["platforms"])
+        pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
+        print(one_column_summary(result["stats"]))
     elif options.task == "visualize":
         pass
 

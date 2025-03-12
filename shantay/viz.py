@@ -10,8 +10,8 @@ import polars as pl
 
 from .framing import collect_release_metadata, is_row_within_period
 from .metadata import Metadata
-from .model import KEYWORDS_FILE, PLATFORMS_FILE, ReleaseRange
-from .schema import KEYWORDS_MINOR_PROTECTION_PLUS, StatementCategory
+from .model import KEYWORDS_FILE, PLATFORMS_FILE, ReleaseRange, STATISTICS_FILE
+from .schema import KEYWORDS_MINOR_PROTECTION_PLUS, SCHEMA, StatementCategory
 from .util import scale, to_markdown_table
 
 
@@ -61,9 +61,12 @@ def visualize(working_root: Path, staging_root: Path) -> None:
 
 class Visualization:
 
-    def __init__(self, working_root: Path, staging_root: Path) -> None:
+    def __init__(
+        self, working_root: Path, staging_root: Path, with_extras: bool = False
+    ) -> None:
         self._working_root = working_root
         self._staging_root = staging_root
+        self._with_extras = with_extras
 
     @staticmethod
     def configure_display() -> None:
@@ -87,6 +90,7 @@ class Visualization:
         range, metadata = collect_release_metadata(
             Metadata.read_json(self._working_root).records
         )
+        statistics = pl.read_parquet(self._working_root / STATISTICS_FILE)
         keywords = pl.read_parquet(self._working_root / KEYWORDS_FILE)
         platforms = pl.read_parquet(self._working_root / PLATFORMS_FILE)
 
@@ -100,6 +104,7 @@ class Visualization:
 
         within_range = is_row_within_period(range)
         self._metadata = metadata.filter(within_range)
+        self._statistics = statistics.filter(within_range)
         self._keywords = keywords.filter(within_range)
         self._platforms = platforms.filter(within_range)
         self._summary = Summary.of(self._metadata, self._platforms)
@@ -132,7 +137,9 @@ class Visualization:
         display(self._summary.markdown())
 
         display(HTML("<h2>Table Schemas</h2>"))
+        display(format_schema(SCHEMA, title="Source Data"))
         display(format_schema(self._metadata, title="meta.json"))
+        display(format_schema(self._statistics, title="meta-statistics.parquet"))
         display(format_schema(self._keywords, title="meta-keywords.parquet"))
         display(format_schema(self._platforms, title="meta-platforms.parquet"))
 
@@ -157,6 +164,9 @@ class Visualization:
         timelines.append(self.daily_keywords_percent_minor_prot())
         timelines.append(self.monthly_platform_counts_minor_prot())
         timelines.append(self.monthly_keyword_usage_minor_prot())
+        timelines.append(self.monthly_decision_grounds_for_csam())
+        timelines.append(self.monthly_account_decisions_for_csam())
+        timelines.append(self.monthly_visibility_changes_for_csam())
 
         graph = alt.vconcat(*timelines).resolve_scale(
             x="shared",
@@ -285,7 +295,7 @@ class Visualization:
             .interactive()
         )
 
-    def monthly_keyword_usage_minor_prot(self) -> alt.Chart:
+    def monthly_keyword_usage_minor_prot(self) -> alt.Chart | alt.LayerChart:
         table = (
             self._keywords.filter(
                 pl.col("keyword").is_in(self._short_keywords)
@@ -302,7 +312,7 @@ class Visualization:
             )
         )
 
-        return (
+        chart = (
             alt.Chart(
                 table, title="Keywords in Protection of Minors SoRs — Monthly Counts"
             ).mark_bar(
@@ -323,14 +333,182 @@ class Visualization:
             .interactive()
         )
 
+        if self._with_extras:
+            validation = self._metadata.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+            ).agg(
+                pl.col("start_date").min(),
+                pl.col("end_date").max(),
+                pl.col("batch_rows_with_keywords").sum().alias("keyed"),
+            )
+
+            chart = chart + alt.Chart(validation).mark_line(
+                shape="stroke",
+                strokeWidth=2.5,
+                color=GRAY,
+            ).encode(
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y("keyed:Q"),
+            ).properties(width=TIMELINE_WIDTH)
+
+        return chart
+
+    def monthly_decision_grounds_for_csam(self) -> alt.Chart | alt.LayerChart:
+        table = self._statistics.group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+        ).agg(
+            pl.col("start_date").min() + dt.timedelta(days=5),
+            pl.col("end_date").max() - dt.timedelta(days=5),
+            pl.col("csam_illegal_content").sum(),
+            pl.col("csam_incompatible_content").sum(),
+            pl.col("csam_no_decision_ground").sum(),
+        ).rename({
+            "csam_illegal_content": "Illegal Content",
+            "csam_incompatible_content": "Incompatible Content",
+            "csam_no_decision_ground": "⸺none⸺",
+        }).unpivot(
+            index=["start_date", "end_date"],
+            on=["Illegal Content", "Incompatible Content", "⸺none⸺"],
+            variable_name="Decision Ground",
+            value_name="count",
+        )
+
+        no_decision = table.filter(
+            pl.col("Decision Ground").eq("⸺none⸺")
+        ).select(
+            pl.col("count").sum()
+        ).item()
+        assert no_decision == 0, "decision_ground is required"
+
+        chart = (
+            alt.Chart(
+                table, title="Decision Grounds for CSAM - Monthly Counts"
+            ).mark_bar(
+                tooltip=True,
+            ).encode(
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y("sum(count):Q"),
+                alt.Color("Decision Ground:N").scale(
+                    domain=["Illegal Content", "Incompatible Content"],
+                    range=[RED, LIGHT_BLUE],
+                ),
+            ).properties(width=TIMELINE_WIDTH).interactive()
+        )
+
+        if self._with_extras:
+            validation = self._statistics.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+            ).agg(
+                pl.col("start_date").min(),
+                pl.col("end_date").max(),
+                pl.col("csam").sum(),
+            )
+
+            chart = chart + alt.Chart(validation).mark_line(
+                shape="stroke",
+                strokeWidth=2.5,
+                color=GRAY,
+            ).encode(
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y("csam:Q"),
+            ).properties(width=TIMELINE_WIDTH)
+
+        return chart
+
+    def monthly_account_decisions_for_csam(self) -> alt.Chart | alt.LayerChart:
+        table = self._statistics.group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+        ).agg(
+            pl.col("start_date").min() + dt.timedelta(days=5),
+            pl.col("end_date").max() - dt.timedelta(days=5),
+            pl.col("csam_account_suspended").sum(),
+            pl.col("csam_account_terminated").sum(),
+            pl.col("csam_no_decision_account").sum(),
+        ).rename({
+            "csam_account_suspended": "Suspended",
+            "csam_account_terminated": "Terminated",
+            "csam_no_decision_account": "⸺none⸺",
+        }).unpivot(
+            index=["start_date", "end_date"],
+            on=["Suspended", "Terminated", "⸺none⸺"],
+            variable_name="Account Decision",
+            value_name="count",
+        )
+
+        return (
+            alt.Chart(
+                table, title="Account Decisions for CSAM - Monthly Counts"
+            ).mark_bar(
+                tooltip=True,
+            ).encode(
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y("sum(count):Q"),
+                alt.Color("Account Decision:N").scale(
+                    domain=["Suspended", "Terminated", "⸺none⸺"],
+                    range=[RED, ORANGE, GRAY],
+                ),
+            ).properties(width=TIMELINE_WIDTH).interactive()
+        )
+
+    def monthly_visibility_changes_for_csam(self) -> alt.Chart | alt.LayerChart:
+        table = self._statistics.group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+        ).agg(
+            pl.col("start_date").min() + dt.timedelta(days=5),
+            pl.col("end_date").max() - dt.timedelta(days=5),
+            pl.col("csam_removed").sum(),
+            pl.col("csam_disabled").sum(),
+            pl.col("csam_demoted").sum(),
+            pl.col("csam_age_restricted").sum(),
+            pl.col("csam_interaction_restricted").sum(),
+            pl.col("csam_labeled").sum(),
+            pl.col("csam_other_visibility").sum(),
+        ).rename({
+            "csam_removed": "Removed",
+            "csam_disabled": "Disabled",
+            "csam_demoted": "Demoted",
+            "csam_age_restricted": "Age Restricted",
+            "csam_interaction_restricted": "Interaction Restricted",
+            "csam_labeled": "Labeled",
+            "csam_other_visibility": "⸺other⸺",
+        }).unpivot(
+            index=["start_date", "end_date"],
+            on=["Removed", "Disabled", "⸺other⸺"],
+            variable_name="Visibility Decision",
+            value_name="count",
+        )
+
+        return (
+            alt.Chart(
+                table, title="Visibility Decisions for CSAM - Monthly Counts"
+            ).mark_bar(
+                tooltip=True,
+            ).encode(
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y("sum(count):Q"),
+                alt.Color("Visibility Decision:N").scale(
+                    domain=["Removed", "Disabled", "⸺other⸺"],
+                    range=[RED, ORANGE, GRAY],
+                ),
+            ).properties(width=TIMELINE_WIDTH).interactive()
+        )
+
     def total_keyword_usage_minor_prot(self) -> alt.Chart:
         table = self._keyword_usage.filter(
             pl.col("keyword").is_in(self._short_keywords)
         ).with_columns(
             pl.col("keyword").cast(pl.String).replace(self._short_keywords)
         )
-
-        display(self._keyword_usage)
 
         return (
             alt.Chart(
@@ -345,7 +523,6 @@ class Visualization:
                 ),
             ).interactive()
         )
-
 
 # --------------------------------------------------------------------------------------
 # Data Summary
@@ -452,10 +629,11 @@ class Summary:
 # Schema Rendering
 
 
-def format_schema(frame: pl.DataFrame, title: None | str = None) -> Markdown:
+def format_schema(object: pl.DataFrame | pl.Schema, title: None | str = None) -> Markdown:
     """Render the schema for the data frame as a markdown table."""
+    schema = object.schema if isinstance(object, pl.DataFrame) else object
     return Markdown(to_markdown_table(
-        *([k, v] for k, v in frame.schema.items()),
+        *([k, v] for k, v in schema.items()),
         columns=["Column", "Type"],
         title=title,
     ))

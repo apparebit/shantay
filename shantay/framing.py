@@ -126,3 +126,66 @@ def resolve_query_binding(s: str) -> QueryExpression:
     if not isinstance(v, pl.Expr):
         raise ConfigError(f'value of module binding "{s}" is not a Pola.rs expression')
     return v
+
+
+def one_column_summary(frame: pl.DataFrame) -> pl.DataFrame:
+    """
+    Summarize the given data frame. This function expects a statistics data
+    frame. It sums up numeric columns besides those containing maxima, which
+    require the continuing maximization of values, and then transposes the one
+    row into one column for easier readability.
+    """
+    columns = [c for c in frame.columns if c not in ("start_date", "end_date")]
+
+    return frame.with_columns(
+        pl.lit(1).alias("fake")
+    ).group_by("fake").agg(
+        pl.col("total_rows").sum(),
+        pl.col("total_rows_with_keywords").sum(),
+        pl.lit("").alias("•"),
+        pl.col("batch_count").sum(),
+        pl.lit("").alias("•"),
+        pl.col("rows").sum(),
+        pl.col("keywords").sum(),
+        pl.col("rows_with_keywords").sum(),
+        pl.col("max_keywords_per_row").max(),
+        pl.lit("").alias("•"),
+        pl.col("illegal_content").sum(),
+        pl.col("incompatible_content").sum(),
+        pl.lit("").alias("•"),
+        pl.col("account_suspended_no_date").sum(),
+        pl.col("account_suspended_until_date").sum(),
+        pl.col("account_terminated_no_date").sum(),
+        pl.col("account_terminated_until_date").sum(),
+        pl.lit("").alias("•"),
+        pl.col("csam").sum(),
+        pl.lit("").alias("•"),
+        pl.col("csam_illegal_content").sum(),
+        pl.col("csam_incompatible_content").sum(),
+        pl.col("csam_no_decision_ground").sum(),
+        pl.lit("").alias("•"),
+        pl.col("csam_account_suspended").sum(),
+        pl.lit("").alias("•"),
+        pl.col("csam_suspended_no_date").sum(),
+        pl.col("csam_suspended_until_date").sum(),
+        pl.col("csam_terminated_no_date").sum(),
+        pl.col("csam_terminated_until_date").sum(),
+        pl.col("csam_no_decision_account").sum(),
+        pl.lit("").alias("•"),
+        pl.col("csam_max_visibility_per_row").max(),
+        pl.col("csam_visibility_values").sum(),
+        pl.col("csam_rows_with_visibility").sum(),
+        pl.col("csam_rows_null_visibility").sum(),
+        pl.lit("").alias("•"),
+        pl.col("csam_removed").sum(),
+        pl.col("csam_disabled").sum(),
+        pl.col("csam_demoted").sum(),
+        pl.col("csam_age_restricted").sum(),
+        pl.col("csam_interaction_restricted").sum(),
+        pl.col("csam_labeled").sum(),
+        pl.col("csam_other_visibility").sum(),
+    ).transpose(
+        include_header=True,
+        header_name="variable",
+        column_names=["value"]
+    )

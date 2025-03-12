@@ -356,6 +356,73 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("total_rows_with_keywords").sum(),
         ).row(0)
 
+        outliers = frame.filter(
+            (2 <= pl.col("category_specification").list.len())
+            | (2 <= pl.col("decision_visibility").list.len())
+        )
+
+        csam = (
+            frame.filter(pl.col("category_specification")
+            .list.contains("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"))
+        ).select(
+            # Just CSAM
+            pl.len().alias("csam"),
+
+            # CSAM, Decision Ground
+            pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT")
+            .sum().alias("csam_illegal_content"),
+            pl.col("decision_ground").eq("DECISION_GROUND_INCOMPATIBLE_CONTENT")
+            .sum().alias("csam_incompatible_content"),
+            pl.col("decision_ground").is_null()
+            .sum().alias("csam_no_decision_ground"),
+
+            # CSAM, Account Suspended, End Date Account Restriction
+            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
+            .sum().alias("csam_account_suspended"),
+            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
+            .and_(pl.col("end_date_account_restriction").is_null())
+            .sum().alias("csam_suspended_no_date"),
+            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
+            .and_(pl.col("end_date_account_restriction").is_null().not_())
+            .sum().alias("csam_suspended_until_date"),
+
+            # CSAM, Account Terminated, End Date Account Restriction
+            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
+            .sum().alias("csam_account_terminated"),
+            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
+            .and_(pl.col("end_date_account_restriction").is_null())
+            .sum().alias("csam_terminated_no_date"),
+            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
+            .and_(pl.col("end_date_account_restriction").is_null().not_())
+            .sum().alias("csam_terminated_until_date"),
+
+            # CSAM, No Account Decision
+            pl.col("decision_account").is_null()
+            .sum().alias("csam_no_decision_account"),
+
+            # Decision Visibility
+            pl.col("decision_visibility").list.len().max().alias("csam_max_visibility_per_row"),
+            pl.col("decision_visibility").explode().drop_nulls().len().alias("csam_visibility_values"),
+            pl.col("decision_visibility").is_null().not_().sum().alias("csam_rows_with_visibility"),
+            pl.col("decision_visibility").is_null().sum().alias("csam_rows_null_visibility"),
+
+            # CSAM, Decision Visibility
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_REMOVED")
+            .sum().alias("csam_removed"),
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_DISABLED")
+            .sum().alias("csam_disabled"),
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_DEMOTED")
+            .sum().alias("csam_demoted"),
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_AGE_RESTRICTED")
+            .sum().alias("csam_age_restricted"),
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED")
+            .sum().alias("csam_interaction_restricted"),
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_LABELLED")
+            .sum().alias("csam_labeled"),
+            pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_OTHER")
+            .sum().alias("csam_other_visibility"),
+        )
+
         stats = frame.select(
             # Age the data
             start_date,
@@ -371,14 +438,38 @@ class StatementsOfReasons(Dataset[Daily]):
             # Stats about working set
             pl.len().alias("rows"),
             pl.col("category_specification").list.len().sum().alias("keywords"),
-            pl.col("category_specification").list.len().gt(0).count().alias("rows_with_keywords"),
+            pl.col("category_specification").list.len().gt(0).sum().alias("rows_with_keywords"),
             pl.col("category_specification").list.len().max().alias("max_keywords_per_row"),
+
+            # Decision Ground
+            pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT").sum()
+            .alias("illegal_content"),
+            pl.col("decision_ground").eq("DECISION_GROUND_INCOMPATIBLE_CONTENT").sum()
+            .alias("incompatible_content"),
+
+            # Account Suspended, End Date Account Restriction
+            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED").and_(
+                pl.col("end_date_account_restriction").is_null()
+            ).sum().alias("account_suspended_no_date"),
+            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED").and_(
+                pl.col("end_date_account_restriction").is_null().not_()
+            ).sum().alias("account_suspended_until_date"),
+
+            # Account Terminated, End Date Account Restriction
+            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").and_(
+                pl.col("end_date_account_restriction").is_null()
+            ).sum().alias("account_terminated_no_date"),
+            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").and_(
+                pl.col("end_date_account_restriction").is_null().not_()
+            ).sum().alias("account_terminated_until_date"),
         ).with_columns(
             # FIXME Update to UInt128 when that type can be written to parquet files.
             pl.exclude("start_date", "end_date", "batch_count", "max_keywords_per_row").cast(pl.UInt64),
             pl.col("batch_count").cast(pl.UInt64),
             pl.col("max_keywords_per_row").cast(pl.UInt32),
         )
+
+        stats = stats.hstack(csam)
 
         keywords = frame.select(
             pl.col("category_specification")
@@ -406,6 +497,7 @@ class StatementsOfReasons(Dataset[Daily]):
 
         collector.add_frames(
             release,
+            outliers=outliers,
             stats=stats,
             keywords=keywords,
             platforms=platforms,
@@ -429,6 +521,8 @@ class StatementsOfReasons(Dataset[Daily]):
             if key == "stats":
                 summary[key] = frame
                 self.write_parquet(frame, root / STATISTICS_FILE)
+            elif key == "outliers":
+                self.write_parquet(frame, root / "outliers.parquet")
             elif key == "keywords":
                 summary[key] = (
                     frame.group_by("keyword")
