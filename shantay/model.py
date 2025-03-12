@@ -298,6 +298,10 @@ class ReleaseRange[R: Release](Period):
         assert self.first <= self.last
 
     @property
+    def duration(self) -> int:
+        return self.last - self.first + 1
+
+    @property
     def start_date(self) -> dt.date:
         return self.first.start_date
 
