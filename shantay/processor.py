@@ -44,7 +44,7 @@ class Processor[R: Release]:
         self._metadata = metadata
         self._progress = progress
 
-    def run(self, task: str) -> None | dict[str, pl.DataFrame]:
+    def run(self, task: str) -> None | pl.DataFrame:
         _logger.info('running processor=%d, task="%s"', self._pid, task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
@@ -327,7 +327,7 @@ class Processor[R: Release]:
             shutil.copy(source_dir / batch, target_dir / batch)
             self._progress.step(index)
 
-    def analyze(self) -> dict[str, DataFrameType]:
+    def analyze(self) -> DataFrameType:
         # Prepare metadata for analysis
         from .framing import Collector, collect_release_metadata, filter_period
 

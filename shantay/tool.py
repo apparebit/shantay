@@ -8,7 +8,7 @@ from typing import Any
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
-from .framing import one_column_summary, resolve_query_binding
+from .framing import format_summary, one_column_summary, resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
@@ -190,11 +190,10 @@ def _run(args: list[str]) -> None:
     if options.task == "prepare":
         Metadata.copy_json(storage.staging_root, storage.working_root)
     elif options.task == "analyze":
-        assert isinstance(result, dict)
-        pl.Config.set_thousands_separator(",")
-        pl.Config.set_tbl_rows(100)
-        pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
-        print(one_column_summary(result["stats"]))
+        assert isinstance(result, pl.DataFrame)
+        print("\n")
+        print(format_summary(one_column_summary(result), as_markdown=False))
+        print()
     elif options.task == "visualize":
         pass
 

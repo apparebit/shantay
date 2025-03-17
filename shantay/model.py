@@ -421,10 +421,10 @@ class Coverage[R: Release]:
         return self.last - self.first + 1
 
 
-class CollectorProtocol(Protocol):
+class CollectorProtocol[R: Release](Protocol):
     """The protocol for incremental data frame generation."""
 
-    def add_frames(self, release: Release, **kwargs: DataFrameType) -> None:
+    def add_frames(self, release: R, **kwargs: DataFrameType) -> None:
         """Add named data frames for the given release."""
         ...
 
@@ -490,7 +490,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
         root: Path,
         coverage: Coverage[T],
         collector: CollectorProtocol,
-    ) -> dict[str, DataFrameType]:
+    ) -> DataFrameType:
         """
         Combine the analysis results. The release period is the same as for
         analysis. This method may return more than one named data frame.

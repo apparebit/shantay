@@ -1,4 +1,4 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 import functools
 import inspect
 from typing import Callable
@@ -59,7 +59,9 @@ def scale(value: float) -> tuple[float, str]:
 
 
 def to_markdown_table(
-    *rows: list[object], columns: list[str], title: None | str = None
+    *rows: Sequence[object],
+    columns: Sequence[str],
+    title: None | str = None,
 ) -> str:
     column_data = [[it for it in column] for column in zip(*rows)]
     if len(column_data) == 0:
@@ -100,7 +102,7 @@ def to_markdown_table(
         *(format_row(row) for row in zip(*column_data)),
     ])
 
-def _get_type(column: list[object]) -> type[int] | type[float] | type[str]:
+def _get_type(column: Sequence[object]) -> type[int] | type[float] | type[str]:
     tp = None
     for cell in column:
         if cell is None:
@@ -123,8 +125,8 @@ def _get_type(column: list[object]) -> type[int] | type[float] | type[str]:
 
 def _get_format(tp: type) -> Callable[[object], str]:
     if tp is int:
-        return lambda c: f"{c:,}"
+        return lambda c: "" if c is None else f"{c:,}"
     elif tp is float:
-        return lambda c: f"{c:.1f}"
+        return lambda c: "" if c is None else f"{c:.1f}"
     else:
-        return lambda c: f"{c}"
+        return lambda c: "" if c is None else f"{c}"
