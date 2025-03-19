@@ -13,15 +13,16 @@ import polars as pl
 from .__init__ import __version__
 from .metadata import Metadata
 from .model import (
-    CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
+    Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
     MetadataEntry, Release, Storage
 )
+from .pool import WorkerProgress
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error
 from .viz import visualize
 
 
-_logger = logging.getLogger(__package__)
+_logger = logging.getLogger(__spec__.parent)
 
 
 class Processor[R: Release]:
@@ -70,7 +71,7 @@ class Processor[R: Release]:
     def prepare_batches(self, release: R) -> None:
         if (
             release in self._metadata
-            and self.extracted_data_exists(self._storage.working_root, release)
+            and extracted_data_exists(self._storage.working_root, release, self._metadata)
         ):
             return
 
@@ -307,11 +308,7 @@ class Processor[R: Release]:
 
     def extracted_data_exists(self, root: Path, release: R) -> bool:
         """Determine whether all batch files exist under the given root directory."""
-        path = root / release.directory
-        for index in range(self._metadata.batch_count(release)):
-            if not (path / release.batch_file(index)).exists():
-                return False
-        return True
+        return extracted_data_exists(root, release, self._metadata)
 
     @annotate_error(filename_arg="target")
     def copy_extracted_data(
@@ -370,3 +367,12 @@ class Processor[R: Release]:
 
     def visualize(self) -> None:
         visualize(self._storage.working_root, self._storage.staging_root)
+
+
+def extracted_data_exists(root: Path, release: Release, metadata: Metadata) -> bool:
+    """Determine whether all batch files exist under the given root directory."""
+    path = root / release.directory
+    for index in range(metadata.batch_count(release)):
+        if not (path / release.batch_file(index)).exists():
+            return False
+    return True
