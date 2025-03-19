@@ -20,7 +20,7 @@ from .util import annotate_error
 
 
 _DEBUG_OUTLIERS = False
-_logger = logging.getLogger(__package__)
+_logger = logging.getLogger(__spec__.parent)
 
 
 def fix_prefix(prefix: str) -> str:
@@ -28,7 +28,8 @@ def fix_prefix(prefix: str) -> str:
         prefix = f"{prefix}_"
     return prefix
 
-def decision_breakdown(prefix: str) -> list[pl.Expr]:
+
+def decision_type_breakdown(prefix: str) -> list[pl.Expr]:
     prefix = fix_prefix(prefix)
     return [
         # Kinds of Decision
@@ -36,7 +37,7 @@ def decision_breakdown(prefix: str) -> list[pl.Expr]:
         .and_(pl.col("decision_monetary").is_null())
         .and_(pl.col("decision_provision").is_null())
         .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}no_decision"),
+        .sum().alias(f"{prefix}null_decision"),
         pl.col("decision_visibility").is_null().not_()
         .and_(pl.col("decision_monetary").is_null())
         .and_(pl.col("decision_provision").is_null())
@@ -114,13 +115,14 @@ def decision_breakdown(prefix: str) -> list[pl.Expr]:
         .sum().alias(f"{prefix}all_kinds_decision"),
     ]
 
-def visibility_breakdown(prefix: str) -> list[pl.Expr]:
+
+def decision_visibility_breakdown(prefix: str) -> list[pl.Expr]:
     prefix = fix_prefix(prefix)
     return [
         pl.col("decision_visibility").list.len().max().alias(f"{prefix}max_visibility_per_row"),
         pl.col("decision_visibility").explode().drop_nulls().len().alias(f"{prefix}visibility_values"),
         pl.col("decision_visibility").is_null().not_().sum().alias(f"{prefix}rows_with_visibility"),
-        pl.col("decision_visibility").is_null().sum().alias(f"{prefix}no_visibility_decision"),
+        pl.col("decision_visibility").is_null().sum().alias(f"{prefix}null_visibility_decision"),
 
         pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_REMOVED")
         .sum().alias(f"{prefix}content_removed"),
@@ -138,7 +140,23 @@ def visibility_breakdown(prefix: str) -> list[pl.Expr]:
         .sum().alias(f"{prefix}other_visibility"),
     ]
 
-def provision_breakdown(prefix: str) -> list[pl.Expr]:
+
+def decision_monetary_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        pl.col("decision_monetary").eq("DECISION_MONETARY_SUSPENSION")
+        .sum().alias(f"{prefix}monetary_suspension"),
+        pl.col("decision_monetary").eq("DECISION_MONETARY_TERMINATION")
+        .sum().alias(f"{prefix}monetary_termination"),
+        pl.col("decision_monetary").eq("DECISION_MONETARY_OTHER")
+        .sum().alias(f"{prefix}monetary_other"),
+        pl.col("decision_monetary").is_null()
+        .sum().alias(f"{prefix}null_monetary_decision"),
+    ]
+
+
+def decision_provision_breakdown(prefix: str) -> list[pl.Expr]:
     prefix = fix_prefix(prefix)
 
     return [
@@ -151,7 +169,90 @@ def provision_breakdown(prefix: str) -> list[pl.Expr]:
         pl.col("decision_provision").eq("DECISION_PROVISION_TOTAL_TERMINATION")
         .sum().alias(f"{prefix}provision_total_termination"),
         pl.col("decision_provision").is_null()
-        .sum().alias(f"{prefix}no_provision_decision"),
+        .sum().alias(f"{prefix}null_provision_decision"),
+    ]
+
+
+def decision_account_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
+        .sum().alias(f"{prefix}account_suspended"),
+        pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
+        .sum().alias(f"{prefix}account_terminated"),
+        pl.col("decision_account").is_null()
+        .sum().alias(f"{prefix}null_account_decision"),
+    ]
+
+
+def account_type_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        pl.col("account_type").eq("ACCOUNT_TYPE_BUSINESS")
+        .sum().alias(f"{prefix}account_type_business"),
+        pl.col("account_type").eq("ACCOUNT_TYPE_PRIVATE")
+        .sum().alias(f"{prefix}account_type_private"),
+        pl.col("account_type").is_null()
+        .sum().alias(f"{prefix}null_account_type"),
+    ]
+
+
+def decision_ground_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT")
+        .sum().alias(f"{prefix}illegal_content"),
+        pl.col("decision_ground").eq("DECISION_GROUND_INCOMPATIBLE_CONTENT")
+        .sum().alias(f"{prefix}incompatible_content"),
+        pl.col("decision_ground").is_null()
+        .sum().alias(f"{prefix}null_decision_ground"),
+        pl.col("incompatible_content_illegal").eq("Yes")
+        .sum().alias(f"{prefix}incompatible_content_illegal_yes"),
+        pl.col("incompatible_content_illegal").eq("No")
+        .sum().alias(f"{prefix}incompatible_content_illegal_no"),
+        pl.col("incompatible_content_illegal").is_null()
+        .sum().alias(f"{prefix}null_incompatible_content_illegal"),
+    ]
+
+
+def source_type_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        pl.col("source_type").eq("SOURCE_ARTICLE_16")
+        .sum().alias(f"{prefix}source_article_16"),
+        pl.col("source_type").eq("SOURCE_TRUSTED_FLAGGER")
+        .sum().alias(f"{prefix}source_trusted_flagger"),
+        pl.col("source_type").eq("SOURCE_TYPE_OTHER_NOTIFICATION")
+        .sum().alias(f"{prefix}source_other_notification"),
+        pl.col("source_type").eq("SOURCE_VOLUNTARY")
+        .sum().alias(f"{prefix}source_voluntary"),
+        pl.col("source_type").is_null()
+        .sum().alias(f"{prefix}null_source_type"),
+    ]
+
+
+def automated_detection_and_decision_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        pl.col("automated_detection").eq("Yes")
+        .sum().alias(f"{prefix}automated_detection_yes"),
+        pl.col("automated_detection").eq("No")
+        .sum().alias(f"{prefix}automated_detection_no"),
+        pl.col("automated_detection").is_null()
+        .sum().alias(f"{prefix}null_automated_detection"),
+        pl.col("automated_decision").eq("AUTOMATED_DECISION_FULLY")
+        .sum().alias(f"{prefix}automated_decision_fully"),
+        pl.col("automated_decision").eq("AUTOMATED_DECISION_PARTIALLY")
+        .sum().alias(f"{prefix}automated_decision_partially"),
+        pl.col("automated_decision").eq("AUTOMATED_DECISION_NOT_AUTOMATED")
+        .sum().alias(f"{prefix}automated_decision_not_automated"),
+        pl.col("automated_decision").is_null()
+        .sum().alias(f"{prefix}null_automated_decision"),
     ]
 
 
@@ -505,51 +606,32 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.len().alias("csam"),
 
             # Decision combinations
-            *decision_breakdown("csam_"),
-            *visibility_breakdown("csam_"),
-            *provision_breakdown("csam_"),
-
-            # CSAM, decision monetary
-            pl.col("decision_monetary").eq("DECISION_MONETARY_SUSPENSION")
-            .sum().alias("csam_monetary_suspension"),
-            pl.col("decision_monetary").eq("DECISION_MONETARY_TERMINATION")
-            .sum().alias("csam_monetary_termination"),
-            pl.col("decision_monetary").eq("DECISION_MONETARY_OTHER")
-            .sum().alias("csam_monetary_other"),
-            pl.col("decision_monetary").is_null()
-            .sum().alias("csam_no_monetary_decision"),
+            *decision_type_breakdown("csam_"),
+            *decision_visibility_breakdown("csam_"),
+            *decision_monetary_breakdown("csam_"),
+            *decision_provision_breakdown("csam_"),
+            *decision_account_breakdown("csam_"),
 
             # CSAM, Account Suspended, End Date Account Restriction
             pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
-            .sum().alias("csam_account_suspended"),
-            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
             .and_(pl.col("end_date_account_restriction").is_null())
-            .sum().alias("csam_account_suspended_no_date"),
+            .sum().alias("csam_account_suspended_null_date"),
             pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
             .and_(pl.col("end_date_account_restriction").is_null().not_())
             .sum().alias("csam_account_suspended_until_date"),
 
             # CSAM, Account Terminated, End Date Account Restriction
             pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
-            .sum().alias("csam_account_terminated"),
-            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
             .and_(pl.col("end_date_account_restriction").is_null())
-            .sum().alias("csam_account_terminated_no_date"),
+            .sum().alias("csam_account_terminated_null_date"),
             pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
             .and_(pl.col("end_date_account_restriction").is_null().not_())
             .sum().alias("csam_account_terminated_until_date"),
 
-            # CSAM, No Account Decision
-            pl.col("decision_account").is_null()
-            .sum().alias("csam_no_account_decision"),
-
-            # CSAM, Decision Ground
-            pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT")
-            .sum().alias("csam_illegal_content"),
-            pl.col("decision_ground").eq("DECISION_GROUND_INCOMPATIBLE_CONTENT")
-            .sum().alias("csam_incompatible_content"),
-            pl.col("decision_ground").is_null()
-            .sum().alias("csam_no_decision_ground"),
+            *account_type_breakdown("csam_"),
+            *decision_ground_breakdown("csam_"),
+            *source_type_breakdown("csam_"),
+            *automated_detection_and_decision_breakdown("csam_"),
         )
 
         stats = frame.select(
@@ -574,20 +656,18 @@ class StatementsOfReasons(Dataset[Daily]):
             .alias("max_keywords_per_row"),
 
             # Decision Kind, Provision Decisions
-            *decision_breakdown(""),
-            *visibility_breakdown(""),
-            *provision_breakdown(""),
-
-            # Decision Ground
-            pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT").sum()
-            .alias("illegal_content"),
-            pl.col("decision_ground").eq("DECISION_GROUND_INCOMPATIBLE_CONTENT").sum()
-            .alias("incompatible_content"),
+            *decision_type_breakdown(""),
+            *decision_visibility_breakdown(""),
+            *decision_monetary_breakdown(""),
+            *decision_provision_breakdown(""),
+            *decision_account_breakdown(""),
+            *account_type_breakdown(""),
+            *decision_ground_breakdown(""),
 
             # Account Suspended, End Date Account Restriction
             pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED").and_(
                 pl.col("end_date_account_restriction").is_null()
-            ).sum().alias("account_suspended_no_date"),
+            ).sum().alias("account_suspended_null_date"),
             pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED").and_(
                 pl.col("end_date_account_restriction").is_null().not_()
             ).sum().alias("account_suspended_until_date"),
@@ -595,10 +675,13 @@ class StatementsOfReasons(Dataset[Daily]):
             # Account Terminated, End Date Account Restriction
             pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").and_(
                 pl.col("end_date_account_restriction").is_null()
-            ).sum().alias("account_terminated_no_date"),
+            ).sum().alias("account_terminated_null_date"),
             pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").and_(
                 pl.col("end_date_account_restriction").is_null().not_()
             ).sum().alias("account_terminated_until_date"),
+
+            *source_type_breakdown(""),
+            *automated_detection_and_decision_breakdown(""),
         ).with_columns(
             # FIXME Update to UInt128 when that type can be written to parquet files.
             pl.exclude("start_date", "end_date", "batch_count", "max_keywords_per_row")

@@ -545,15 +545,15 @@ class Visualization:
         table = self.extract_table("Decision Ground", {
             "csam_illegal_content": "Illegal Content",
             "csam_incompatible_content": "Incompatible Content",
-            "csam_no_decision_ground": "—none—",
+            "csam_null_decision_ground": "—none—",
         })
 
-        no_decision = table.filter(
+        null_decision = table.filter(
             pl.col("Decision Ground").eq("—none—")
         ).select(
             pl.col("count").sum()
         ).item()
-        assert no_decision == 0, "decision_ground is required"
+        assert null_decision == 0, "decision_ground is required"
 
         chart = self.create_chart(
             "Decision Grounds for CSAM - Monthly Counts",
@@ -610,7 +610,7 @@ class Visualization:
             "csam_provision_total_suspension": "Total Suspension",
             "csam_provision_partial_termination": "Partial Termination",
             "csam_provision_total_termination": "Total Termination",
-            "csam_no_provision_decision": "—none—",
+            "csam_null_provision_decision": "—none—",
         }
 
         table = self.extract_table("Provision Decision", provision_decision_columns)
@@ -627,7 +627,7 @@ class Visualization:
             "csam_monetary_suspension": "Suspended",
             "csam_monetary_termination": "Terminated",
             "csam_monetary_other": "Other",
-            "csam_no_monetary_decision": "—none—",
+            "csam_null_monetary_decision": "—none—",
         })
 
         return self.create_chart(
@@ -642,7 +642,7 @@ class Visualization:
         table = self.extract_table("Account Decision", {
             "csam_account_suspended": "Suspended",
             "csam_account_terminated": "Terminated",
-            "csam_no_account_decision": "—none—",
+            "csam_null_account_decision": "—none—",
         })
 
         return self.create_chart(
@@ -662,7 +662,7 @@ class Visualization:
             "csam_content_interaction_restricted": "Interaction Restricted",
             "csam_content_labeled": "Labeled",
             "csam_other_visibility": "Other",
-            "csam_no_visibility_decision": "—none—",
+            "csam_null_visibility_decision": "—none—",
         })
 
         return self.create_chart(

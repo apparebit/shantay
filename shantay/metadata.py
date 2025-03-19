@@ -15,7 +15,7 @@ from .model import (
 from .progress import NO_PROGRESS, Progress
 
 
-_logger = logging.getLogger(__package__)
+_logger = logging.getLogger(__spec__.parent)
 
 
 class Metadata[R: Release]:
