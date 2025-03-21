@@ -21,6 +21,7 @@ ARCHIVE = FIXTURE / "archive"
 # So we only need ARCHIVE and STAGING.
 STAGING = ROOT / "tmp"
 LOGFILE = STAGING / "log.log"
+SENTINEL = STAGING / "prepare.run"
 
 ZIP_FILES = [
     "sor-global-2024-03-14-full-00000.csv.zip",
@@ -36,11 +37,15 @@ CSV_FILES = [
 
 FILTER = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
 
+
 def setUpModule():
-    shutil.rmtree(STAGING, ignore_errors=True)
-    # We need to recreate STAGING right away,
-    # as logging expects the directory to exist.
-    STAGING.mkdir()
+    # Since the staging directory and log file are shared across test modules,
+    # we use per-test-module sentinel files to detect new runs.
+    if SENTINEL.exists():
+        shutil.rmtree(STAGING)
+    STAGING.mkdir(exist_ok=True)
+    SENTINEL.write_text(f"{dt.datetime.now()}\n")
+
     configure_logging(str(LOGFILE), verbose=True)
 
 def tearDownModule():
@@ -352,44 +357,49 @@ class TestPrepare(unittest.TestCase):
                     )
 
         with self.subTest("check log file"):
-            with LOGFILE.open(mode="r", encoding="utf8") as file:
-                lines = file.readlines()
+            lines = LOGFILE.read_text("utf8").splitlines(keepends=True)
 
-            self.assertEqual(len(lines), 33)
-            self.assertIn("staged file", lines[0])
-            self.assertIn("validated file", lines[1])
-            self.assertIn('unarchived type="nested archive"', lines[2])
-            self.assertIn('counted filter="none", rows=100', lines[3])
-            self.assertIn('counted filter="with_keywords", rows=12', lines[4])
-            self.assertIn('extracted rows=8', lines[5])
-            self.assertIn('unarchived type="nested archive"', lines[6])
-            self.assertIn('counted filter="none", rows=102', lines[7])
-            self.assertIn('counted filter="with_keywords", rows=1', lines[8])
+            offset = -1
+            for offset, line in enumerate(lines):
+                if 'staged file="sor-global-2024-03-14-full.zip"' in line:
+                    break
+
+            self.assertNotEqual(offset, -1)
+            self.assertTrue(offset + 33 <= len(lines))
+            self.assertIn("staged file", lines[offset + 0])
+            self.assertIn("validated file", lines[offset + 1])
+            self.assertIn('unarchived type="nested archive"', lines[offset + 2])
+            self.assertIn('counted filter="none", rows=100', lines[offset + 3])
+            self.assertIn('counted filter="with_keywords", rows=12', lines[offset + 4])
+            self.assertIn('extracted rows=8', lines[offset + 5])
+            self.assertIn('unarchived type="nested archive"', lines[offset + 6])
+            self.assertIn('counted filter="none", rows=102', lines[offset + 7])
+            self.assertIn('counted filter="with_keywords", rows=1', lines[offset + 8])
             # Trying to parse both CSV files in one Pola.rs operation fails:
-            self.assertIn('WARNING︙shantay︙failed to read CSV with strategy=1, using="globbing Pola.rs"', lines[9])
-            self.assertTrue(lines[10].startswith('Traceback'))
-            self.assertTrue(lines[11].startswith('  File'))
-            self.assertTrue(lines[12].startswith('    ).collect()'))
-            self.assertTrue(lines[13].startswith('      ^^^^^^^'))
-            self.assertTrue(lines[14].startswith('  File'))
-            self.assertTrue(lines[15].startswith('    return wrap_df(ldf'))
-            self.assertTrue(lines[16].startswith('                   ^^^'))
-            self.assertTrue(lines[17].startswith('polars.exceptions.ComputeError: could not parse'))
-            self.assertTrue(lines[18].startswith(''))
-            self.assertTrue(lines[19].startswith('The current offset in the file is 131 bytes'))
-            self.assertTrue(lines[20].startswith(''))
-            self.assertTrue(lines[21].startswith('You might want to try'))
-            self.assertTrue(lines[22].startswith('- increasing'))
-            self.assertTrue(lines[23].startswith('- specifying'))
-            self.assertTrue(lines[24].startswith('- setting'))
-            self.assertTrue(lines[25].startswith('- adding'))
-            self.assertTrue(lines[26].startswith(''))
-            self.assertTrue(lines[27].startswith('Original error: ```invalid csv file'))
-            self.assertTrue(lines[28].startswith(''))
-            self.assertTrue(lines[29].startswith('Field `"Napodobňovanie'))
+            self.assertIn('WARNING︙shantay︙failed to read CSV with strategy=1, using="globbing Pola.rs"', lines[offset + 9])
+            self.assertTrue(lines[offset + 10].startswith('Traceback'))
+            self.assertTrue(lines[offset + 11].startswith('  File'))
+            self.assertTrue(lines[offset + 12].startswith('    ).collect()'))
+            self.assertTrue(lines[offset + 13].startswith('      ^^^^^^^'))
+            self.assertTrue(lines[offset + 14].startswith('  File'))
+            self.assertTrue(lines[offset + 15].startswith('    return wrap_df(ldf'))
+            self.assertTrue(lines[offset + 16].startswith('                   ^^^'))
+            self.assertTrue(lines[offset + 17].startswith('polars.exceptions.ComputeError: could not parse'))
+            self.assertTrue(lines[offset + 18].startswith(''))
+            self.assertTrue(lines[offset + 19].startswith('The current offset in the file is 131 bytes'))
+            self.assertTrue(lines[offset + 20].startswith(''))
+            self.assertTrue(lines[offset + 21].startswith('You might want to try'))
+            self.assertTrue(lines[offset + 22].startswith('- increasing'))
+            self.assertTrue(lines[offset + 23].startswith('- specifying'))
+            self.assertTrue(lines[offset + 24].startswith('- setting'))
+            self.assertTrue(lines[offset + 25].startswith('- adding'))
+            self.assertTrue(lines[offset + 26].startswith(''))
+            self.assertTrue(lines[offset + 27].startswith('Original error: ```invalid csv file'))
+            self.assertTrue(lines[offset + 28].startswith(''))
+            self.assertTrue(lines[offset + 29].startswith('Field `"Napodobňovanie'))
             # Parsing the first CSV file by itself with Pola.rs works:
-            self.assertIn('extracted rows=8, strategy=2, using="Pola.rs"', lines[30])
+            self.assertIn('extracted rows=8, strategy=2, using="Pola.rs"', lines[offset + 30])
             # Parsing the second CSV file by itself with Pola.rs fails:
-            self.assertIn('failed to read CSV with strategy=2, using="Pola.rs"', lines[31])
+            self.assertIn('failed to read CSV with strategy=2, using="Pola.rs"', lines[offset + 31])
             # Parsing the second CSV fail by itself with Python's csv works:
-            self.assertIn('extracted rows=1, strategy=3, using="Python\'s CSV module"', lines[32])
+            self.assertIn('extracted rows=1, strategy=3, using="Python\'s CSV module"', lines[offset + 32])

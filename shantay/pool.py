@@ -69,7 +69,8 @@ class Pool:
         self,
         *,
         size: None | int = None,
-        context: None | Any = None
+        context: None | Any = None,
+        log_level: int = logging.WARNING,
     ) -> None:
         if size is None:
             # First available in Python 3.13
@@ -112,8 +113,10 @@ class Pool:
             max_workers=size,
             mp_context = context,
             initializer=_initialize_worker,
-            initargs=(self._status_queue, self._cancel_queue),
+            initargs=(self._status_queue, self._cancel_queue, log_level),
         )
+
+        _logger.debug('running process pool with %d processes', size)
 
     @property
     def size(self) -> int:
@@ -127,6 +130,13 @@ class Pool:
         """Submit a new task."""
         assert self._state.is_running(), "pool is not accepting new tasks"
 
+        _logger.debug(
+            'adding %s.%s() to process pool with %d pending tasks',
+            fn.__module__,
+            fn.__qualname__,
+            self._pending_tasks
+        )
+
         future = self._executor.submit(fn, *args, **kwargs)
         self._pending_tasks += 1
         future.add_done_callback(self._on_task_completion)
@@ -135,6 +145,7 @@ class Pool:
     def _on_task_completion(self, future: Future) -> None:
         self._pending_tasks -= 1
         if self._pending_tasks == 0 and not self._state.is_running():
+            _logger.debug('shutting down process pool on task completion')
             self._executor.shutdown()
 
     def finish(self) -> None:
@@ -143,6 +154,7 @@ class Pool:
         completion.
         """
         if self._state.set_finishing() and self._pending_tasks == 0:
+            _logger.debug('shutting down process pool on finish')
             self._executor.shutdown()
 
     def stop(self) -> None:
@@ -151,9 +163,11 @@ class Pool:
             return
 
         if self._pending_tasks == 0:
+            _logger.debug('shutting down process pool on stop')
             self._executor.shutdown()
             return
 
+        _logger.debug("stopping process pool by cancelling workers")
         for _ in range(self._size):
             try:
                 self._cancel_queue.put(None)
@@ -344,6 +358,7 @@ class WorkerLogHandler(logging.Handler):
 def _initialize_worker(
     status_queue: mp.SimpleQueue,
     cancel_queue: mp.SimpleQueue,
+    log_level: int,
 ) -> None:
     global _status_queue, _terminator
     status_queue._reader.close() # pyright: ignore[reportAttributeAccessIssue]
@@ -351,7 +366,8 @@ def _initialize_worker(
 
     logger = logging.getLogger()
     if len(logger.handlers) == 0:
-        logger.addHandler(WorkerLogHandler(logging.DEBUG))
+        logger.addHandler(WorkerLogHandler())
+        logger.setLevel(log_level)
 
     _terminator = threading.Thread(
         target=_wait_for_cancellation,
@@ -370,7 +386,7 @@ def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
             _PID, exc_info=x
         )
     else:
-        _logger.debug("worker %d exiting after receiving cancellation signal", _PID)
+        _logger.debug("worker %d received cancellation signal", _PID)
         _is_cancelled.set()
 
 
