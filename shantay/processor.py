@@ -38,7 +38,6 @@ class Processor[R: Release]:
         metadata: Metadata,
         progress: Progress = NO_PROGRESS,
     ) -> None:
-        self._pid = os.getpid()
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
@@ -46,7 +45,7 @@ class Processor[R: Release]:
         self._progress = progress
 
     def run(self, task: str) -> None | pl.DataFrame:
-        _logger.info('running processor=%d, task="%s"', self._pid, task)
+        _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
         _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)

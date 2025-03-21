@@ -7,6 +7,7 @@ from .metadata import Metadata
 from .model import Coverage, Dataset, Release, Storage
 from .pool import Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
+from .progress import NO_PROGRESS, Progress
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -19,7 +20,8 @@ class Multiprocessor[R: Release]:
         dataset: Dataset[R],
         storage: Storage,
         coverage: Coverage[R],
-        metadata: Metadata
+        metadata: Metadata,
+        progress: Progress = NO_PROGRESS,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
@@ -28,7 +30,18 @@ class Multiprocessor[R: Release]:
         self._cursor = coverage.first
         self._pool = Pool()
 
-    def start(self) -> None:
+    def run(self, task: str) -> None:
+        assert task == "prepare"
+
+        _logger.info('running multiprocessor with pid=%d, task="%s"', os.getpid(), task)
+        _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
+        _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
+        _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
+        _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
+        _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
+        _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
+        _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
+
         for _ in range(self._pool.size):
             if not self.prepare_release():
                 break
@@ -71,9 +84,13 @@ class Multiprocessor[R: Release]:
     def _done_with_task(self, future: Future) -> bool:
         try:
             record = future.result()
-            self._metadata[record["release"]] = record
         except:
             pass
+        else:
+            release = record["release"]
+            del record["release"]
+            self._metadata[release] = record
+            self._metadata.write_json(self._storage.staging_root, sort_keys=True)
 
         return self.prepare_release()
 

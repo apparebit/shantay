@@ -13,6 +13,7 @@ from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
 )
+from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
 from .schema import normalize_category
@@ -73,6 +74,13 @@ def _parse_options(args: list[str]) -> Any:
     )
 
     parser.add_argument(
+        "--multiproc",
+        default=1,
+        type=int,
+        help="use several processes for downloading archives and extracting working data",
+    )
+
+    parser.add_argument(
         "task",
         choices=["recover", "prepare", "analyze", "visualize"],
         default="prepare",
@@ -92,7 +100,7 @@ def get_storage(options: Any) -> Storage:
     )
 
 
-def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progress]:
+def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     # Handle --archive, --working, and --staging options
     storage = get_storage(options)
 
@@ -148,11 +156,16 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, Progre
     if last is None:
         raise ConfigError("cannot determine last date, please provide --last option")
 
+    # Handle --multiproc
+    if options.multiproc < 1:
+        raise ConfigError(f"process number must be positive but is {options.multiproc}")
+    if options.multiproc != 1 and options.task != "prepare":
+        raise ConfigError("only prepare supports more than one process")
+
     # Finish it all up
     assert filter_value is not None
     coverage = Coverage(Release.of(first), Release.of(last), filter_value)
-    progress = Progress()
-    return storage, coverage, metadata, progress
+    return storage, coverage, metadata
 
 
 def configure_logging(logfile: str, *, verbose: bool) -> None:
@@ -175,15 +188,23 @@ def _run(args: list[str]) -> None:
         fsck(storage.working_root, progress=Progress())
         return
 
-    storage, coverage, metadata, progress = get_configuration(options)
+    storage, coverage, metadata = get_configuration(options)
 
-    processor = Processor(
-        dataset=StatementsOfReasons(),
-        storage=storage,
-        coverage=coverage,
-        metadata=metadata,
-        progress=progress,
-    )
+    if options.task == "prepare" and 1 < options.multiproc:
+        processor = Multiprocessor(
+            dataset=StatementsOfReasons(),
+            storage=storage,
+            coverage=coverage,
+            metadata=metadata,
+        )
+    else:
+        processor = Processor(
+            dataset=StatementsOfReasons(),
+            storage=storage,
+            coverage=coverage,
+            metadata=metadata,
+            progress=Progress()
+        )
 
     result = processor.run(options.task)
 
