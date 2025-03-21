@@ -342,7 +342,7 @@ class Visualizer:
         with open(path, mode="r", encoding="utf8") as file:
             svg = file.read()
 
-        if "timeline" in name:
+        if "timeline" in name or "breakdown" in name:
             svg = SVG_ATTRIBUTES.sub("", svg)
 
         assert self._document is not None
@@ -411,6 +411,13 @@ class Visualizer:
             k: KEYWORDS_MINOR_PROTECTION_PLUS[k] for k in frequent_keywords
         }
 
+        # Determine platforms with CSAM as keyword
+        self._platforms_with_csam = self._platforms.filter(
+            pl.col("is_csam").gt(pl.lit(0))
+        ).select(
+            pl.col("platform").unique()
+        )
+
     def render_heading(self) -> None:
         self.html("<h1>The DSA Transparency Database: Protection of Minors</h1>")
 
@@ -472,6 +479,22 @@ class Visualizer:
         ))
 
         self.html("<h3>CSAM SoRs</h3>")
+        self.html(
+            "<p>The following timelines exclusively cover Statements of Reasons "
+            "with CSAM as a keyword. Since even possession of CSAM is illegal "
+            "across the EU (as well as the US), one would expect that platforms "
+            "alway remove the content. Furthermore, given the legal and reputational "
+            "risks, one would also expect that platforms close offending accounts. "
+            "Alas, that is not reflected in the SoRs. However, only 8 out of 44 "
+            "platforms have submitted SoRs with CSAM as keyword. So findings about "
+            "CSAM may <em>not</em> generalize.</p>"
+        )
+
+        self.chart("csam-breakdown", alt.vconcat(
+            self.monthly_share_of_csam_per_platform(percent=True),
+            self.monthly_share_of_csam_per_platform(percent=False),
+        ))
+
         self.chart("csam-timelines", alt.vconcat(
             self.monthly_csam_sors(),
             self.monthly_decision_grounds_for_csam(),
@@ -763,6 +786,60 @@ class Visualizer:
 
     # ==================================================================================
     # Timelines: CSAM
+
+    def monthly_share_of_csam_per_platform(self, percent: bool) -> alt.Chart:
+        frame = self._platforms.filter(
+            pl.col("platform").is_in(self._platforms_with_csam.get_column("platform"))
+        ).group_by(
+            pl.col("platform")
+        ).agg(
+            pl.col("total").sum(),
+            pl.col("has_keyword").sum(),
+            pl.col("is_csam").sum(),
+        ).with_columns(
+            (pl.col("has_keyword") - pl.col("is_csam")).alias("other_keyword"),
+            (pl.col("total") - pl.col("has_keyword")).alias("no_keyword"),
+        )
+
+        if percent:
+            frame = frame.select(
+                pl.col("platform"),
+                (pl.col("is_csam") / pl.col("total") * 100).alias("is_csam"),
+                (pl.col("other_keyword") / pl.col("total") * 100).alias("other_keyword"),
+                (pl.col("no_keyword") / pl.col("total") * 100).alias("no_keyword"),
+            )
+
+        frame = frame.rename({
+            "platform": "Platform",
+            "is_csam": "CSAM",
+            "other_keyword": "Other Keyword",
+            "no_keyword": "—none—",
+        }).unpivot(
+            index=["Platform"],
+            on=["CSAM", "Other Keyword", "—none—"],
+            variable_name="Kind",
+            value_name="Percent" if percent else "SoRs",
+        )
+
+        y_data = "sum(Percent):Q" if percent else "sum(SoRs):Q"
+        y_title = "Percent Fraction" if percent else "Statements of Reasons"
+
+        return alt.Chart(
+            frame, title="Breakdown for Statements of Reasons by Keyword",
+        ).mark_bar(
+            size=30,
+            tooltip=True,
+        ).encode(
+            alt.X("Platform:N", axis=alt.Axis(labelAngle=-45)),
+            alt.Y(y_data).title(y_title),
+            alt.Color("Kind:N").scale(
+                domain=["CSAM", "Other Keyword", "—none—"],
+                range=["#efb118", "#ff725c", "#9498a0"],
+            )
+        ).properties(
+            height=TIMELINE_HEIGHT,
+            width=TIMELINE_WIDTH,
+        )
 
     def monthly_csam_sors(self) -> alt.Chart:
         table = self._statistics.group_by(
