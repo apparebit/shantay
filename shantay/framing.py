@@ -339,17 +339,17 @@ def one_column_summary(frame: pl.DataFrame) -> pl.DataFrame:
         ["fake"]
     ).transpose(
         include_header=True,
-        header_name="variable",
-        column_names=["value"]
+        header_name="Variable",
+        column_names=["Value"]
     ).with_columns(
-        pl.when(pl.col("variable").str.contains("_pct").not_())
-        .then(pl.col("value").cast(pl.UInt64))
-        .otherwise(pl.col("value"))
+        pl.when(pl.col("Variable").str.contains("_pct").not_())
+        .then(pl.col("Value").cast(pl.UInt64))
+        .otherwise(pl.col("Value"))
     ).with_columns(
-        pl.when(pl.col("variable").str.contains("\u2800"))
+        pl.when(pl.col("Variable").str.contains("\u2800"))
         .then(pl.lit(""))
-        .otherwise(pl.col("variable"))
-        .alias("variable"),
+        .otherwise(pl.col("Variable"))
+        .alias("Variable"),
     )
 
 
@@ -605,8 +605,8 @@ def format_summary(frame: pl.DataFrame, as_markdown: bool = True) -> str:
     """
     rows = []
 
-    var_width = frame.select(pl.col("variable").str.len_chars().max()).item()
-    val_width = int(frame.select(pl.col("value").log10().max()).item() + 1)
+    var_width = frame.select(pl.col("Variable").str.len_chars().max()).item()
+    val_width = int(frame.select(pl.col("Value").log10().max()).item() + 1)
     val_width += val_width // 3
 
     for variable, value in frame.rows():
@@ -624,13 +624,13 @@ def format_summary(frame: pl.DataFrame, as_markdown: bool = True) -> str:
 
     if as_markdown:
         lines = [
-            f"| {'variable':<{var_width}} | {  'value':>{val_width}} |",
+            f"| {'Variable':<{var_width}} | {  'Value':>{val_width}} |",
             f"| :{ '-' * (var_width - 1)} | {'-' * (val_width - 1)}: |",
         ]
     else:
         lines = [
             f"┌─{        '─' * var_width}─┬─{      '─' * val_width}─┐",
-            f"│ {'variable':<{var_width}} │ { 'value':>{val_width}} │",
+            f"│ {'Variable':<{var_width}} │ { 'Value':>{val_width}} │",
             f"├─{        '─' * var_width}─┼─{      '─' * val_width}─┤",
         ]
 
