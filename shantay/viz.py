@@ -19,8 +19,8 @@ from .schema import KEYWORDS_MINOR_PROTECTION_PLUS, SCHEMA, StatementCategory
 from .util import scale, to_markdown_table
 
 
-TIMELINE_WIDTH = 1_000
-TIMELINE_HEIGHT = 500
+TIMELINE_WIDTH = 600
+TIMELINE_HEIGHT = 400
 
 MARKDOWN_HEADER = re.compile(r"<h[1-3]>[^<]*</h[1-3]>")
 
@@ -30,6 +30,8 @@ FRAME_QUOT = re.compile(r"&quot;")
 FRAME_SHAPE = re.compile(r"<small>shape:[^<]*</small>")
 FRAME_STYLE = re.compile(r"<style>[^<]*</style>")
 
+SVG_ATTRIBUTES = re.compile(r' class="marks" width="[0-9]*" height="[0-9]*"')
+
 DOC_HEADER = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -37,6 +39,7 @@ DOC_HEADER = """\
 <meta charset="utf-8">
 <title>The DSA Transparency Database</title>
 <style>
+/* ----------------------------------- General ----------------------------------- */
 *::before, *, *::after {
     box-sizing: inherit;
 }
@@ -54,6 +57,8 @@ body {
 p, table, svg {
     margin-bottom: 3em;
 }
+
+/* ----------------------------------- Table ----------------------------------- */
 table {
     border-collapse: separate;
     border-spacing: 0;
@@ -176,6 +181,8 @@ def visualize(storage: Storage, notebook: bool = False) -> None:
 
 # --------------------------------------------------------------------------------------
 
+type Chart = alt.Chart | alt.LayerChart | alt.VConcatChart
+
 class Renderer(metaclass=ABCMeta):
 
     def __init__(self, charts: Path) -> None:
@@ -199,7 +206,7 @@ class Renderer(metaclass=ABCMeta):
     def frame(self, frame: pl.DataFrame) -> None: ...
 
     @abstractmethod
-    def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None: ...
+    def chart(self, name: str, chart: Chart) -> None: ...
 
 
 TAG = re.compile(r"<[^>]+>")
@@ -222,7 +229,7 @@ class PlainTextRenderer(Renderer):
         print(frame)
         print()
 
-    def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None:
+    def chart(self, name: str, chart: Chart) -> None:
         chart.save(self._charts / f"{name}.svg")
 
 
@@ -249,7 +256,7 @@ else:
         def frame(self, frame: pl.DataFrame) -> None:
             display(frame) # pyright: ignore[reportOptionalCall]
 
-        def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None:
+        def chart(self, name: str, chart: Chart) -> None:
             display(chart) # pyright: ignore[reportOptionalCall]
             chart.save(self._charts / f"{name}.svg")
 
@@ -270,6 +277,7 @@ class Visualizer:
         self._staging_root = staging_root
         self._with_extras = with_extras
         self._renderer = renderer
+        self._timelines = False
 
     @staticmethod
     def configure_display() -> None:
@@ -308,8 +316,8 @@ class Visualizer:
 
         summary = hn.group(0)
         html = html[len(summary):]
-        self._document.write("<details>")
-        self._document.write(f"<summary>{summary}</summary>")
+        self._document.write("<details>\n")
+        self._document.write(f"<summary>{summary}</summary>\n")
         self._document.write(html)
         self._document.write("</details>\n\n")
 
@@ -327,12 +335,15 @@ class Visualizer:
         self._document.write(html)
         self._document.write("\n\n")
 
-    def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None:
+    def chart(self, name: str, chart: Chart) -> None:
         self._renderer.chart(name, chart)
 
         path = self._renderer.charts / f"{name}.svg"
         with open(path, mode="r", encoding="utf8") as file:
             svg = file.read()
+
+        if "timeline" in name:
+            svg = SVG_ATTRIBUTES.sub("", svg)
 
         assert self._document is not None
         self._document.write(svg)
@@ -446,10 +457,7 @@ class Visualizer:
     def render_timelines(self) -> None:
         self.html("<h2>Timelines</h2>")
 
-        (self._staging_root / "timelines").mkdir(exist_ok=True)
-
-        offset = 1
-        for index, timeline in enumerate([
+        self.chart("timelines", alt.vconcat(
             self.daily_sor_counts_minor_prot(),
             self.daily_sor_counts_minor_prot(rolling_mean_days=7),
             self.daily_sor_percentage_minor_prot(),
@@ -458,7 +466,13 @@ class Visualizer:
             self.daily_keywords_percent_minor_prot(rolling_mean_days=7),
             self.monthly_platform_counts_minor_prot(),
             self.monthly_keyword_usage_minor_prot(),
-            None,
+        ).resolve_scale(
+            x="shared",
+            color="independent",
+        ))
+
+        self.html("<h3>CSAM SoRs</h3>")
+        self.chart("csam-timelines", alt.vconcat(
             self.monthly_csam_sors(),
             self.monthly_decision_grounds_for_csam(),
             self.monthly_decision_kinds_for_csam(),
@@ -468,12 +482,11 @@ class Visualizer:
             self.monthly_account_decisions_for_csam(),
             self.monthly_automated_detection_for_csam(),
             self.monthly_automated_decision_for_csam(),
-        ]):
-            if timeline is None:
-                self.html("<h3>CSAM SoRs</h3>")
-                offset -= 1
-            else:
-                self.chart(f"timeline{index + offset:02}", timeline)
+        ).resolve_scale(
+            x="shared",
+            color="independent",
+        ))
+
 
     # ==================================================================================
     # Timelines: Overview
@@ -780,24 +793,22 @@ class Visualizer:
         )
 
     def extract_table(self, variable: str, columns: dict[str, str]) -> pl.DataFrame:
-        return (
-            self._statistics.group_by(
-                pl.col("start_date").dt.year().alias("year"),
-                pl.col("start_date").dt.month().alias("month"),
-            ).agg(
-                pl.col("start_date").min() + dt.timedelta(days=5),
-                pl.col("end_date").max() - dt.timedelta(days=5),
-                *(
-                    pl.col(c).sum() for c in columns.keys()
-                )
-            ).rename(
-                columns
-            ).unpivot(
-                index=["start_date", "end_date"],
-                on=[*columns.values()],
-                variable_name=variable,
-                value_name="Count",
+        return self._statistics.group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+        ).agg(
+            pl.col("start_date").min() + dt.timedelta(days=5),
+            pl.col("end_date").max() - dt.timedelta(days=5),
+            *(
+                pl.col(c).sum() for c in columns.keys()
             )
+        ).rename(
+            columns
+        ).unpivot(
+            index=["start_date", "end_date"],
+            on=[*columns.values()],
+            variable_name=variable,
+            value_name="Count",
         )
 
     def create_chart(
