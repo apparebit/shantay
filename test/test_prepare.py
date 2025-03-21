@@ -376,7 +376,7 @@ class TestPrepare(unittest.TestCase):
             self.assertIn('counted filter="none", rows=102', lines[offset + 7])
             self.assertIn('counted filter="with_keywords", rows=1', lines[offset + 8])
             # Trying to parse both CSV files in one Pola.rs operation fails:
-            self.assertIn('WARNING︙shantay︙failed to read CSV with strategy=1, using="globbing Pola.rs"', lines[offset + 9])
+            self.assertIn('shantay︙WARNING︙failed to read CSV with strategy=1, using="globbing Pola.rs"', lines[offset + 9])
             self.assertTrue(lines[offset + 10].startswith('Traceback'))
             self.assertTrue(lines[offset + 11].startswith('  File'))
             self.assertTrue(lines[offset + 12].startswith('    ).collect()'))
