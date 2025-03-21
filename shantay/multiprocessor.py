@@ -99,7 +99,7 @@ def prepare_on_worker[R: Release](
         storage=storage.isolate(pid),
         coverage=coverage,
         metadata=metadata,
-        progress=WorkerProgress(tracker_index),
+        progress=WorkerProgress(),
     )
     processor.prepare_batches(release)
 
