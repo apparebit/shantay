@@ -17,12 +17,12 @@ as its data frame.
 
 To calibrate expectations: Assuming that all data has already been downloaded,
 my five-year-old iMac with one of those T7 drives takes two days and nights to
-extract records of interest from the full dataset. For my use case, the
-Protection of Minors, which comprise 0.3% of all records, it takes less than one
-minute to analyze the working set. Finally, visualization of the analysis
-results is nearly instantaneous, taking seconds at most. Since extraction seems
-to be bottlenecked on shuffling data but fails to saturate my iMac's CPU or
-memory bus, I am currently working towards parallelizing the pipeline.
+extract relevant records from the full dataset. For my use case, the Protection
+of Minors, which comprise 0.3% of all records, it takes less than one minute to
+analyze the working set. Finally, visualization of the analysis results is
+nearly instantaneous, taking seconds at most. Since extraction fails to saturate
+my iMac's CPU or memory bus, I am currently working towards parallelizing the
+pipeline.
 
 I've written [a blog post about my initial
 impressions](https://apparebit.com/blog/2025/sashay-shantay) of the DSA
@@ -32,14 +32,11 @@ transparency database. Let's just say that, Brussels, we've got, uhm, problems
 
 ## 1. Getting Started
 
-*Shantay* has a Python package that is [distributed through
+*Shantay*'s Python package is [distributed through
 PyPI](https://pypi.org/project/shantay/). Hence, you can use a Python tool
 runner such as [pipx](https://github.com/pypa/pipx) or
 [uvx](https://docs.astral.sh/uv/guides/tools/) for executing *shantay* without
-even installing it.
-
-The current version is v0.1 and not even alpha quality code. So for now, please
-clone the repository or wait for v0.2.
+even installing it:
 
 ```bash
 > pipx shantay -h
@@ -49,9 +46,15 @@ or
 > uvx shantay -h
 ```
 
-In either case, *shantay* responds by printing its help documentation. For
-background, the following two sections explain the organization of local storage
-and workflow tasks.
+In either case, *shantay* responds by printing documentation for its command
+line options. You can use *shantay* as is, with the `prepare` task, for
+downloading daily distributions and selecting a category of your choice.
+However, to analyze or visualize the data in a different category, you'll need
+to add your own code. Though much of the analysis and charting code is directly
+reusable.
+
+The next two sections explain the organization of storage and the different
+workflow tasks.
 
 
 ## 2. Organization of Storage
@@ -101,7 +104,8 @@ batch file's name.
 
 ### 2.3 Summary Statistics: meta.json and Three Parquet Files
 
-*Shantay* also maintains the following files inside the root directory:
+*Shantay* also maintains the following files inside the root directory with
+working data:
 
   - `meta.json` contains an object with the `filter` used for selecting the
     working data and some statistics about `releases`. `batch_count` must be the
@@ -110,15 +114,15 @@ batch file's name.
 
 The `batch_count` and `sha256` properties can be automatically recovered from
 the directory hierarchy. Simply run *shantay*'s `recover` task. It performs a
-large number of consistency checks to ensure that the directory hierarchy is
+good number of consistency checks to ensure that the directory hierarchy is
 well-formed. Futhermore, whereas other tasks are fail-fast and stop upon the
 first error, the `recover` task only fails after completing its file system
 traversal.
 
 Three more files contain summary statistics about the batch file contents:
 
-  - `meta-statistics.parquet` contains the same data as `meta.json` plus a few
-    related metrics.
+  - `meta-statistics.parquet` contains the same data as `meta.json` plus counts
+    collected during analysis.
   - `meta-keywords.parquet` contains data about the use of keywords.
   - `meta-platforms.parquet` contains data about the composition of platforms.
 
@@ -142,9 +146,11 @@ processing (much) less data and executing (much) faster:
     requires you pluggin in your own code, unless you want to repeat the
     analysis I've been performing. This phase takes less than a minute to run
     for all records about Protection of Minors (0.3% of all records).
- 3. The __visualize__ task produces production-quality graphs from the analysis
-   results. It currently is implemented by a separate IPython workbook, though I
-   plan to integrate that code with *shantay* as well.
+ 3. The __visualize__ task produces summary tables and production-quality graphs
+    from the analysis results. In addition to either printing plain text or
+    generating Markdown and HTML output for Jupyter, this task also generates a
+    self-contained HTML document in the staging directory called
+    `overview.html`.
 
 The analysis task currently processes records one month at a time. It reads all
 parquet files for the entire month and aggregates statistics for the entire
