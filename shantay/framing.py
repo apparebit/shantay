@@ -624,8 +624,8 @@ def format_summary(frame: pl.DataFrame, as_markdown: bool = True) -> str:
 
     if as_markdown:
         lines = [
-            f"| {'variable':<{var_width}} | { 'value':>{val_width}}  |",
-            f"| {        '-' * var_width} | {'-' * (val_width - 1)}: |",
+            f"| {'variable':<{var_width}} | {  'value':>{val_width}} |",
+            f"| :{ '-' * (var_width - 1)} | {'-' * (val_width - 1)}: |",
         ]
     else:
         lines = [
