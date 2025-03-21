@@ -366,7 +366,7 @@ class Processor[R: Release]:
 
 
     def visualize(self) -> None:
-        visualize(self._storage.working_root, self._storage.staging_root)
+        visualize(self._storage, notebook=False)
 
 
 def extracted_data_exists(root: Path, release: Release, metadata: Metadata) -> bool:

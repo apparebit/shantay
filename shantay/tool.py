@@ -194,8 +194,6 @@ def _run(args: list[str]) -> None:
         print("\n")
         print(format_summary(one_column_summary(result), as_markdown=False))
         print()
-    elif options.task == "visualize":
-        pass
 
 
 def run(args: list[str]) -> int:

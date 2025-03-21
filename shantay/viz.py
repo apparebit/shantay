@@ -1,11 +1,12 @@
+from abc import ABCMeta, abstractmethod
 from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
+import re
 from typing import Self
 
-from IPython.display import display, Markdown, HTML
-
 import altair as alt
+import mistune
 import polars as pl
 
 from .framing import (
@@ -13,13 +14,120 @@ from .framing import (
     validate_statistics
 )
 from .metadata import Metadata
-from .model import KEYWORDS_FILE, PLATFORMS_FILE, ReleaseRange, STATISTICS_FILE
+from .model import KEYWORDS_FILE, PLATFORMS_FILE, ReleaseRange, STATISTICS_FILE, Storage
 from .schema import KEYWORDS_MINOR_PROTECTION_PLUS, SCHEMA, StatementCategory
 from .util import scale, to_markdown_table
 
 
 TIMELINE_WIDTH = 1_000
 TIMELINE_HEIGHT = 500
+
+MARKDOWN_HEADER = re.compile(r"<h[1-3]>[^<]*</h[1-3]>")
+
+FRAME_BORDER = re.compile(r' border="1"')
+FRAME_CLASS = re.compile(r' class="dataframe"')
+FRAME_QUOT = re.compile(r"&quot;")
+FRAME_SHAPE = re.compile(r"<small>shape:[^<]*</small>")
+FRAME_STYLE = re.compile(r"<style>[^<]*</style>")
+
+DOC_HEADER = """\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The DSA Transparency Database</title>
+<style>
+*::before, *, *::after {
+    box-sizing: inherit;
+}
+:root {
+    box-sizing: border-box;
+    font-family: -apple-system, BlinkMacSystemFont, avenir next, avenir, segoe ui,
+        helvetica neue, Cantarell, Ubuntu, roboto, noto, helvetica, arial, sans-serif;
+    line-height: 1.5;
+    --black: #1d1d20;
+    --white: #f5f5f8;
+}
+body {
+    margin: 3em;
+}
+p, table, svg {
+    margin-bottom: 3em;
+}
+table {
+    border-collapse: separate;
+    border-spacing: 0;
+    line-height: 1.2;
+}
+table caption {
+    font-size: 0.8em;
+    text-align: left;
+    font-style: italic;
+    padding: 0.45em 0;
+}
+table caption > :where(cite, dfn, em, i) {
+    font-style: normal;
+}
+tr > th:first-child, tr > td:first-child {
+    text-align: left;
+}
+th {
+    font-weight: normal;
+}
+thead th {
+    font-weight: bold;
+}
+th, td {
+    padding: 0.2em;
+}
+th:first-child, td:first-child {
+    padding-left: 0.4em
+}
+th:last-child, td:last-child {
+    padding-right: 0.4em
+}
+thead > tr:first-of-type {
+    background: #e0e0e0;
+}
+thead > tr {
+    background: #f0f0f0;
+}
+thead > tr:first-of-type > :where(th, td) {
+    padding-top: 0.4em;
+}
+thead > tr:last-of-type > :where(th, td) {
+    padding-bottom: 0.3em;
+}
+tbody > tr:first-of-type > :where(th, td) {
+    border-top: solid 0.15em var(--black);
+    padding-top: 0.3em;
+}
+tbody > tr:nth-child(even) {
+    background: #f0f0f0
+}
+td {
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    margin: 2.25em;
+}
+th {
+    text-align: right;
+}
+.alltext th, .alltext td {
+    text-alight: left;
+}
+</style>
+</head>
+<body>
+<main>
+"""
+
+DOC_FOOTER = """\
+</main>
+</body>
+</html>
+"""
+
 
 # --------------------------------------------------------------------------------------
 # Observable's [color palette](https://observablehq.com/blog/crafting-data-colors)
@@ -55,21 +163,113 @@ KEYWORD_PALETTE = [
 
 
 # --------------------------------------------------------------------------------------
-# Visualization
 
 
-def visualize(working_root: Path, staging_root: Path) -> None:
-    Visualization(working_root, staging_root).run()
+def visualize(storage: Storage, notebook: bool = False) -> None:
+    charts = storage.staging_root / "charts"
+    charts.mkdir(exist_ok=True)
+
+    renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
+    visualizer = Visualizer(storage.working_root, storage.staging_root, renderer)
+    visualizer.run()
 
 
-class Visualization:
+# --------------------------------------------------------------------------------------
+
+class Renderer(metaclass=ABCMeta):
+
+    def __init__(self, charts: Path) -> None:
+        self._charts = charts
+
+    @property
+    def charts(self) -> Path:
+        return self._charts
+
+    @property
+    @abstractmethod
+    def plain(self) -> bool: ...
+
+    @abstractmethod
+    def html(self, markup: str) -> None: ...
+
+    @abstractmethod
+    def md(self, markdown: str) -> None: ...
+
+    @abstractmethod
+    def frame(self, frame: pl.DataFrame) -> None: ...
+
+    @abstractmethod
+    def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None: ...
+
+
+TAG = re.compile(r"<[^>]+>")
+
+class PlainTextRenderer(Renderer):
+
+    @property
+    def plain(self) -> bool:
+        return True
+
+    def html(self, markup: str) -> None:
+        print(TAG.sub("", markup))
+        print()
+
+    def md(self, markdown: str) -> None:
+        print(markdown)
+        print()
+
+    def frame(self, frame: pl.DataFrame) -> None:
+        print(frame)
+        print()
+
+    def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None:
+        chart.save(self._charts / f"{name}.svg")
+
+
+try:
+    from IPython.display import display, HTML, Markdown
+except ImportError:
+    display = HTML = Markdown = None
+
+if display is None:
+    NotebookRenderer = None # pyright: ignore[reportAssignmentType]
+else:
+    class NotebookRenderer(Renderer):
+
+        @property
+        def plain(self) -> bool:
+            return False
+
+        def html(self, markup: str) -> None:
+            display(HTML(markup)) # pyright: ignore[reportOptionalCall]
+
+        def md(self, markdown: str) -> None:
+            display(Markdown(markdown)) # pyright: ignore[reportOptionalCall]
+
+        def frame(self, frame: pl.DataFrame) -> None:
+            display(frame) # pyright: ignore[reportOptionalCall]
+
+        def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None:
+            display(chart) # pyright: ignore[reportOptionalCall]
+            chart.save(self._charts / f"{name}.svg")
+
+
+# --------------------------------------------------------------------------------------
+
+
+class Visualizer:
 
     def __init__(
-        self, working_root: Path, staging_root: Path, with_extras: bool = False
+        self,
+        working_root: Path,
+        staging_root: Path,
+        renderer: Renderer,
+        with_extras: bool = False
     ) -> None:
         self._working_root = working_root
         self._staging_root = staging_root
         self._with_extras = with_extras
+        self._renderer = renderer
 
     @staticmethod
     def configure_display() -> None:
@@ -82,12 +282,79 @@ class Visualization:
             (max(len(s) for s in StatementCategory.categories) // 10 + 2) * 10
         )
 
+    def html(self, markup: str) -> None:
+        self._renderer.html(markup)
+
+        assert self._document is not None
+        self._document.write(markup)
+        self._document.write("\n\n")
+
+    def markdown(
+        self,
+        markdown: str,
+        render: bool = True,
+        disclosure: bool = False,
+    ) -> None:
+        if render:
+            self._renderer.md(markdown)
+
+        assert self._document is not None
+        html = str(mistune.html(markdown))
+        hn = MARKDOWN_HEADER.match(html)
+        if not disclosure or hn is None:
+            self._document.write(html)
+            self._document.write("\n\n")
+            return
+
+        summary = hn.group(0)
+        html = html[len(summary):]
+        self._document.write("<details>")
+        self._document.write(f"<summary>{summary}</summary>")
+        self._document.write(html)
+        self._document.write("</details>\n\n")
+
+    def frame(self, frame: pl.DataFrame, all_text: bool = False) -> None:
+        self._renderer.frame(frame)
+
+        assert self._document is not None
+        html = frame._repr_html_()
+        html = FRAME_BORDER.sub("", html)
+        html = FRAME_CLASS.sub(' class="alltext"' if all_text else "", html)
+        html = FRAME_QUOT.sub("", html)
+        html = FRAME_SHAPE.sub("", html)
+        html = FRAME_STYLE.sub("", html)
+
+        self._document.write(html)
+        self._document.write("\n\n")
+
+    def chart(self, name: str, chart: alt.Chart | alt.LayerChart) -> None:
+        self._renderer.chart(name, chart)
+
+        path = self._renderer.charts / f"{name}.svg"
+        with open(path, mode="r", encoding="utf8") as file:
+            svg = file.read()
+
+        assert self._document is not None
+        self._document.write(svg)
+        self._document.write("\n\n")
+
     def run(self) -> None:
+        path = self._staging_root / "overview.html"
         self.configure_display()
         self.ingest()
-        self.render_heading()
-        self.render_overview()
-        self.render_timelines()
+
+        with open(path, mode="w", encoding="utf8") as document:
+            try:
+                self._document = document
+                document.write(DOC_HEADER)
+
+                self.render_heading()
+                self.render_overview()
+                self.render_timelines()
+
+                document.write(DOC_FOOTER)
+            finally:
+                self._document = None
 
     def ingest(self) -> None:
         range, metadata = collect_release_metadata(
@@ -134,34 +401,50 @@ class Visualization:
         }
 
     def render_heading(self) -> None:
-        display(HTML("<h1>The DSA Transparency Database: Protection of Minors</h1>"))
+        self.html("<h1>The DSA Transparency Database: Protection of Minors</h1>")
 
     def render_overview(self) -> None:
-        display(HTML("<h2>Summary</h2>"))
-        display(self._summary.markdown())
-        display(Markdown(format_summary(one_column_summary(self._statistics), as_markdown=True)))
+        self.html("<h2>Summary</h2>")
+        self.markdown(self._summary.markdown())
+        self.markdown(format_summary(one_column_summary(self._statistics), as_markdown=True))
 
-        display(HTML("<h2>Table Schemas</h2>"))
-        display(Markdown(format_schema(SCHEMA, title="Source Data")))
-        display(Markdown(format_schema(self._metadata, title="meta.json")))
-        display(Markdown(format_schema(self._statistics, title="meta-statistics.parquet")))
-        display(Markdown(format_schema(self._keywords, title="meta-keywords.parquet")))
-        display(Markdown(format_schema(self._platforms, title="meta-platforms.parquet")))
+        self.html("<h2>Table Schemas</h2>")
+        self.markdown(
+            format_schema(SCHEMA, title="Source Data"),
+            disclosure=True,
+            render=not self._renderer.plain
+        )
+        self.markdown(
+            format_schema(self._metadata, title="meta.json"),
+            disclosure=True,
+        )
+        self.markdown(
+            format_schema(self._statistics, title="meta-statistics.parquet"),
+            disclosure=True,
+        )
+        self.markdown(
+            format_schema(self._keywords, title="meta-keywords.parquet"),
+            disclosure=True,
+            render=not self._renderer.plain
+        )
+        self.markdown(
+            format_schema(self._platforms, title="meta-platforms.parquet"),
+            disclosure=True,
+        )
 
-        display(HTML("<h2>Keywords</h2>"))
-        display(self._keyword_usage)
+        self.html("<h2>Keywords</h2>")
+        self.frame(self._keyword_usage)
         pie = self.total_keyword_usage_minor_prot()
-        display(pie)
-        pie.save(self._staging_root / "keyword_pie.svg")
+        self.chart("keyword-pie", pie)
 
-        display(HTML("<h2>Platforms</h2>"))
+        self.html("<h2>Platforms</h2>")
         table = self._platforms.select(
             pl.col("platform").unique().sort(descending=False)
         )
-        display(table.with_row_index())
+        self.frame(table.with_row_index(), all_text=True)
 
     def render_timelines(self) -> None:
-        display(HTML("<h2>Timelines</h2>"))
+        self.html("<h2>Timelines</h2>")
 
         (self._staging_root / "timelines").mkdir(exist_ok=True)
 
@@ -183,15 +466,14 @@ class Visualization:
             self.monthly_provision_decisions_for_csam(),
             self.monthly_monetary_decisions_for_csam(),
             self.monthly_account_decisions_for_csam(),
+            self.monthly_automated_detection_for_csam(),
+            self.monthly_automated_decision_for_csam(),
         ]):
             if timeline is None:
-                display(HTML("<h3>CSAM SoRs</h3>"))
+                self.html("<h3>CSAM SoRs</h3>")
                 offset -= 1
             else:
-                display(timeline)
-                timeline.save(
-                    self._staging_root / "timelines" / f"timeline{index + offset:02}.svg"
-                )
+                self.chart(f"timeline{index + offset:02}", timeline)
 
     # ==================================================================================
     # Timelines: Overview
@@ -230,8 +512,8 @@ class Visualization:
 
         return (
             chart.encode(
-                alt.X("start_date:T"),
-                alt.Y("batch_rows:Q").title("thousand rows"),
+                alt.X("start_date:T").title("Date"),
+                alt.Y("batch_rows:Q").title("Statements of Reasons (Thousands)"),
             ).properties(
                 height=TIMELINE_HEIGHT,
                 width=TIMELINE_WIDTH,
@@ -275,8 +557,9 @@ class Visualization:
 
         return (
             chart.encode(
-                alt.X("start_date:T"),
-                alt.Y("protection_of_minors:Q").title("percent"),
+                alt.X("start_date:T").title("Date"),
+                alt.Y("protection_of_minors:Q")
+                .title("Percent of All Statements of Reasons"),
             ).properties(
                 height=TIMELINE_HEIGHT,
                 width=TIMELINE_WIDTH
@@ -308,13 +591,13 @@ class Visualization:
                 pl.col("Protection of Minors Only")
                 .rolling_max(window_size=rolling_mean_days).alias("band_max"),
                 pl.col("Protection of Minors Only", "All SoRs")
-                .rolling_mean(window_size=rolling_mean_days)
+                .rolling_mean(window_size=rolling_mean_days),
             )
 
         long_table = table.unpivot(
             index=["start_date"],
             on=["Protection of Minors Only", "All SoRs"],
-            variable_name="kind",
+            variable_name="Kind",
             value_name="pct",
         )
 
@@ -325,9 +608,9 @@ class Visualization:
             ).mark_line(
                 tooltip=True,
             ).encode(
-                alt.X("start_date:T"),
-                alt.Y("pct:Q").title("percent"),
-                alt.Color("kind:N").scale(
+                alt.X("start_date:T").title("Date"),
+                alt.Y("pct:Q").title("Percent"),
+                alt.Color("Kind:N").scale(
                     domain=["Protection of Minors Only", "All SoRs"],
                     range=[PINK, BLUE],
                 ),
@@ -340,8 +623,8 @@ class Visualization:
 
         if rolling_mean_days is not None:
             band = alt.Chart(table).mark_errorband().encode(
-                alt.X("start_date:T"),
-                alt.Y("band_min:Q"),
+                alt.X("start_date:T").title("Date"),
+                alt.Y("band_min:Q").title(""),
                 alt.Y2("band_max:Q"),
                 color=alt.value(PINK),
             ).properties(
@@ -379,8 +662,8 @@ class Visualization:
         ).unpivot(
             index=["mid_date"],
             on=[KEY, ALL, CSAM],
-            variable_name="kind",
-            value_name="count",
+            variable_name="Kind",
+            value_name="Count",
         )
 
         return (
@@ -391,9 +674,9 @@ class Visualization:
             ).mark_line(
                 tooltip=True
             ).encode(
-                alt.X("mid_date:T"),
-                alt.Y("count:Q"),
-                alt.Color("kind:N").scale(
+                alt.X("mid_date:T").title("Month"),
+                alt.Y("Count:Q").title("Number of Platforms"),
+                alt.Color("Kind:N").scale(
                     domain=[CSAM, KEY, ALL],
                     range=[RED, ORANGE, GRAY],
                 ),
@@ -417,6 +700,7 @@ class Visualization:
                 pl.col("count").sum(),
             ).with_columns(
                 pl.col("keyword").cast(pl.String).replace(self._short_keywords)
+                .alias("Keyword")
             )
         )
 
@@ -426,10 +710,10 @@ class Visualization:
             ).mark_bar(
                 tooltip=True,
             ).encode(
-                alt.X("start_date:T"),
-                alt.X2("end_date:T"),
-                alt.Y("sum(count):Q"),
-                alt.Color("keyword:N").scale(
+                alt.X("start_date:T").title("Month"),
+                alt.X2("end_date:T").title(""),
+                alt.Y("sum(count):Q").title("Number of Keywords"),
+                alt.Color("Keyword:N").scale(
                     domain=[*self._short_keywords.values()],
                     range=KEYWORD_PALETTE[:len(self._short_keywords)],
                 ),
@@ -481,14 +765,14 @@ class Visualization:
 
         return (
             alt.Chart(
-                table, title="CSAM SoRs - Monthly Counts"
+                table, title="Statements of Reasons with CSAM as Keyword - Monthly Counts"
             ).mark_bar(
                 tooltip=True,
                 color=GRAY,
             ).encode(
-                alt.X("start_date:T"),
-                alt.X2("end_date:T"),
-                alt.Y("sum(CSAM):Q"),
+                alt.X("start_date:T").title("Month"),
+                alt.X2("end_date:T").title(""),
+                alt.Y("sum(CSAM):Q").title("Statements of Reasons"),
             ).properties(
                 height=TIMELINE_HEIGHT,
                 width=TIMELINE_WIDTH,
@@ -512,7 +796,7 @@ class Visualization:
                 index=["start_date", "end_date"],
                 on=[*columns.values()],
                 variable_name=variable,
-                value_name="count",
+                value_name="Count",
             )
         )
 
@@ -529,9 +813,9 @@ class Visualization:
         ).mark_bar(
             tooltip=True,
         ).encode(
-            alt.X("start_date:T"),
-            alt.X2("end_date:T"),
-            alt.Y("sum(count):Q"),
+            alt.X("start_date:T").title("Month"),
+            alt.X2("end_date:T").title(""),
+            alt.Y("sum(Count):Q").title("Statements of Reasons"),
             alt.Color(f"{variable}:N").scale(
                 domain=domain,
                 range=range,
@@ -542,25 +826,38 @@ class Visualization:
         ).interactive()
 
     def monthly_decision_grounds_for_csam(self) -> alt.Chart | alt.LayerChart:
-        table = self.extract_table("Decision Ground", {
-            "csam_illegal_content": "Illegal Content",
-            "csam_incompatible_content": "Incompatible Content",
-            "csam_null_decision_ground": "—none—",
-        })
-
-        null_decision = table.filter(
-            pl.col("Decision Ground").eq("—none—")
-        ).select(
-            pl.col("count").sum()
+        assert 0 == self._statistics.select(
+            pl.col("csam_null_decision_ground").sum()
         ).item()
-        assert null_decision == 0, "decision_ground is required"
+
+        table = self._statistics.group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+        ).agg(
+            pl.col("start_date").min() + dt.timedelta(days=5),
+            pl.col("end_date").max() - dt.timedelta(days=5),
+            pl.col("csam_illegal_content").sum(),
+            pl.col("csam_incompatible_content_illegal_yes").sum(),
+            (
+                pl.col("csam_incompatible_content").sum()
+                - pl.col("csam_incompatible_content_illegal_yes").sum()
+            ).alias("Incompatible"),
+        ).rename({
+            "csam_illegal_content": "Illegal",
+            "csam_incompatible_content_illegal_yes": "Illegal & Incompatible",
+        }).unpivot(
+            index=["start_date", "end_date"],
+            on=["Illegal", "Illegal & Incompatible", "Incompatible"],
+            variable_name="Decision Ground",
+            value_name="Count",
+        )
 
         chart = self.create_chart(
             "Decision Grounds for CSAM - Monthly Counts",
             table,
             variable="Decision Ground",
-            domain=["Illegal Content", "Incompatible Content"],
-            range=[RED, LIGHT_BLUE],
+            domain=["Illegal", "Illegal & Incompatible", "Incompatible"],
+            range=[BLUE, LIGHT_BLUE, RED],
         )
 
         if self._with_extras:
@@ -673,6 +970,38 @@ class Visualization:
             range=[LIGHT_BLUE, RED, BLUE, GRAY],
         )
 
+    def monthly_automated_detection_for_csam(self) -> alt.Chart:
+        table = self.extract_table("Automated Detection", {
+            "csam_automated_detection_yes": "Automated",
+            "csam_automated_detection_no": "Not Automated",
+            "csam_null_automated_detection": "—none—",
+        })
+
+        return self.create_chart(
+            "Automation of Detection for CSAM - Monthly Counts",
+            table,
+            variable="Automated Detection",
+            domain=["Automated", "Not Automated", "—none—"],
+            range=[LIGHT_BLUE, PURPLE, RED],
+        )
+
+    def monthly_automated_decision_for_csam(self) -> alt.Chart:
+        table = self.extract_table("Automated Decision", {
+            "csam_automated_decision_fully": "Fully Automated",
+            "csam_automated_decision_partially": "Partially Automated",
+            "csam_automated_decision_not_automated": "Not Automated",
+            "csam_null_automated_decision": "—none—",
+        })
+
+        return self.create_chart(
+            "Automation of Decision for CSAM - Monthly Counts",
+            table,
+            variable="Automated Decision",
+            domain=["Fully Automated", "Partially Automated", "Not Automated", "—none—"],
+            range=[LIGHT_BLUE, BLUE, PURPLE, RED],
+        )
+
+
     # ==================================================================================
 
     def total_keyword_usage_minor_prot(self) -> alt.Chart:
@@ -771,11 +1100,11 @@ class Summary:
             max_platforms_csam=max_platforms_csam,
         )
 
-    def markdown(self) -> Markdown:
+    def markdown(self) -> str:
         row_size, row_unit = scale(self.batch_rows)
         total_rows, total_unit = scale(self.total_rows)
         mem_size, mem_unit = scale(self.batch_memory)
-        return Markdown(to_markdown_table(
+        return to_markdown_table(
             [
                 "Dates",
                 f"{self.start_date} to {self.end_date} (inclusive)"
@@ -801,7 +1130,7 @@ class Summary:
                 f"{mem_size:,.1f} {mem_unit}byte"
             ],
             columns=["Attribute", "Value"],
-        ))
+        )
 
 
 # --------------------------------------------------------------------------------------

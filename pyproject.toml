@@ -29,6 +29,7 @@ dependencies = [
     "great_tables", # table formatting
     "ipython", # interactive use
     "ipykernel", # notebook support
+    "mistune", # render Markdown to HTML
 ]
 
 dynamic = ["version"]

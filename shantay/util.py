@@ -75,7 +75,7 @@ def to_markdown_table(
         for fmt, column in zip((_get_format(tp) for tp in types), column_data)
     ]
     widths = [
-        max(len(name) + 2, *(len(it) + 2 for it in column))
+        min(max(len(name) + 2, *(len(it) + 2 for it in column)), 120)
         for name, column in zip(columns, column_data)
     ]
 
@@ -96,7 +96,7 @@ def to_markdown_table(
         return f'| {" | ".join(items)} |'
 
     return "\n".join([
-        *(() if title is None else (f"__{title}__:", "")),
+        *(() if title is None else (f"### {title}", "")),
         format_row(columns),
         format_div(),
         *(format_row(row) for row in zip(*column_data)),
