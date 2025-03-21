@@ -1009,7 +1009,7 @@ class Visualizer:
             table,
             variable="Automated Decision",
             domain=["Fully Automated", "Partially Automated", "Not Automated", "—none—"],
-            range=[LIGHT_BLUE, BLUE, PURPLE, RED],
+            range=[CYAN, BLUE, GREEN, RED],
         )
 
 
