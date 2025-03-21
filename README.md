@@ -150,7 +150,7 @@ processing (much) less data and executing (much) faster:
     from the analysis results. In addition to either printing plain text or
     generating Markdown and HTML output for Jupyter, this task also generates a
     self-contained HTML document in the staging directory called
-    `overview.html`.
+    [overview.html](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/overview.html)
 
 The analysis task currently processes records one month at a time. It reads all
 parquet files for the entire month and aggregates statistics for the entire
