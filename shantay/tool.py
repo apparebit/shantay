@@ -25,6 +25,11 @@ def _parse_options(args: list[str]) -> Any:
 
     group = parser.add_argument_group("data storage")
     group.add_argument(
+        "--root",
+        type=Path,
+        help="set directories for `archive` and working `data` to the eponymous subdirectories"
+    )
+    group.add_argument(
         "--archive",
         type=Path,
         help="set directory for downloaded archives (`./dsa-db-archive` by default)",
@@ -94,9 +99,17 @@ def _parse_options(args: list[str]) -> Any:
 
 
 def get_storage(options: Any) -> Storage:
+    archive = options.archive
+    working = options.working
+    if options.root:
+        if not archive:
+            archive = options.root / "archive"
+        if not working:
+            working = options.root / "data"
+
     return Storage(
-        archive_root=options.archive if options.archive else Path.cwd() / "dsa-db-archive",
-        working_root=options.working if options.working else Path.cwd() / "dsa-db-working",
+        archive_root=archive if archive else Path.cwd() / "dsa-db-archive",
+        working_root=working if working else Path.cwd() / "dsa-db-working",
         staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
     )
 
@@ -160,8 +173,8 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     # Handle --multiproc
     if options.multiproc < 1:
         raise ConfigError(f"process number must be positive but is {options.multiproc}")
-    if options.multiproc != 1 and options.task != "prepare":
-        raise ConfigError("only prepare supports more than one process")
+    if options.multiproc != 1 and options.task not in ("prepare", "analyze"):
+        raise ConfigError("only prepare and analyze support more than one process")
 
     # Finish it all up
     assert filter_value is not None
@@ -229,6 +242,9 @@ def run(args: list[str]) -> int:
     try:
         _run(args)
         return 0
+    except KeyboardInterrupt:
+        print('\ninterrupted by user; terminating...')
+        return 1
     except (ConfigError, DownloadFailed, MetadataConflict) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
