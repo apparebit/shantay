@@ -1,4 +1,5 @@
 from concurrent.futures import Future
+from dataclasses import dataclass
 import logging
 import multiprocessing as mp
 import os
@@ -7,10 +8,10 @@ import sys
 from types import FrameType
 from typing import Any
 
-from .framing import collect_release_metadata, Collector
+from .framing import collect_release_metadata
 from .metadata import Metadata
 from .model import Coverage, Dataset, Release, Storage
-from .pool import Pool, WorkerProgress
+from .pool import Cancelled, Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
 
 
@@ -33,15 +34,18 @@ class Multiprocessor[R: Release]:
         self._metadata = metadata
         self._metadata_frame = None
 
-        # Prepare processes daily releases, whereas analyze processes monthly ones.
+        # Prepare processes daily releases, whereas analyze processes monthly ones
         self._task = None
         self._cursor = None
         self._last = None
 
+        self._pool = None
         self._register_handlers()
-        self._pool = Pool(size=size)
+        # Use the same level as the root logger
+        self._pool = Pool(size=size, log_level=logging.getLogger().level)
 
-    def run(self, task: str) -> None:
+    def run(self, task: str, wait: bool = True) -> None:
+        assert self._pool is not None
         self._task = task
 
         _logger.info('running multiprocessor with pid=%d, task="%s"', os.getpid(), task)
@@ -70,11 +74,15 @@ class Multiprocessor[R: Release]:
             if not self._schedule_task():
                 break
 
+        if wait:
+            self._pool.done()
+
     def _schedule_task(self) -> bool:
         release = self._next_release()
         if release is None:
             return False
 
+        assert self._pool is not None
         future = self._pool.submit(
             run_on_worker,
             task=self._task,
@@ -117,15 +125,30 @@ class Multiprocessor[R: Release]:
         except:
             return self._schedule_task()
 
+        should_schedule = True
+        if isinstance(result, _Cancellation):
+            _logger.debug('received cancellation notice from worker=%d', result.pid)
+            should_schedule = False
+
         if self._task == "prepare":
             release = result["release"]
             del result["release"]
             self._metadata[release] = result
             self._metadata.write_json(self._storage.staging_root, sort_keys=True)
+            # If the working root contains a meta.json, then the tool module
+            # instantiates _metadata with that file's data. Since copy_json()
+            # first writes to a temporary file and then atomically replaces the
+            # original, it's ok to update that file here. In fact, it's more
+            # than ok because we just updated the metadata with a new release.
+            Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
 
-        return self._schedule_task()
+        if should_schedule:
+            return self._schedule_task()
+        else:
+            return False
 
     def stop(self) -> bool:
+        assert self._pool is not None
         return self._pool.stop()
 
     def _register_handlers(self) -> None:
@@ -136,7 +159,7 @@ class Multiprocessor[R: Release]:
     def _handle_signal(self, signum: int, frame: None | FrameType) -> None:
         signame = signal.strsignal(signum)
         if signum not in (signal.SIGINT, signal.SIGTERM):
-            _logger.warning('unexpectedly received signal="%s"', signame)
+            _logger.warning('received unexpected signal="%s"', signame)
             return
         elif self._pool is None:
             _logger.warning(
@@ -159,6 +182,19 @@ class Multiprocessor[R: Release]:
         sys.exit(1)
 
 
+@dataclass(frozen=True, slots=True)
+class _Cancellation:
+    """
+    A sentinel value of sorts.
+
+    A worker returns an instance in lieu of raising a Cancelled exception, since
+    exceptions don't pickle so well. Since the cancellation protocol for pools
+    is cooperative, the abstractions leak beyond pool. It may be worth trying to
+    contain them better.
+    """
+    pid: int
+
+
 def run_on_worker[R: Release](
     task: str,
     dataset: Dataset[R],
@@ -167,6 +203,22 @@ def run_on_worker[R: Release](
     release: R,
 ) -> Any:
     pid = os.getpid()
+
+    try:
+        result = _run_on_worker(pid, task, dataset, storage, filter, release)
+    except Cancelled:
+        result = _Cancellation(pid)
+
+    return result
+
+def _run_on_worker[R: Release](
+    pid: int,
+    task: str,
+    dataset: Dataset[R],
+    storage: Storage,
+    filter: str,
+    release: R,
+) -> Any:
     coverage = Coverage(release, release, filter)
     metadata = Metadata(filter)
     processor = Processor(
@@ -185,5 +237,5 @@ def run_on_worker[R: Release](
     else:
         raise ValueError(f"invalid task {task}")
 
-    _logger.debug('finished running task=%s, release=%s, worker=%d', task, release, pid)
+    _logger.debug('finished task=%s, release=%s, worker=%d', task, release, pid)
     return result
