@@ -61,7 +61,12 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
 
-        start_time = time.process_time()
+        # Arguably, time.process_time() would be the more accurate time source
+        # for measuring latency. However, that may not hold for the parallel
+        # version of shantay, as the main process doesn't do much data
+        # processing. Hence, to keep any comparisons fair-ish, we use wall clock
+        # time.
+        start_time = time.time()
         if task == "prepare":
             result = self.prepare()
         elif task == "analyze":
@@ -71,7 +76,7 @@ class Processor[R: Release]:
         else:
             raise ValueError(f'invalid task "{task}"')
 
-        self._runtime = time.process_time() - start_time
+        self._runtime = time.time() - start_time
         return result
 
     def prepare(self) -> None:

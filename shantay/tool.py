@@ -213,24 +213,23 @@ def _run(args: list[str]) -> None:
             size=options.multiproc,
         )
         processor.run(options.task)
-        return
+    else:
+        processor = Processor(
+            dataset=StatementsOfReasons(),
+            storage=storage,
+            coverage=coverage,
+            metadata=metadata,
+            progress=Progress()
+        )
 
-    processor = Processor(
-        dataset=StatementsOfReasons(),
-        storage=storage,
-        coverage=coverage,
-        metadata=metadata,
-        progress=Progress()
-    )
+        result = processor.run(options.task)
 
-    result = processor.run(options.task)
-
-    if options.task == "prepare":
-        Metadata.copy_json(storage.staging_root, storage.working_root)
-    elif options.task == "analyze":
-        assert isinstance(result, pl.DataFrame)
-        print("\n")
-        print(format_summary(one_column_summary(result), as_markdown=False))
+        if options.task == "prepare":
+            Metadata.copy_json(storage.staging_root, storage.working_root)
+        elif options.task == "analyze":
+            assert isinstance(result, pl.DataFrame)
+            print("\n")
+            print(format_summary(one_column_summary(result), as_markdown=False))
 
     v, u = scale_time(processor.runtime)
     print(f"\nCompleted task {options.task} in {v:,.1f} {u}")

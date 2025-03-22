@@ -5,6 +5,7 @@ import multiprocessing as mp
 import os
 import signal
 import sys
+import time
 from types import FrameType
 from typing import Any
 
@@ -44,6 +45,12 @@ class Multiprocessor[R: Release]:
         # Use the same level as the root logger
         self._pool = Pool(size=size, log_level=logging.getLogger().level)
 
+        self._runtime = 0
+
+    @property
+    def runtime(self) -> float:
+        return self._runtime
+
     def run(self, task: str, wait: bool = True) -> None:
         assert self._pool is not None
         self._task = task
@@ -58,6 +65,8 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="pool.size",            value=%d', self._pool.size)
 
+        # See Processor.run() for an explanation for time.time().
+        start_time = time.time()
         if task == "prepare":
             cover = self._coverage
         elif task == "analyze":
@@ -76,6 +85,7 @@ class Multiprocessor[R: Release]:
 
         if wait:
             self._pool.done()
+        self._runtime = time.time() - start_time
 
     def _schedule_task(self) -> bool:
         release = self._next_release()
@@ -125,12 +135,11 @@ class Multiprocessor[R: Release]:
         except:
             return self._schedule_task()
 
-        should_schedule = True
         if isinstance(result, _Cancellation):
             _logger.debug('received cancellation notice from worker=%d', result.pid)
-            should_schedule = False
+            return False
 
-        if self._task == "prepare":
+        elif self._task == "prepare":
             release = result["release"]
             del result["release"]
             self._metadata[release] = result
@@ -141,11 +150,9 @@ class Multiprocessor[R: Release]:
             # original, it's ok to update that file here. In fact, it's more
             # than ok because we just updated the metadata with a new release.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
-
-        if should_schedule:
             return self._schedule_task()
         else:
-            return False
+            raise ValueError(f"invalid task {self._task}")
 
     def stop(self) -> bool:
         assert self._pool is not None
