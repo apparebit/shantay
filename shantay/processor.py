@@ -4,6 +4,7 @@ import logging
 import os
 from pathlib import Path
 import shutil
+import time
 from typing import cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
@@ -13,7 +14,7 @@ import polars as pl
 from .__init__ import __version__
 from .metadata import Metadata
 from .model import (
-    Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
+    CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
     MetadataEntry, Release, Storage
 )
 from .pool import WorkerProgress
@@ -43,6 +44,12 @@ class Processor[R: Release]:
         self._coverage = coverage
         self._metadata = metadata
         self._progress = progress
+        self._runtime = 0.0
+
+    @property
+    def runtime(self) -> float:
+        """The latency of the most recent invocation of run()."""
+        return self._runtime
 
     def run(self, task: str) -> None | pl.DataFrame:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
@@ -54,14 +61,18 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
 
+        start_time = time.process_time()
         if task == "prepare":
-            return self.prepare()
+            result = self.prepare()
         elif task == "analyze":
-            return self.analyze()
+            result = self.analyze()
         elif task == "visualize":
-            return self.visualize()
+            result = self.visualize()
         else:
             raise ValueError(f'invalid task "{task}"')
+
+        self._runtime = time.process_time() - start_time
+        return result
 
     def prepare(self) -> None:
         for release in self._coverage:
@@ -324,8 +335,9 @@ class Processor[R: Release]:
             self._progress.step(index)
 
     def analyze(self) -> DataFrameType:
+        """Analyze the data extracted into the working root."""
         # Prepare metadata for analysis
-        from .framing import Collector, collect_release_metadata, filter_period
+        from .framing import Collector, collect_release_metadata
 
         range, metadata = collect_release_metadata(self._metadata.records)
         range = range.to_release_range().to_monthly()
@@ -338,33 +350,29 @@ class Processor[R: Release]:
 
         collector = Collector()
         for index, release in enumerate(range):
-            release_metadata = filter_period(metadata, release)
-
-            self._dataset.analyze_release(
-                self._storage.working_root, release, release_metadata, collector
-            )
+            self.analyze_release(release, metadata, collector)
             self._progress.step(index + 1, extra=release.id)
 
         return self._dataset.combine_releases(
             self._storage.working_root, self._coverage, collector
         )
 
-    # def analyze_release(
-    #     self,
-    #     index: int,
-    #     release: Release,
-    #     metadata: DataFrameType,
-    #     collector: CollectorProtocol,
-    # ) -> None:
-    #     from .framing import filter_period
-    #     release_metadata = filter_period(metadata, release)
-    #     self._dataset.analyze_release(
-    #         self._storage.working_root, release, release_metadata, collector
-    #     )
-    #     self._progress.step(index + 1, extra=release.id)
+    def analyze_release(
+        self,
+        release: Release,
+        metadata: DataFrameType,
+        collector: CollectorProtocol,
+    ) -> None:
+        """Analyze the working data for the given release."""
+        from .framing import filter_period
 
+        release_metadata = filter_period(metadata, release)
+        self._dataset.analyze_release(
+            self._storage.working_root, release, release_metadata, collector
+        )
 
     def visualize(self) -> None:
+        """Visualize the analysis results."""
         visualize(self._storage, notebook=False)
 
 
