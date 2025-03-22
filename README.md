@@ -21,8 +21,8 @@ extract relevant records from the full dataset. For my use case, the Protection
 of Minors, which comprise 0.3% of all records, it takes less than one minute to
 analyze the working set. Finally, visualization of the analysis results is
 nearly instantaneous, taking seconds at most. Since extraction fails to saturate
-my iMac's CPU or memory bus, I am currently working towards parallelizing the
-pipeline.
+my iMac's CPU or memory bus, I did integrate process-based multiprocessing,
+which is enabled with the `--multiproc` command line option.
 
 I've written [a blog post about my initial
 impressions](https://apparebit.com/blog/2025/sashay-shantay) of the DSA
@@ -49,9 +49,16 @@ or
 In either case, *shantay* responds by printing documentation for its command
 line options. You can use *shantay* as is, with the `prepare` task, for
 downloading daily distributions and selecting a category of your choice.
-However, to analyze or visualize the data in a different category, you'll need
-to add your own code. Though much of the analysis and charting code is directly
-reusable.
+However, to analyze or visualize the data in a category other than Protection of
+Minors, you'll need to write your own domain-specific code. However, the
+[`dsa_sor`](https://github.com/apparebit/shantay/blob/boss/shantay/dsa_sor.py)
+and
+[`framing`](https://github.com/apparebit/shantay/blob/boss/shantay/framing.py)
+modules include a fair number of helper functions that are generally useful for
+analyzing Statements of Reasons and hence reusable. The
+[`viz`](https://github.com/apparebit/shantay/blob/boss/shantay/viz.py) module
+also contains helper functions for generating charts. But so far, I have found
+fewer opportunities for cleanly abstracting over common patterns.
 
 The next two sections explain the organization of storage and the different
 workflow tasks.
@@ -152,11 +159,10 @@ processing (much) less data and executing (much) faster:
     self-contained HTML document in the staging directory called
     [overview.html](https://apparebit.github.io/shantay/overview.html)
 
-The analysis task currently processes records one month at a time. It reads all
-parquet files for the entire month and aggregates statistics for the entire
-month as well. While the one-to-one correspondence between batch size and
-analysis granularity is just a simplifying convenience, it is critical for
-performance that the batch size be as large as possible.
+The analysis task currently processes records at month granularity and also
+produces statistics at month granularity. This one-to-one correspondence between
+batch size and analysis resolution mostly is a simplifying convenience. However,
+it *is* critical for performance that the batch size be as large as possible.
 
 
 ----
