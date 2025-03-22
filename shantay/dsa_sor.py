@@ -591,13 +591,6 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("total_rows_with_keywords").sum(),
         ).row(0)
 
-        outliers = None
-        if _DEBUG_OUTLIERS:
-            outliers = frame.filter(
-                (2 <= pl.col("category_specification").list.len())
-                | (2 <= pl.col("decision_visibility").list.len())
-            )
-
         csam = (
             frame.filter(pl.col("category_specification")
             .list.contains("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"))
@@ -724,9 +717,12 @@ class StatementsOfReasons(Dataset[Daily]):
             keywords=keywords,
             platforms=platforms,
         )
+
         if _DEBUG_OUTLIERS:
-            assert outliers is not None
-            frames["outliers"] = outliers
+            frames["outliers"] = frame.filter(
+                (2 <= pl.col("category_specification").list.len())
+                | (2 <= pl.col("decision_visibility").list.len())
+            )
 
         collector.add_frames(release, **frames)
 
