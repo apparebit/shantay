@@ -116,9 +116,10 @@ class Collector[R: Release]:
         frames.update(kwargs)
 
     def consume_frames(self) -> Iterator[tuple[str, pl.DataFrame]]:
-        """Iterate """
+        """Sort by release and iterate over concatenated, named frames."""
         all_frames = {}
-        for release_data in self._releases.values():
+        for release in sorted(self._releases.keys()):
+            release_data = self._releases[release]
             for name, frame in release_data.items():
                 all_frames.setdefault(name, []).append(frame)
 
