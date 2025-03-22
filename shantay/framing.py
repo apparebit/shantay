@@ -357,7 +357,7 @@ def one_column_summary(frame: pl.DataFrame) -> pl.DataFrame:
     )
 
 
-def validate_statistics(frame: pl.DataFrame) -> None:
+def validate_general_statistics(frame: pl.DataFrame) -> None:
     all = frame.select(pl.col("rows").sum()).item()
 
     assert all == frame.select(
@@ -476,8 +476,8 @@ def validate_statistics(frame: pl.DataFrame) -> None:
         + pl.col("null_automated_decision").sum()
     ).row(0)[0]
 
-    # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
 
+def validate_csam_statistics(frame: pl.DataFrame) -> None:
     csam = frame.select(pl.col("csam").sum()).item()
 
     assert csam == frame.select(

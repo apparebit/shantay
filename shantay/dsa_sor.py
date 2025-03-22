@@ -6,7 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
-from .framing import validate_statistics
+from .framing import validate_csam_statistics, validate_general_statistics
 from .model import (
     CollectorProtocol, Coverage, Daily, Dataset, KEYWORDS_FILE,
     PLATFORMS_FILE, Release, STATISTICS_FILE
@@ -253,6 +253,14 @@ def automated_detection_and_decision_breakdown(prefix: str) -> list[pl.Expr]:
         .sum().alias(f"{prefix}automated_decision_not_automated"),
         pl.col("automated_decision").is_null()
         .sum().alias(f"{prefix}null_automated_decision"),
+    ]
+
+
+def content_type_breakdown(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        # FIXME
     ]
 
 
@@ -735,7 +743,8 @@ class StatementsOfReasons(Dataset[Daily]):
         for key, frame in collector.consume_frames():
             if key == "stats":
                 summary = frame
-                validate_statistics(frame)
+                validate_general_statistics(frame)
+                validate_csam_statistics(frame)
                 self.write_parquet(frame, root / STATISTICS_FILE)
             elif key == "outliers":
                 # Requires _DEBUG_OUTLIERS

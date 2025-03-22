@@ -11,7 +11,7 @@ import polars as pl
 
 from .framing import (
     collect_release_metadata, format_summary, is_row_within_period, one_column_summary,
-    validate_statistics
+    validate_csam_statistics, validate_general_statistics
 )
 from .metadata import Metadata
 from .model import KEYWORDS_FILE, PLATFORMS_FILE, ReleaseRange, STATISTICS_FILE, Storage
@@ -372,7 +372,8 @@ class Visualizer:
             Metadata.read_json(self._working_root).records
         )
         statistics = pl.read_parquet(self._working_root / STATISTICS_FILE)
-        validate_statistics(statistics)
+        validate_general_statistics(statistics)
+        validate_csam_statistics(statistics)
         keywords = pl.read_parquet(self._working_root / KEYWORDS_FILE)
         platforms = pl.read_parquet(self._working_root / PLATFORMS_FILE)
 
@@ -419,7 +420,10 @@ class Visualizer:
         )
 
     def render_heading(self) -> None:
-        self.html("<h1>The DSA Transparency Database: Protection of Minors</h1>")
+        self.html(
+            '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA'
+            'Transparency Database: Protection of Minors</h1>'
+        )
 
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
@@ -427,8 +431,13 @@ class Visualizer:
         self.markdown(format_summary(one_column_summary(self._statistics), as_markdown=True))
 
         self.html("<h2>Table Schemas</h2>")
+
+        remark = (
+            '\nAlso see [the official '
+            'documentation](https://transparency.dsa.ec.europa.eu/page/api-documentation)'
+        )
         self.markdown(
-            format_schema(SCHEMA, title="Source Data"),
+            format_schema(SCHEMA, title="Source Data") + remark,
             disclosure=True,
             render=not self._renderer.plain
         )
