@@ -17,6 +17,7 @@ from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
 from .schema import normalize_category
+from .util import scale_time
 
 
 def _parse_options(args: list[str]) -> Any:
@@ -190,21 +191,24 @@ def _run(args: list[str]) -> None:
 
     storage, coverage, metadata = get_configuration(options)
 
-    if options.task == "prepare" and 1 < options.multiproc:
+    if options.task in ("prepare", "analyze") and 1 < options.multiproc:
         processor = Multiprocessor(
             dataset=StatementsOfReasons(),
             storage=storage,
             coverage=coverage,
             metadata=metadata,
+            size=options.multiproc,
         )
-    else:
-        processor = Processor(
-            dataset=StatementsOfReasons(),
-            storage=storage,
-            coverage=coverage,
-            metadata=metadata,
-            progress=Progress()
-        )
+        processor.run(options.task)
+        return
+
+    processor = Processor(
+        dataset=StatementsOfReasons(),
+        storage=storage,
+        coverage=coverage,
+        metadata=metadata,
+        progress=Progress()
+    )
 
     result = processor.run(options.task)
 
@@ -214,7 +218,9 @@ def _run(args: list[str]) -> None:
         assert isinstance(result, pl.DataFrame)
         print("\n")
         print(format_summary(one_column_summary(result), as_markdown=False))
-        print()
+
+    v, u = scale_time(processor.runtime)
+    print(f"\nCompleted task {options.task} in {v:,.1f} {u}")
 
 
 def run(args: list[str]) -> int:
