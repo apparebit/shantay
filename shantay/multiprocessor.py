@@ -1,13 +1,17 @@
 from concurrent.futures import Future
 import logging
+import multiprocessing as mp
 import os
+import signal
+import sys
+from types import FrameType
 from typing import Any
 
+from .framing import collect_release_metadata, Collector
 from .metadata import Metadata
 from .model import Coverage, Dataset, Release, Storage
 from .pool import Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
-from .progress import NO_PROGRESS, Progress
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -21,17 +25,24 @@ class Multiprocessor[R: Release]:
         storage: Storage,
         coverage: Coverage[R],
         metadata: Metadata,
-        progress: Progress = NO_PROGRESS,
+        size: int,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
         self._metadata = metadata
-        self._cursor = coverage.first
-        self._pool = Pool()
+        self._metadata_frame = None
+
+        # Prepare processes daily releases, whereas analyze processes monthly ones.
+        self._task = None
+        self._cursor = None
+        self._last = None
+
+        self._register_handlers()
+        self._pool = Pool(size=size)
 
     def run(self, task: str) -> None:
-        assert task == "prepare"
+        self._task = task
 
         _logger.info('running multiprocessor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
@@ -41,40 +52,59 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
+        _logger.info('    key="pool.size",            value=%d', self._pool.size)
+
+        if task == "prepare":
+            cover = self._coverage
+        elif task == "analyze":
+            date_cover, metadata = collect_release_metadata(self._metadata.records)
+            cover = date_cover.to_release_range().to_monthly()
+            self._metadata_frame = metadata
+        else:
+            raise ValueError(f"invalid task {task}")
+
+        self._cursor = cover.first
+        self._last = cover.last
 
         for _ in range(self._pool.size):
-            if not self.prepare_release():
+            if not self._schedule_task():
                 break
 
-    def prepare_release(self) -> bool:
+    def _schedule_task(self) -> bool:
         release = self._next_release()
         if release is None:
             return False
 
         future = self._pool.submit(
-            prepare_on_worker,
-            self._dataset,
-            self._storage,
-            self._metadata.filter,
-            release,
+            run_on_worker,
+            task=self._task,
+            dataset=self._dataset,
+            storage=self._storage,
+            filter=self._metadata.filter,
+            release=release,
         )
 
         future.add_done_callback(self._done_with_task)
         return True
 
     def _next_release(self) -> None | Release:
-        while (
-            self._cursor <= self._coverage.last
-            and self._cursor in self._metadata
-            and extracted_data_exists(
-                self._storage.working_root,
-                self._cursor,
-                self._metadata
-            )
-        ):
-            self._cursor = self._cursor.next()
+        assert self._cursor is not None
+        assert self._last is not None
 
-        if self._coverage.last < self._cursor:
+        # For prepare, skip release if we already extracted the working data
+        if self._task == "prepare":
+            while (
+                self._cursor <= self._last
+                and self._cursor in self._metadata
+                and extracted_data_exists(
+                    self._storage.working_root,
+                    self._cursor,
+                    self._metadata
+                )
+            ):
+                self._cursor = self._cursor.next()
+
+        if self._last < self._cursor:
             return None
 
         release = self._cursor
@@ -83,34 +113,62 @@ class Multiprocessor[R: Release]:
 
     def _done_with_task(self, future: Future) -> bool:
         try:
-            record = future.result()
+            result = future.result()
         except:
-            pass
-        else:
-            release = record["release"]
-            del record["release"]
-            self._metadata[release] = record
+            return self._schedule_task()
+
+        if self._task == "prepare":
+            release = result["release"]
+            del result["release"]
+            self._metadata[release] = result
             self._metadata.write_json(self._storage.staging_root, sort_keys=True)
 
-        return self.prepare_release()
+        return self._schedule_task()
 
-    def stop(self) -> None:
-        self._pool.stop()
+    def stop(self) -> bool:
+        return self._pool.stop()
+
+    def _register_handlers(self) -> None:
+        assert self._pool is None
+        signal.signal(signal.SIGINT, self._handle_signal)
+        signal.signal(signal.SIGTERM, self._handle_signal)
+
+    def _handle_signal(self, signum: int, frame: None | FrameType) -> None:
+        signame = signal.strsignal(signum)
+        if signum not in (signal.SIGINT, signal.SIGTERM):
+            _logger.warning('unexpectedly received signal="%s"', signame)
+            return
+        elif self._pool is None:
+            _logger.warning(
+                'exiting process after receiving signal="%s", status="not running"',
+                signame
+            )
+            sys.exit(1)
+
+        if self._pool.is_stopping():
+            _logger.info('cancelling workers after receiving signal="%s"', signame)
+            return
+
+        _logger.info(
+            'terminating workers after receiving repeated signal="%s"', signame
+        )
+        for process in mp.active_children():
+            process.terminate()
+            process.join()
+
+        sys.exit(1)
 
 
-def prepare_on_worker[R: Release](
+def run_on_worker[R: Release](
+    task: str,
     dataset: Dataset[R],
     storage: Storage,
     filter: str,
     release: R,
-    tracker_index: int,
 ) -> Any:
     pid = os.getpid()
     coverage = Coverage(release, release, filter)
     metadata = Metadata(filter)
-
-    _logger.debug('preparing release %s in worker %d', release, pid)
-
     processor = Processor(
         dataset=dataset,
         storage=storage.isolate(pid),
@@ -118,11 +176,14 @@ def prepare_on_worker[R: Release](
         metadata=metadata,
         progress=WorkerProgress(),
     )
-    processor.prepare_batches(release)
 
-    record = metadata[release]
-    _logger.debug(
-        'prepared release %s with %d batches in worker %d',
-        release, record["batch_count"], pid,
-    )
-    return dict(release=release, **record)
+    _logger.debug('running task=%s, release="%s", worker=%d', task, release, pid)
+    if task == "prepare":
+        processor.prepare_batches(release)
+        record = metadata[release]
+        result = dict(release=release, **record)
+    else:
+        raise ValueError(f"invalid task {task}")
+
+    _logger.debug('finished running task=%s, release=%s, worker=%d', task, release, pid)
+    return result
