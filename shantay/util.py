@@ -58,6 +58,15 @@ def scale(value: float) -> tuple[float, str]:
         return value / 1_000_000_000, "giga"
 
 
+def scale_time(value: float) -> tuple[float, str]:
+    if value < 60:
+        return value, "sec"
+    elif value < 60 * 60:
+        return value / 60, "min"
+    else:
+        return value / (60 * 60), "hour"
+
+
 def to_markdown_table(
     *rows: Sequence[object],
     columns: Sequence[str],
