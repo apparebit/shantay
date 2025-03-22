@@ -126,6 +126,10 @@ class Pool:
         """Determine whether this pool is running, hence accepting tasks."""
         return self._state.is_running()
 
+    def is_stopping(self) -> bool:
+        """Determine whether this pool is stopping."""
+        return self._state.is_stopping()
+
     def submit(self, fn, /, *args, **kwargs) -> Future:
         """Submit a new task."""
         assert self._state.is_running(), "pool is not accepting new tasks"
@@ -138,6 +142,7 @@ class Pool:
         )
 
         future = self._executor.submit(fn, *args, **kwargs)
+        self._index_table.sync()
         self._pending_tasks += 1
         future.add_done_callback(self._on_task_completion)
         return future
@@ -157,15 +162,19 @@ class Pool:
             _logger.debug('shutting down process pool on finish')
             self._executor.shutdown()
 
-    def stop(self) -> None:
-        """Cancel running tasks, shutting down pool upon completion."""
+    def stop(self) -> bool:
+        """
+        Cancel running tasks, shutting down pool upon completion. This method
+        returns `True` if it initiated shut down and `False` if it was already
+        shutting down.
+        """
         if not self._state.set_stopping():
-            return
+            return False
 
         if self._pending_tasks == 0:
             _logger.debug('shutting down process pool on stop')
             self._executor.shutdown()
-            return
+            return True
 
         _logger.debug("stopping process pool by cancelling workers")
         for _ in range(self._size):
@@ -175,8 +184,19 @@ class Pool:
                 _logger.error('failed to write to cancel queue', exc_info=x)
                 break
 
+        return True
+
 
 class _PoolState:
+    """
+    A process pool is either running or in one of three states of shutting down.
+    In the finishing state, the pool does not accept new tasks but allows
+    current tasks to run to completion. In the stopping state, the pool does not
+    accept new tasks and uses the cooperative cancel protocol to stop current
+    tasks early. In the terminating state, the pool does not accept new tasks
+    and just terminates worker processes. Since termination is synchronous and,
+    ahem, terminal, the terminating state is not reified by this class.
+    """
     RUNNING = 1
     FINISHING = 2
     STOPPING = 3
@@ -186,12 +206,17 @@ class _PoolState:
         self._state = self.RUNNING
 
     def is_running(self) -> bool:
-        with self._lock:
-            return self._state == self.RUNNING
+        return self._is(self.RUNNING)
 
     def is_finishing(self) -> bool:
+        return self._is(self.FINISHING)
+
+    def is_stopping(self) -> bool:
+        return self._is(self.STOPPING)
+
+    def _is(self, state) -> bool:
         with self._lock:
-            return self._state == self.FINISHING
+            return self._state == state
 
     def set_finishing(self) -> bool:
         return self._set(self.FINISHING, self.RUNNING)
@@ -209,40 +234,69 @@ class _PoolState:
 
 class _IndexTable:
     """
-    A table mapping arbitrary IDs, such as process IDs, to indexes.
-
-    Looking up an ID that has not been seen before automatically establishes a
-    binding to the lowest unused index, which is returned again upon subsequent
-    lookups. Once that ID is not used anymore, it must be explicitly deleted,
-    lest the table runs out of available indexes.
-
-    The implementation uses a bit vector to track used indexes. Hence, both
-    operations are O(1) for reasonably sized tables (with, say, up to 64 or 128
-    entries). The implementation also is thread-safe.
+    A table mapping process IDs to indexes between 0 and some maximum size.
     """
+
     def __init__(self, size: int) -> None:
         self._lock = threading.Lock()
         self._table = {}
         self._slots = (1 << size) - 1
+        self._size = size  # do not change
+
+    @property
+    def size(self) -> int:
+        return self._size
+
+    def sync(self) -> None:
+        """
+        Synchronize this table with the list of known subprocesses. This method
+        removes any entry with a process ID that is not a child process. It does
+        *not* add any mappings.
+        """
+        with self._lock:
+            active = frozenset((p.pid for p in mp.active_children()))
+            # Copy the keys into a list since we may update the table.
+            for pid in list(self._table.keys()):
+                if pid not in active:
+                    self._deallocate(pid)
+
+    def setdefault(self, pid: int) -> int:
+        """
+        Look up the process ID. If the table does not already contain a mapping,
+        this method adds one using the next available index.
+        """
+        with self._lock:
+            return self._table[pid] if pid in self._table else self._allocate(pid)
+
+    def __contains__(self, pid: int) -> bool:
+        """Determine whether the PID is included in the table."""
+        with self._lock:
+            return pid in self._table
 
     def __getitem__(self, pid: int) -> int:
-        """Look up the ID's index, allocating an index for unfamiliar IDs."""
+        """Look up the ID's index."""
         with self._lock:
-            if not pid in self._table:
-                slots = self._slots
-                assert slots != 0, "already at capacity"
-
-                index = (slots & -slots).bit_length() - 1
-                self._slots &= ~(1 << index)
-                self._table[pid] = index
             return self._table[pid]
 
     def __delitem__(self, pid: int) -> None:
         """Delete an ID from this table, making the index available again."""
         with self._lock:
-            index = self._table[pid]
-            del self._table[pid]
-            self._slots |= (1 << index)
+            self._deallocate(pid)
+
+    def _allocate(self, pid: int) -> int:
+        slots = self._slots
+        assert slots != 0, "no index slot available"
+
+        index = (slots & -slots).bit_length() - 1
+        self._slots &= ~(1 << index)
+        self._table[pid] = index
+        return index
+
+    def _deallocate(self, pid: int) -> int:
+        index = self._table[pid]
+        del self._table[pid]
+        self._slots |= (1 << index)
+        return index
 
 
 def _manage_status(
@@ -266,7 +320,7 @@ def _manage_status(
                 handler.handle(args[0])
             continue
         if cmd in _PROGRESS:
-            getattr(trackers[index_table[pid]], cmd)(*args)
+            getattr(trackers[index_table.setdefault(pid)], cmd)(*args)
             continue
 
         _logger.error('worker %d sent invalid %s command', pid, cmd)
