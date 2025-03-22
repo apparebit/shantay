@@ -116,8 +116,6 @@ class Pool:
             initargs=(self._status_queue, self._cancel_queue, log_level),
         )
 
-        _logger.debug('running process pool with %d processes', size)
-
     @property
     def size(self) -> int:
         return self._size
@@ -135,23 +133,24 @@ class Pool:
         assert self._state.is_running(), "pool is not accepting new tasks"
 
         _logger.debug(
-            'adding %s.%s() to process pool with %d pending tasks',
+            'submit fn=%s.%s, pool=0x%x, pending_tasks=%d',
             fn.__module__,
             fn.__qualname__,
-            self._pending_tasks
+            id(self),
+            self._pending_tasks,
         )
 
         future = self._executor.submit(fn, *args, **kwargs)
-        self._index_table.sync()
-        self._pending_tasks += 1
         future.add_done_callback(self._on_task_completion)
+        self._pending_tasks += 1
+        self._index_table.sync()
         return future
 
     def _on_task_completion(self, future: Future) -> None:
         self._pending_tasks -= 1
         if self._pending_tasks == 0 and not self._state.is_running():
-            _logger.debug('shutting down process pool on task completion')
-            self._executor.shutdown()
+            _logger.debug('shut down pool=0x%x, cause="task completion"')
+            self._shutdown()
 
     def finish(self) -> None:
         """
@@ -159,8 +158,8 @@ class Pool:
         completion.
         """
         if self._state.set_finishing() and self._pending_tasks == 0:
-            _logger.debug('shutting down process pool on finish')
-            self._executor.shutdown()
+            _logger.debug('shut down pool=0x%x, cause="finish"', id(self))
+            self._shutdown()
 
     def stop(self) -> bool:
         """
@@ -172,19 +171,35 @@ class Pool:
             return False
 
         if self._pending_tasks == 0:
-            _logger.debug('shutting down process pool on stop')
-            self._executor.shutdown()
+            _logger.debug('shut down pool=0x%x, cause="stop"', id(self))
+            self._shutdown()
             return True
 
-        _logger.debug("stopping process pool by cancelling workers")
+        _logger.debug("cancel workers of pool=0x%x", id(self))
         for _ in range(self._size):
             try:
                 self._cancel_queue.put(None)
             except BaseException as x:
-                _logger.error('failed to write to cancel queue', exc_info=x)
+                _logger.error('failed writing to pool=0x%x queue="cancel"', id(self), exc_info=x)
                 break
 
         return True
+
+    def _shutdown(self) -> None:
+        # Shut down executor
+        self._executor.shutdown()
+
+        # With all workers gone, there won't be any status updates anymore.
+        try:
+            self._status_queue.put(None)
+        except BaseException as x:
+            _logger.error('failed to write to queue="status"', exc_info=x)
+
+    def done(self) -> None:
+        """Wait for this pool to be done."""
+        # The pool is done when the status manager thread joins
+        if threading.current_thread() != self._status_manager:
+            self._status_manager.join()
 
 
 class _PoolState:
@@ -308,10 +323,10 @@ def _manage_status(
         try:
             message = status_queue.get()
         except BaseException as x:
-            _logger.error('failed to read from status queue', exc_info=x)
+            _logger.error('failed to read from queue="status"', exc_info=x)
             break
         if message is None:
-            _logger.debug('stop listening for status updates')
+            _logger.debug('cancelled thread="status_manager"')
             break
 
         pid, cmd, *args = message
@@ -323,7 +338,7 @@ def _manage_status(
             getattr(trackers[index_table.setdefault(pid)], cmd)(*args)
             continue
 
-        _logger.error('worker %d sent invalid %s command', pid, cmd)
+        _logger.error('invalid command="%s", worker=%d', cmd, pid)
 
 
 # ======================================================================================
@@ -435,12 +450,9 @@ def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
     try:
         signal.get()
     except BaseException as x:
-        _logger.error(
-            "worker %d exiting after failing to read from cancellation queue",
-            _PID, exc_info=x
-        )
+        _logger.error('failed reading from queue="cancel", worker=%d', _PID, exc_info=x)
     else:
-        _logger.debug("worker %d received cancellation signal", _PID)
+        _logger.debug("cancelled worker=%d", _PID)
         _is_cancelled.set()
 
 
@@ -451,5 +463,5 @@ def _send_status_update(cmd: str, *args: Any) -> bool:
         _status_queue.put((_PID, cmd, *args))
         return True
     except BaseException as x:
-        _logger.error('worker %d failed writing to status queue', _PID, exc_info=x)
+        _logger.error('failed writing to queue="status", worker=%d', _PID, exc_info=x)
         return False
