@@ -1,5 +1,6 @@
 from collections import Counter
 import csv
+import datetime as dt
 import hashlib
 import logging
 from pathlib import Path
@@ -260,7 +261,27 @@ def content_type_breakdown(prefix: str) -> list[pl.Expr]:
     prefix = fix_prefix(prefix)
 
     return [
-        # FIXME
+        pl.col("content_type").list.len().max().alias(f"{prefix}max_content_types_per_row"),
+        pl.col("content_type").explode().drop_nulls().len().alias(f"{prefix}content_type_values"),
+        pl.col("content_type").is_null().not_().sum().alias(f"{prefix}rows_with_content_type"),
+        pl.col("content_type").is_null().sum().alias(f"{prefix}null_content_types"),
+
+        pl.col("content_type").list.contains("CONTENT_TYPE_APP")
+        .sum().alias(f"{prefix}content_type_app"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_AUDIO")
+        .sum().alias(f"{prefix}content_type_audio"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_IMAGE")
+        .sum().alias(f"{prefix}content_type_image"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_PRODUCT")
+        .sum().alias(f"{prefix}content_type_product"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_SYNTHETIC_MEDIA")
+        .sum().alias(f"{prefix}content_type_synthetic_media"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_TEXT")
+        .sum().alias(f"{prefix}content_type_text"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_VIDEO")
+        .sum().alias(f"{prefix}content_type_video"),
+        pl.col("content_type").list.contains("CONTENT_TYPE_OTHER")
+        .sum().alias(f"{prefix}content_type_other"),
     ]
 
 
@@ -606,6 +627,9 @@ class StatementsOfReasons(Dataset[Daily]):
             # Just CSAM
             pl.len().alias("csam"),
 
+            # Content types
+            *content_type_breakdown("csam_"),
+
             # Decision combinations
             *decision_type_breakdown("csam_"),
             *decision_visibility_breakdown("csam_"),
@@ -643,6 +667,9 @@ class StatementsOfReasons(Dataset[Daily]):
             # Stats about archival data
             pl.lit(total_rows).alias("total_rows"),
             pl.lit(total_rows_with_keywords).alias("total_rows_with_keywords"),
+
+            # Content types
+            *content_type_breakdown(""),
 
             # Stats about batching
             pl.lit(batch_count).alias("batch_count"),
@@ -689,6 +716,8 @@ class StatementsOfReasons(Dataset[Daily]):
             .cast(pl.UInt64),
             pl.col("batch_count").cast(pl.UInt64),
             pl.col("max_keywords_per_row").cast(pl.UInt32),
+        ).with_columns(
+            pl.col("start_date", "end_date").cast(dt.date)
         )
 
         stats = stats.hstack(csam)

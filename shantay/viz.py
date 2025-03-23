@@ -428,10 +428,11 @@ class Visualizer:
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
         self.markdown(self._summary.markdown())
-        self.markdown(format_summary(one_column_summary(self._statistics), as_markdown=True))
+        cover, frame = one_column_summary(self._statistics)
+        self.markdown(format_summary(cover, as_markdown=True))
+        self.markdown(format_summary(frame, as_markdown=True))
 
         self.html("<h2>Table Schemas</h2>")
-
         remark = (
             '\nAlso see [the official '
             'documentation](https://transparency.dsa.ec.europa.eu/page/api-documentation)'
@@ -480,6 +481,7 @@ class Visualizer:
             self.daily_sor_percentage_minor_prot(rolling_mean_days=7),
             self.daily_keywords_percent_minor_prot(),
             self.daily_keywords_percent_minor_prot(rolling_mean_days=7),
+            self.monthly_content_types(prefix=""),
             self.monthly_platform_counts_minor_prot(),
             self.monthly_keyword_usage_minor_prot(),
         ).resolve_scale(
@@ -506,6 +508,7 @@ class Visualizer:
 
         self.chart("csam-timelines", alt.vconcat(
             self.monthly_csam_sors(),
+            self.monthly_content_types(prefix="csam_"),
             self.monthly_decision_grounds_for_csam(),
             self.monthly_decision_kinds_for_csam(),
             self.monthly_visibility_changes_for_csam(),
@@ -921,6 +924,26 @@ class Visualizer:
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
         ).interactive()
+
+    def monthly_content_types(self, prefix: str) -> alt.Chart:
+        table = self.extract_table("Content Type", {
+            f"{prefix}content_type_app": "App",
+            f"{prefix}content_type_audio": "Audio",
+            f"{prefix}content_type_image": "Image",
+            f"{prefix}content_type_product": "Product",
+            f"{prefix}content_type_synthetic_media": "Synthetic Media",
+            f"{prefix}content_type_text": "Text",
+            f"{prefix}content_type_video": "Video",
+            f"{prefix}content_type_other": "Other",
+        })
+
+        return self.create_chart(
+            "Content Types for CSAM - Monthly Counts",
+            table,
+            variable="Content Type",
+            domain=["Audio", "Image", "Product", "Synthetic Media", "Text", "Video", "Other"],
+            range=[LIGHT_BLUE, BLUE, ORANGE, RED, PINK, PURPLE, GRAY],
+        )
 
     def monthly_decision_grounds_for_csam(self) -> alt.Chart | alt.LayerChart:
         assert 0 == self._statistics.select(

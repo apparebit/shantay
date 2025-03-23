@@ -238,7 +238,9 @@ def _run(args: list[str]) -> None:
         elif options.task == "analyze":
             assert isinstance(result, pl.DataFrame)
             print("\n")
-            print(format_summary(one_column_summary(result), as_markdown=False))
+            cover, frame = one_column_summary(result)
+            print(format_summary(cover, as_markdown=False))
+            print(format_summary(frame, as_markdown=False))
 
     v, u = scale_time(processor.runtime)
     print(f"\nCompleted task {options.task} in {v:,.1f} {u}")
