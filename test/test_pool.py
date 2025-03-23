@@ -79,28 +79,23 @@ class TestPool(unittest.TestCase):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)
 
             offset = -1
-            for offset, line in enumerate(reversed(lines)):
-                if 'running process pool with 2 processes' in line:
+            for offset, line in enumerate(lines):
+                if 'submit fn=' in line:
                     break
             self.assertNotEqual(offset, -1)
-            offset = len(lines) - offset - 1
-            self.assertTrue(offset + 8 <= len(lines))
-            lines = lines[offset:offset + 8]
-            self.assertIn(
-                "adding test.test_pool.task1() to process pool with 0 pending tasks",
-                lines[1]
-            )
-            self.assertIn(
-                "adding test.test_pool.task2() to process pool with 1 pending tasks",
-                lines[2]
-            )
+            self.assertTrue(offset + 7 <= len(lines))
+            lines = lines[offset:offset + 7]
+            self.assertIn('submit fn="test.test_pool.task1", pool=0x', lines[0])
+            self.assertIn('pending-tasks=0', lines[0])
+            self.assertIn('submit fn="test.test_pool.task2", pool=0x', lines[1])
+            self.assertIn('pending-tasks=1', lines[1])
 
             # The order of the next four lines is largely non-deterministic,
             # except that task1 or task2 must run before task3 can be added and
             # task3 must be added before it can run. We test for these
             # invariants.
             run1 = run2 = add3 = run3 = -1
-            for index in range(3, 7):
+            for index in range(2, 6):
                 line = lines[index]
                 if 'task1 processes "1"' in line and run1 == -1:
                     run1 = index
@@ -108,13 +103,19 @@ class TestPool(unittest.TestCase):
                     run2 = index
                 elif 'task3 processes "3"' in line and run3 == -1:
                     run3 = index
-                elif 'adding test.test_pool.task3() to process pool' in line and add3 == -1:
+                elif 'submit fn="test.test_pool.task3", pool=0x' in line and add3 == -1:
                     add3 = index
+
+            self.assertNotEqual(run1, -1)
+            self.assertNotEqual(run2, -1)
+            self.assertNotEqual(run3, -1)
+            self.assertNotEqual(add3, -1)
 
             self.assertTrue(run1 < add3 or run2 < add3)
             self.assertTrue(add3 < run3)
-            self.assertTrue(run1 == 3 or run2 == 3)
-            self.assertTrue(add3 == 4 or add3 == 5)
-            self.assertTrue(run3 == 5 or run3 == 6)
+            self.assertTrue(run1 == 2 or run2 == 2)
+            self.assertTrue(add3 == 3 or add3 == 4)
+            self.assertTrue(run3 == 4 or run3 == 5)
 
-            self.assertIn("shutting down process pool on finish", lines[7])
+            self.assertIn('shut down pool=0x', lines[6])
+            self.assertIn('cause="finish"', lines[6])
