@@ -21,6 +21,7 @@ import polars as pl
 
 from .metadata import FullMetadataEntry
 from .model import ConfigError, DateRange, Period, QueryExpression, Release
+from .util import scale_time
 
 
 def collect_release_metadata(
@@ -155,6 +156,25 @@ def _percent(*columns: str) -> pl.Expr:
     ).alias(f"{numerator}_pct")
 
 
+class space_bar:
+    """
+    Generate a null value that has a unique name comprising spaces and one
+    trailing blank Braille pattern. Hence the name can be used for a column and,
+    after conversion from wide to long frame, also serve as a seemingly empty
+    cell.
+    """
+
+    def __init__(self) -> None:
+        self._width = -1
+
+    def string(self) -> str:
+        self._width += 1
+        return (" " * self._width) + "\u2800"
+
+    def __call__(self) -> pl.Expr:
+        return pl.lit(None).alias(self.string())
+
+
 def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Summarize the given data frame. This function expects a statistics data
@@ -174,6 +194,7 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         column_names=["Value"],
     )
 
+    spacer = space_bar()
     frame = frame.with_columns(
         pl.lit(1).alias("fake")
     ).group_by("fake").agg(
@@ -181,18 +202,24 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         # distinct names consisting of Unicode spaces.
         pl.col("total_rows").sum(),
         pl.col("total_rows_with_keywords").sum(),
-        pl.lit(None).alias(" \u2800"),
+        spacer(),
         pl.col("batch_count").sum(),
-        pl.lit(None).alias("  \u2800"),
+        spacer(),
         pl.col("rows").sum(),
         pl.col("keywords").sum(),
         pl.col("rows_with_keywords").sum(),
         pl.col("max_keywords_per_row").max(),
-        pl.lit(None).alias("   \u2800"),
+        spacer(),
+        ((pl.col("mean_moderation_delay") * pl.col("rows")).sum() / pl.col("rows").sum())
+        .alias("mean_moderation_delay"),
+        ((pl.col("mean_reporting_delay") * pl.col("rows")).sum() / pl.col("rows").sum())
+        .alias("mean_reporting_delay"),
+        spacer(),
         pl.col("max_content_types_per_row").max(),
         pl.col("content_type_values").sum(),
         pl.col("rows_with_content_type").sum(),
         pl.col("null_content_types").sum(),
+        spacer(),
         pl.col("content_type_app").sum(),
         pl.col("content_type_audio").sum(),
         pl.col("content_type_image").sum(),
@@ -201,7 +228,7 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("content_type_text").sum(),
         pl.col("content_type_video").sum(),
         pl.col("content_type_other").sum(),
-        pl.lit(None).alias("    \u2800"),
+        spacer(),
         pl.col("null_decision").sum(),
         pl.col("visibility_decision_only").sum(),
         pl.col("monetary_decision_only").sum(),
@@ -218,12 +245,12 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("visibility_monetary_account_decision").sum(),
         pl.col("visibility_monetary_provision_decision").sum(),
         pl.col("all_kinds_decision").sum(),
-        pl.lit(None).alias("     \u2800"),
+        spacer(),
         pl.col("max_visibility_per_row").max(),
         pl.col("visibility_values").sum(),
         pl.col("rows_with_visibility").sum(),
         pl.col("null_visibility_decision").sum(),
-        pl.lit(None).alias("      \u2800"),
+        spacer(),
         pl.col("content_removed").sum(),
         pl.col("content_disabled").sum(),
         pl.col("content_demoted").sum(),
@@ -231,18 +258,18 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("content_interaction_restricted").sum(),
         pl.col("content_labeled").sum(),
         pl.col("other_visibility").sum(),
-        pl.lit(None).alias("       \u2800"),
+        spacer(),
         pl.col("monetary_suspension").sum(),
         pl.col("monetary_termination").sum(),
         pl.col("monetary_other").sum(),
         pl.col("null_monetary_decision").sum(),
-        pl.lit(None).alias("        \u2800"),
+        spacer(),
         pl.col("provision_partial_suspension").sum(),
         pl.col("provision_total_suspension").sum(),
         pl.col("provision_partial_termination").sum(),
         pl.col("provision_total_termination").sum(),
         pl.col("null_provision_decision").sum(),
-        pl.lit(None).alias("         \u2800"),
+        spacer(),
         pl.col("account_suspended").sum(),
         pl.col("account_suspended_null_date").sum(),
         pl.col("account_suspended_until_date").sum(),
@@ -254,24 +281,24 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("account_terminated_null_date").sum(),
         pl.col("account_terminated_until_date").sum(),
         pl.col("null_account_decision").sum(),
-        pl.lit(None).alias("          \u2800"),
+        spacer(),
         pl.col("account_type_business").sum(),
         pl.col("account_type_private").sum(),
         pl.col("null_account_type").sum(),
-        pl.lit(None).alias("           \u2800"),
+        spacer(),
         pl.col("illegal_content").sum(),
         pl.col("incompatible_content").sum(),
         pl.col("null_decision_ground").sum(),
         pl.col("incompatible_content_illegal_yes").sum(),
         pl.col("incompatible_content_illegal_no").sum(),
         pl.col("null_incompatible_content_illegal").sum(),
-        pl.lit(None).alias("            \u2800"),
+        spacer(),
         pl.col("source_article_16").sum(),
         pl.col("source_trusted_flagger").sum(),
         pl.col("source_other_notification").sum(),
         pl.col("source_voluntary").sum(),
         pl.col("null_source_type").sum(),
-        pl.lit(None).alias("             \u2800"),
+        spacer(),
         pl.col("automated_detection_yes").sum(),
         pl.col("automated_detection_no").sum(),
         pl.col("null_automated_detection").sum(),
@@ -279,14 +306,20 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("automated_decision_partially").sum(),
         pl.col("automated_decision_not_automated").sum(),
         pl.col("null_automated_decision").sum(),
-        pl.lit(None).alias("              \u2800"),
+        spacer(),
         pl.col("csam").sum(),
         _percent("csam", "rows"),
-        pl.lit(None).alias("               \u2800"),
+        spacer(),
+        ((pl.col("csam_mean_moderation_delay") * pl.col("csam")).sum() / pl.col("csam").sum())
+        .alias("csam_mean_moderation_delay"),
+        ((pl.col("csam_mean_reporting_delay") * pl.col("csam")).sum() / pl.col("csam").sum())
+        .alias("csam_mean_reporting_delay"),
+        spacer(),
         pl.col("csam_max_content_types_per_row").max(),
         pl.col("csam_content_type_values").sum(),
         pl.col("csam_rows_with_content_type").sum(),
         pl.col("csam_null_content_types").sum(),
+        spacer(),
         pl.col("csam_content_type_app").sum(),
         pl.col("csam_content_type_audio").sum(),
         pl.col("csam_content_type_image").sum(),
@@ -295,7 +328,7 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("csam_content_type_text").sum(),
         pl.col("csam_content_type_video").sum(),
         pl.col("csam_content_type_other").sum(),
-        pl.lit(None).alias("                \u2800"),
+        spacer(),
         pl.col("csam_null_decision").sum(),
         pl.col("csam_visibility_decision_only").sum(),
         pl.col("csam_monetary_decision_only").sum(),
@@ -312,12 +345,12 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("csam_visibility_monetary_account_decision").sum(),
         pl.col("csam_visibility_monetary_provision_decision").sum(),
         pl.col("csam_all_kinds_decision").sum(),
-        pl.lit(None).alias("                 \u2800"),
+        spacer(),
         pl.col("csam_max_visibility_per_row").max(),
         pl.col("csam_visibility_values").sum(),
         pl.col("csam_rows_with_visibility").sum(),
         pl.col("csam_null_visibility_decision").sum(),
-        pl.lit(None).alias("                  \u2800"),
+        spacer(),
         pl.col("csam_content_removed").sum(),
         pl.col("csam_content_disabled").sum(),
         pl.col("csam_content_demoted").sum(),
@@ -325,18 +358,18 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("csam_content_interaction_restricted").sum(),
         pl.col("csam_content_labeled").sum(),
         pl.col("csam_other_visibility").sum(),
-        pl.lit(None).alias("                   \u2800"),
+        spacer(),
         pl.col("csam_monetary_suspension").sum(),
         pl.col("csam_monetary_termination").sum(),
         pl.col("csam_monetary_other").sum(),
         pl.col("csam_null_monetary_decision").sum(),
-        pl.lit(None).alias("                    \u2800"),
+        spacer(),
         pl.col("csam_provision_partial_suspension").sum(),
         pl.col("csam_provision_total_suspension").sum(),
         pl.col("csam_provision_partial_termination").sum(),
         pl.col("csam_provision_total_termination").sum(),
         pl.col("csam_null_provision_decision").sum(),
-        pl.lit(None).alias("                     \u2800"),
+        spacer(),
         pl.col("csam_account_suspended").sum(),
         pl.col("csam_account_suspended_null_date").sum(),
         pl.col("csam_account_suspended_until_date").sum(),
@@ -344,24 +377,24 @@ def one_column_summary(frame: pl.DataFrame) -> tuple[pl.DataFrame, pl.DataFrame]
         pl.col("csam_account_terminated_null_date").sum(),
         pl.col("csam_account_terminated_until_date").sum(),
         pl.col("csam_null_account_decision").sum(),
-        pl.lit(None).alias("                      \u2800"),
+        spacer(),
         pl.col("csam_account_type_business").sum(),
         pl.col("csam_account_type_private").sum(),
         pl.col("csam_null_account_type").sum(),
-        pl.lit(None).alias("                       \u2800"),
+        spacer(),
         pl.col("csam_illegal_content").sum(),
         pl.col("csam_incompatible_content").sum(),
         pl.col("csam_null_decision_ground").sum(),
         pl.col("csam_incompatible_content_illegal_yes").sum(),
         pl.col("csam_incompatible_content_illegal_no").sum(),
         pl.col("csam_null_incompatible_content_illegal").sum(),
-        pl.lit(None).alias("                        \u2800"),
+        spacer(),
         pl.col("csam_source_article_16").sum(),
         pl.col("csam_source_trusted_flagger").sum(),
         pl.col("csam_source_other_notification").sum(),
         pl.col("csam_source_voluntary").sum(),
         pl.col("csam_null_source_type").sum(),
-        pl.lit(None).alias("                         \u2800"),
+        spacer(),
         pl.col("csam_automated_detection_yes").sum(),
         pl.col("csam_automated_detection_no").sum(),
         pl.col("csam_null_automated_detection").sum(),
@@ -638,7 +671,7 @@ def format_summary(frame: pl.DataFrame, as_markdown: bool = True) -> str:
     rows = []
 
     var_width = frame.select(pl.col("Variable").str.len_chars().max()).item()
-    val_width = min(10, int(frame.select(pl.col("Value").log10().max()).item() + 1))
+    val_width = int(frame.select(pl.col("Value").log10().max()).item() + 1)
     val_width += val_width // 3
 
     for variable, value in frame.rows():
@@ -649,6 +682,9 @@ def format_summary(frame: pl.DataFrame, as_markdown: bool = True) -> str:
             value = "\u2800" if as_markdown else " "
         elif "pct" in variable:
             value = f"{value:.3f}"
+        elif "delay" in variable:
+            v, u = scale_time(value / 1_000)
+            value = f"{v:.2f} {u}s"
         elif isinstance(value, dt.date):
             value = value.isoformat()
         else:

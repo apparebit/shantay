@@ -63,8 +63,10 @@ def scale_time(value: float) -> tuple[float, str]:
         return value, "sec"
     elif value < 60 * 60:
         return value / 60, "min"
-    else:
+    elif value < 24 * 60 * 60:
         return value / (60 * 60), "hour"
+    else:
+        return value / (24* 60 * 60), "day"
 
 
 def to_markdown_table(

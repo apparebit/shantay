@@ -30,6 +30,19 @@ def fix_prefix(prefix: str) -> str:
     return prefix
 
 
+def mean_timing(prefix: str) -> list[pl.Expr]:
+    prefix = fix_prefix(prefix)
+
+    return [
+        (pl.col("application_date").dt.date() - pl.col("content_date").dt.date())
+        .mean()
+        .alias(f"{prefix}mean_moderation_delay"),
+        (pl.col("created_at").dt.date() - pl.col("application_date").dt.date())
+        .mean()
+        .alias(f"{prefix}mean_reporting_delay"),
+    ]
+
+
 def decision_type_breakdown(prefix: str) -> list[pl.Expr]:
     prefix = fix_prefix(prefix)
     return [
@@ -627,7 +640,8 @@ class StatementsOfReasons(Dataset[Daily]):
             # Just CSAM
             pl.len().alias("csam"),
 
-            # Content types
+            # Timing, content types
+            *mean_timing("csam_"),
             *content_type_breakdown("csam_"),
 
             # Decision combinations
@@ -668,7 +682,8 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.lit(total_rows).alias("total_rows"),
             pl.lit(total_rows_with_keywords).alias("total_rows_with_keywords"),
 
-            # Content types
+            # Timing, content types
+            *mean_timing(""),
             *content_type_breakdown(""),
 
             # Stats about batching

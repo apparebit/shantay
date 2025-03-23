@@ -481,6 +481,7 @@ class Visualizer:
             self.daily_sor_percentage_minor_prot(rolling_mean_days=7),
             self.daily_keywords_percent_minor_prot(),
             self.daily_keywords_percent_minor_prot(rolling_mean_days=7),
+            self.monthly_delays(),
             self.monthly_content_types(prefix=""),
             self.monthly_platform_counts_minor_prot(),
             self.monthly_keyword_usage_minor_prot(),
@@ -508,6 +509,7 @@ class Visualizer:
 
         self.chart("csam-timelines", alt.vconcat(
             self.monthly_csam_sors(),
+            self.monthly_delays(prefix="csam_", label=" for CSAM"),
             self.monthly_content_types(prefix="csam_"),
             self.monthly_decision_grounds_for_csam(),
             self.monthly_decision_kinds_for_csam(),
@@ -612,6 +614,30 @@ class Visualizer:
                 height=TIMELINE_HEIGHT,
                 width=TIMELINE_WIDTH
             ).interactive()
+        )
+
+    def monthly_delays(self, prefix: str = "", label: str = "") -> alt.Chart:
+        def trace(c: str) -> str:
+            print(f"#column {c}")
+            return c
+
+
+        table = self._statistics.with_columns(
+            (pl.col(*(trace(c) for c in self._statistics.columns if c.endswith("_delay")))
+            / (24 * 60 * 60 * 1_000)).cast(pl.Float64)
+        )
+        table = self.extract_table3(table, "Mean Delay", {
+            f"{prefix}mean_moderation_delay": "Moderation",
+            f"{prefix}mean_reporting_delay": "Reporting",
+        })
+
+        return self.create_chart(
+            f"Mean Moderation & Reporting Delays{label} - Monthly Durations",
+            table,
+            variable="Mean Delay",
+            var_label="Days",
+            domain=["Moderation", "Reporting"],
+            range=[LIGHT_BLUE, RED],
         )
 
     def daily_keywords_percent_minor_prot(
@@ -881,8 +907,18 @@ class Visualizer:
             ).interactive()
         )
 
-    def extract_table(self, variable: str, columns: dict[str, str]) -> pl.DataFrame:
-        return self._statistics.group_by(
+    def extract_table2(self, variable: str, columns: dict[str, str]) -> pl.DataFrame:
+        """Extract a long table from statistics."""
+        return self.extract_table3(self._statistics, variable, columns)
+
+    def extract_table3(
+        self,
+        frame: pl.DataFrame,
+        variable: str,
+        columns: dict[str, str],
+    ) -> pl.DataFrame:
+        """Extract a long table from an arbitrary data frame."""
+        return frame.group_by(
             pl.col("start_date").dt.year().alias("year"),
             pl.col("start_date").dt.month().alias("month"),
         ).agg(
@@ -904,10 +940,15 @@ class Visualizer:
         self,
         title: str,
         table: pl.DataFrame,
+        *,
         variable: str,
         domain: list[str],
-        range: list[str]
+        range: list[str],
+        var_label: str = "",
     ) -> alt.Chart:
+        if not var_label:
+            var_label = "Statements of Reasons"
+
         return alt.Chart(
             table, title=title,
         ).mark_bar(
@@ -915,7 +956,7 @@ class Visualizer:
         ).encode(
             alt.X("start_date:T").title("Month"),
             alt.X2("end_date:T").title(""),
-            alt.Y("sum(Count):Q").title("Statements of Reasons"),
+            alt.Y("sum(Count):Q").title(var_label),
             alt.Color(f"{variable}:N").scale(
                 domain=domain,
                 range=range,
@@ -926,7 +967,7 @@ class Visualizer:
         ).interactive()
 
     def monthly_content_types(self, prefix: str) -> alt.Chart:
-        table = self.extract_table("Content Type", {
+        table = self.extract_table2("Content Type", {
             f"{prefix}content_type_app": "App",
             f"{prefix}content_type_audio": "Audio",
             f"{prefix}content_type_image": "Image",
@@ -1006,7 +1047,7 @@ class Visualizer:
         return chart
 
     def monthly_decision_kinds_for_csam(self) -> alt.Chart:
-        table = self.extract_table("Decision Kind", {
+        table = self.extract_table2("Decision Kind", {
             "csam_visibility_decision_only": "Visibility",
             "csam_provision_decision_only": "Provision",
             "csam_account_decision_only": "Account",
@@ -1030,7 +1071,7 @@ class Visualizer:
             "csam_null_provision_decision": "—none—",
         }
 
-        table = self.extract_table("Provision Decision", provision_decision_columns)
+        table = self.extract_table2("Provision Decision", provision_decision_columns)
         return self.create_chart(
             "Provision Decisions for CSAM - Monthly Counts",
             table,
@@ -1040,7 +1081,7 @@ class Visualizer:
         )
 
     def monthly_monetary_decisions_for_csam(self) -> alt.Chart | alt.LayerChart:
-        table = self.extract_table("Monetary Decision", {
+        table = self.extract_table2("Monetary Decision", {
             "csam_monetary_suspension": "Suspended",
             "csam_monetary_termination": "Terminated",
             "csam_monetary_other": "Other",
@@ -1056,7 +1097,7 @@ class Visualizer:
         )
 
     def monthly_account_decisions_for_csam(self) -> alt.Chart | alt.LayerChart:
-        table = self.extract_table("Account Decision", {
+        table = self.extract_table2("Account Decision", {
             "csam_account_suspended": "Suspended",
             "csam_account_terminated": "Terminated",
             "csam_null_account_decision": "—none—",
@@ -1071,7 +1112,7 @@ class Visualizer:
         )
 
     def monthly_visibility_changes_for_csam(self) -> alt.Chart | alt.LayerChart:
-        table = self.extract_table("Visibility Decision", {
+        table = self.extract_table2("Visibility Decision", {
             "csam_content_removed": "Removed",
             "csam_content_disabled": "Disabled",
             "csam_content_demoted": "Demoted",
@@ -1091,7 +1132,7 @@ class Visualizer:
         )
 
     def monthly_automated_detection_for_csam(self) -> alt.Chart:
-        table = self.extract_table("Automated Detection", {
+        table = self.extract_table2("Automated Detection", {
             "csam_automated_detection_yes": "Automated",
             "csam_automated_detection_no": "Not Automated",
             "csam_null_automated_detection": "—none—",
@@ -1106,7 +1147,7 @@ class Visualizer:
         )
 
     def monthly_automated_decision_for_csam(self) -> alt.Chart:
-        table = self.extract_table("Automated Decision", {
+        table = self.extract_table2("Automated Decision", {
             "csam_automated_decision_fully": "Fully Automated",
             "csam_automated_decision_partially": "Partially Automated",
             "csam_automated_decision_not_automated": "Not Automated",

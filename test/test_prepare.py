@@ -60,6 +60,7 @@ class TestPrepare(unittest.TestCase):
         self.assertEqual(data1, data2, "file contents must be equal")
 
     def test_extraction(self):
+        self.maxDiff = None # When something goes wrong, we want to see *all* about it
         with self.subTest("set up metadata, runner, and release"):
             dataset = StatementsOfReasons()
             storage = Storage(
@@ -252,6 +253,8 @@ class TestPrepare(unittest.TestCase):
                             "csam_incompatible_content_illegal_yes": [1],
                             "csam_max_content_types_per_row": [1],
                             "csam_max_visibility_per_row": [1],
+                            "csam_mean_moderation_delay": [dt.timedelta(0)],
+                            "csam_mean_reporting_delay": [dt.timedelta(0)],
                             "csam_monetary_account_decision": [0],
                             "csam_monetary_decision_only": [0],
                             "csam_monetary_decision_only": [0],
@@ -302,6 +305,8 @@ class TestPrepare(unittest.TestCase):
                             "max_content_types_per_row": [2],
                             "max_keywords_per_row": [1],
                             "max_visibility_per_row": [1],
+                            "mean_moderation_delay": [7_206_776_470],
+                            "mean_reporting_delay": [91_482_352],
                             "monetary_account_decision": [0],
                             "monetary_decision_only": [0],
                             "monetary_other": [0],
