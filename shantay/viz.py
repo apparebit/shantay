@@ -421,8 +421,8 @@ class Visualizer:
 
     def render_heading(self) -> None:
         self.html(
-            '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA'
-            'Transparency Database: Protection of Minors</h1>'
+            '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA '
+            'Transparency Database</a>: Protection of Minors</h1>'
         )
 
     def render_overview(self) -> None:
