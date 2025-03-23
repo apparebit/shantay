@@ -162,6 +162,38 @@ class Metadata[R: Release]:
         return f"Metadata({self._filter}, {len(self._releases):,} releases)"
 
 
+def read_digest_file(directory: Path) -> None | dict[str, str]:
+    """Read the text file with a list of batchfile digests."""
+    digests = {}
+
+    try:
+        with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
+            for line in file.readlines():
+                digest, batchfile = line.strip().split(" ")
+                digests[batchfile] = digest
+        return digests
+    except FileNotFoundError:
+        return None
+
+
+def write_digest_file(directory: Path, digests: dict[str, str]) -> None:
+    """Write the text file with the list of batchfile digests."""
+    path = directory / DIGEST_FILE
+    tmp = path.with_suffix(".tmp.txt")
+
+    with open(tmp, mode="w", encoding="utf8") as file:
+        for batchfile, digest in digests.items():
+            file.write(f"{digest} {batchfile}\n")
+
+    tmp.replace(path)
+
+
+def compute_digest(path: Path) -> str:
+    """Compute the batchfile digest."""
+    with open(path, mode="rb") as file:
+        return hashlib.file_digest(file, "sha256").hexdigest()
+
+
 def fsck(
     root: Path,
     *,
@@ -330,7 +362,7 @@ class _Fsck:
         batches = self.scandir(day, "*.parquet", _BATCH_FILE)
         self.check_children(day, batches, 0, 99_999, lambda n: int(n[-13:-8]))
 
-        expected_digests = self.read_digest_file(day)
+        expected_digests = read_digest_file(day)
         actual_digests = {}
 
         batch_no = 0
@@ -340,7 +372,7 @@ class _Fsck:
 
             batch_no += 1
 
-            actual_digests[batch.name] = actual = self.compute_digest(batch)
+            actual_digests[batch.name] = actual = compute_digest(batch)
             if expected_digests is None:
                 pass
             elif batch.name not in expected_digests:
@@ -355,14 +387,14 @@ class _Fsck:
 
         if error_count == len(self._errors) and expected_digests is None:
             # Only write a new digest file if there were no errors and no file.
-            self.write_digest_file(day, actual_digests)
+            write_digest_file(day, actual_digests)
 
         if self._metadata._filter is None and 0 < batch_no:
             self.update_filter(f"{day}/*.parquet")
 
         digest_of_digests = None
         if (day / DIGEST_FILE).exists():
-            digest_of_digests = self.compute_digest(day / DIGEST_FILE)
+            digest_of_digests = compute_digest(day / DIGEST_FILE)
 
         year_no = int(day.parent.parent.name)
         month_no = int(day.parent.name)
@@ -370,35 +402,6 @@ class _Fsck:
         self.update_batch_count(year_no, month_no, day_no, batch_no, digest_of_digests)
 
         _logger.info('checked batch-count=%d directory="%s"', batch_no, day)
-
-    def read_digest_file(self, directory: Path) -> None | dict[str, str]:
-        """Read the text file with a list of batchfile digests."""
-        digests = {}
-
-        try:
-            with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
-                for line in file.readlines():
-                    digest, batchfile = line.strip().split(" ")
-                    digests[batchfile] = digest
-            return digests
-        except FileNotFoundError:
-            return None
-
-    def write_digest_file(self, directory: Path, digests: dict[str, str]) -> None:
-        """Write the text file with the list of batchfile digests."""
-        path = directory / DIGEST_FILE
-        tmp = path.with_suffix(".tmp.txt")
-
-        with open(tmp, mode="w", encoding="utf8") as file:
-            for batchfile, digest in digests.items():
-                file.write(f"{digest} {batchfile}\n")
-
-        tmp.replace(path)
-
-    def compute_digest(self, path: Path) -> str:
-        """Compute the batchfile digest."""
-        with open(path, mode="rb") as file:
-            return hashlib.file_digest(file, "sha256").hexdigest()
 
     def update_filter(self, glob: str) -> None:
         """
@@ -451,7 +454,10 @@ class _Fsck:
         ]:
             if key in entry:
                 if entry[key] != value:
-                    self.error(f'{key} is {value}, but was {entry["batch_count"]}')
+                    self.error(
+                        f'metadata for {year}-{month:02}-{day:02} has field {key} '
+                        f'with {value}, but was {entry[key]}'
+                    )
             else:
                 entry[key] = value
 

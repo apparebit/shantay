@@ -12,7 +12,7 @@ import zipfile
 import polars as pl
 
 from .__init__ import __version__
-from .metadata import Metadata
+from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
     MetadataEntry, Release, Storage
@@ -279,7 +279,9 @@ class Processor[R: Release]:
                 file.write(f"{digest} {release.id}-{index:05}.parquet\n")
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
-        self._metadata[release] = cast(MetadataEntry, full_counters)
+        meta_data_entry = cast(MetadataEntry, dict(full_counters))
+        meta_data_entry["sha256"] = compute_digest(digest_file)
+        self._metadata[release] = meta_data_entry
         self._metadata.write_json(self._storage.staging_root)
         _logger.info(
             'extracted batch-count=%d, file="%s"', batch_count, self._dataset.archive_name(release)
