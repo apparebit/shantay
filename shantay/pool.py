@@ -116,6 +116,8 @@ class Pool:
             initargs=(self._status_queue, self._cancel_queue, log_level),
         )
 
+        self._done = threading.Event()
+
     @property
     def size(self) -> int:
         return self._size
@@ -149,7 +151,7 @@ class Pool:
     def _on_task_completion(self, future: Future) -> None:
         self._pending_tasks -= 1
         if self._pending_tasks == 0 and not self._state.is_running():
-            _logger.debug('shut down pool=0x%x, cause="task completion"')
+            _logger.debug('shut down pool=0x%x, cause="task completion"', id(self))
             self._shutdown()
 
     def finish(self) -> None:
@@ -186,8 +188,12 @@ class Pool:
         return True
 
     def _shutdown(self) -> None:
-        # Shut down executor
-        self._executor.shutdown()
+        """
+        Complete shutdown of this pool. This method releases the resources
+        consumed by this pool and wakes any threads waiting for completion.
+        """
+        # Shut down executor. Do not wait to avoid exception being thrown.
+        self._executor.shutdown(False)
 
         # With all workers gone, there won't be any status updates anymore.
         try:
@@ -195,11 +201,14 @@ class Pool:
         except BaseException as x:
             _logger.error('failed to write to queue="status"', exc_info=x)
 
-    def done(self) -> None:
-        """Wait for this pool to be done."""
-        # The pool is done when the status manager thread joins
-        if threading.current_thread() != self._status_manager:
+        if self._status_manager != threading.current_thread():
             self._status_manager.join()
+
+        self._done.set()
+
+    def wait(self, timeout: None | float = None) -> None:
+        """Wait for all of this pool's workers to be done."""
+        self._done.wait(timeout)
 
 
 class _PoolState:

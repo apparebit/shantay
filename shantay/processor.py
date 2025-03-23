@@ -17,9 +17,8 @@ from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
     MetadataEntry, Release, Storage
 )
-from .pool import WorkerProgress
 from .progress import NO_PROGRESS, Progress
-from .util import annotate_error
+from .util import annotate_error, scale_time
 from .viz import visualize
 
 
@@ -77,6 +76,8 @@ class Processor[R: Release]:
             raise ValueError(f'invalid task "{task}"')
 
         self._runtime = time.time() - start_time
+        value, unit = scale_time(self._runtime)
+        _logger.info('processing took time=%.3f, unit="%s"', value, unit)
         return result
 
     def prepare(self) -> None:

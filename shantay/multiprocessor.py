@@ -84,12 +84,15 @@ class Multiprocessor[R: Release]:
                 break
 
         if wait:
-            self._pool.done()
+            self._pool.wait()
         self._runtime = time.time() - start_time
 
     def _schedule_task(self) -> bool:
         release = self._next_release()
         if release is None:
+            # Make sure the pool finishes
+            assert self._pool is not None
+            self._pool.finish()
             return False
 
         assert self._pool is not None
@@ -137,6 +140,9 @@ class Multiprocessor[R: Release]:
 
         if isinstance(result, _Cancellation):
             _logger.debug('received cancellation notice from worker=%d', result.pid)
+            # Make sure the entire pool is cancelled
+            assert self._pool is not None
+            self._pool.stop()
             return False
 
         elif self._task == "prepare":
@@ -150,6 +156,7 @@ class Multiprocessor[R: Release]:
             # original, it's ok to update that file here. In fact, it's more
             # than ok because we just updated the metadata with a new release.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
+
             return self._schedule_task()
         else:
             raise ValueError(f"invalid task {self._task}")
@@ -175,7 +182,7 @@ class Multiprocessor[R: Release]:
             )
             sys.exit(1)
 
-        if self._pool.is_stopping():
+        if self._pool.stop():
             _logger.info('cancelling workers after receiving signal="%s"', signame)
             return
 

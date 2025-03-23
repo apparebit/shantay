@@ -20,6 +20,9 @@ from .schema import normalize_category
 from .util import scale_time
 
 
+_logger = logging.getLogger()
+
+
 def _parse_options(args: list[str]) -> Any:
     parser = ArgumentParser(prog="shantay")
 
@@ -195,6 +198,9 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
 def _run(args: list[str]) -> None:
     options = _parse_options(args)
     configure_logging(options.logfile, verbose=options.verbose)
+    # A very visible horizontal bar to mark a new tool run
+    _logger.info('▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂▂')
+    _logger.info('')
 
     # Handle recovery task before getting configuration
     if options.task == "recover":
