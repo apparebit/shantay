@@ -135,7 +135,7 @@ class Pool:
         assert self._state.is_running(), "pool is not accepting new tasks"
 
         _logger.debug(
-            'submit fn=%s.%s, pool=0x%x, pending_tasks=%d',
+            'submit fn="%s.%s", pool=0x%x, pending-tasks=%d',
             fn.__module__,
             fn.__qualname__,
             id(self),

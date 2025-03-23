@@ -369,7 +369,7 @@ class _Fsck:
         day_no = int(day.name)
         self.update_batch_count(year_no, month_no, day_no, batch_no, digest_of_digests)
 
-        _logger.info('checked batch_count=%d directory="%s"', batch_no, day)
+        _logger.info('checked batch-count=%d directory="%s"', batch_no, day)
 
     def read_digest_file(self, directory: Path) -> None | dict[str, str]:
         """Read the text file with a list of batchfile digests."""

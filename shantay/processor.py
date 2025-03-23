@@ -282,7 +282,7 @@ class Processor[R: Release]:
         self._metadata[release] = cast(MetadataEntry, full_counters)
         self._metadata.write_json(self._storage.staging_root)
         _logger.info(
-            'extracted batch_count=%d, file="%s"', batch_count, self._dataset.archive_name(release)
+            'extracted batch-count=%d, file="%s"', batch_count, self._dataset.archive_name(release)
         )
 
         self._progress.activity(
@@ -292,7 +292,7 @@ class Processor[R: Release]:
         self.copy_extracted_data(
             self._storage.staging_root, self._storage.working_root, release, batch_count
         )
-        _logger.info('archived batch_count=%d, release="%s"', batch_count, release.id)
+        _logger.info('archived batch-count=%d, release="%s"', batch_count, release.id)
 
     def list_archived_files(self, root: Path, release: R) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
