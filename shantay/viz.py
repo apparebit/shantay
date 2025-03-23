@@ -505,11 +505,11 @@ class Visualizer:
         self.chart("csam-breakdown", alt.vconcat(
             self.monthly_share_of_csam_per_platform(percent=True),
             self.monthly_share_of_csam_per_platform(percent=False),
-        ))
+            self.monthly_delays(prefix="csam_", label=" for CSAM"),
+        ).resolve_scale(color='independent'))
 
         self.chart("csam-timelines", alt.vconcat(
             self.monthly_csam_sors(),
-            self.monthly_delays(prefix="csam_", label=" for CSAM"),
             self.monthly_content_types(prefix="csam_"),
             self.monthly_decision_grounds_for_csam(),
             self.monthly_decision_kinds_for_csam(),
@@ -617,13 +617,8 @@ class Visualizer:
         )
 
     def monthly_delays(self, prefix: str = "", label: str = "") -> alt.Chart:
-        def trace(c: str) -> str:
-            print(f"#column {c}")
-            return c
-
-
         table = self._statistics.with_columns(
-            (pl.col(*(trace(c) for c in self._statistics.columns if c.endswith("_delay")))
+            (pl.col(*(c for c in self._statistics.columns if c.endswith("_delay")))
             / (24 * 60 * 60 * 1_000)).cast(pl.Float64)
         )
         table = self.extract_table3(table, "Mean Delay", {
