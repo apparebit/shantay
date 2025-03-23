@@ -16,13 +16,22 @@ experience do matter. For that reason, *shantay* uses [Pola.rs](https://pola.rs)
 as its data frame.
 
 To calibrate expectations: Assuming that all data has already been downloaded,
-my five-year-old iMac with one of those T7 drives takes two days and nights to
-extract relevant records from the full dataset. For my use case, the Protection
-of Minors, which comprise 0.3% of all records, it takes less than one minute to
-analyze the working set. Finally, visualization of the analysis results is
-nearly instantaneous, taking seconds at most. Since extraction fails to saturate
-my iMac's CPU or memory bus, I did integrate process-based multiprocessing,
-which is enabled with the `--multiproc` command line option.
+my five-year-old iMac with one of those T7 drives takes maybe a day to extract
+relevant records from the full dataset. For my use case, the Protection of
+Minors, which comprise 0.3% of all records, it takes less than two minutes to
+analyze the extracted working set. Finally, visualization of the analysis
+results is nearly instantaneous, taking seconds at most.
+
+Since extraction does not saturate my iMac's CPU or memory bus, I did integrate
+process-based multiprocessing with *shantay*. It is enabled with the
+`--multiproc` command line option. For the prepare task processing the archives
+for 2024/5/2 and 5/3 either serially or in parallel, the serial version took 4.5
+minutes and the parallel one took 2.6 minutes, yielding a speedup of 1.7x.
+
+(I picked the two days because they both yield the same number of batch files
+(39) with about the same number of rows (300,000) requiring roughly the same
+memory (< 390 MB). The time for the parallel version does not include the time
+to create the pool.)
 
 I've written [a blog post about my initial
 impressions](https://apparebit.com/blog/2025/sashay-shantay) of the DSA
@@ -46,11 +55,59 @@ or
 > uvx shantay -h
 ```
 
-In either case, *shantay* responds by printing documentation for its command
-line options. You can use *shantay* as is, with the `prepare` task, for
-downloading daily distributions and selecting a category of your choice.
-However, to analyze or visualize the data in a category other than Protection of
-Minors, you'll need to write your own domain-specific code. However, the
+In either case, *shantay* will output something like this:
+
+```
+usage: shantay [-h] [--root ROOT] [--archive ARCHIVE] [--working WORKING]
+               [--staging STAGING] [--first FIRST] [--last LAST]
+               [--filter FILTER] [--category CATEGORY] [--logfile LOGFILE]
+               [--quiet] [--multiproc MULTIPROC]
+               {recover,prepare,analyze,visualize}
+
+positional arguments:
+  {recover,prepare,analyze,visualize}
+                        select the task to execute: recover validates parquet
+                        files and restores metadata; prepare downloads
+                        distributions and extracts working data; analyze
+                        processes the working data; visualize graphs the
+                        analysis results
+
+options:
+  -h, --help            show this help message and exit
+  --multiproc MULTIPROC
+                        use several processes for downloading archives and
+                        extracting working data
+
+data storage:
+  --root ROOT           set directories for `archive` and working `data` to
+                        the eponymous subdirectories
+  --archive ARCHIVE     set directory for downloaded archives (`./dsa-db-
+                        archive` by default)
+  --working WORKING     set directory for parquet files with working data
+                        (`./dsa-db-working` by default)
+  --staging STAGING     set directory for temporary files (`./dsa_db-staging`
+                        by default)
+
+coverage of working set:
+  --first FIRST         set the start date (2023-09-25 by default)
+  --last LAST           set the stop date (the day before yesterday by
+                        default)
+  --filter FILTER       set the module name, colon, and global variable name
+                        for the Pola.rsexpression filtering out all but the
+                        data of interest
+  --category CATEGORY   set category to filter (may omit the
+                        STATEMENT_CATEGORY_ prefix and/oruse lower case)
+
+logging:
+  --logfile LOGFILE     set file receiving log output (`./shantay.log` by
+                        default)
+  --quiet               disable verbose logging, which is the default
+```
+
+You can use *shantay* as is, with the prepare task, for downloading daily
+distributions and selecting a category of your choice. However, to analyze or
+visualize the data in a category other than *Protection of Minors*, you'll need
+to write your own domain-specific code. However, the
 [`dsa_sor`](https://github.com/apparebit/shantay/blob/boss/shantay/dsa_sor.py)
 and
 [`framing`](https://github.com/apparebit/shantay/blob/boss/shantay/framing.py)
@@ -120,10 +177,10 @@ working data:
     digests in the `sha256.txt` file.
 
 The `batch_count` and `sha256` properties can be automatically recovered from
-the directory hierarchy. Simply run *shantay*'s `recover` task. It performs a
-good number of consistency checks to ensure that the directory hierarchy is
+the directory hierarchy. Simply run *shantay*'s recover task. It performs a good
+number of consistency checks to ensure that the directory hierarchy is
 well-formed. Futhermore, whereas other tasks are fail-fast and stop upon the
-first error, the `recover` task only fails after completing its file system
+first error, the recover task only fails after completing its file system
 traversal.
 
 Three more files contain summary statistics about the batch file contents:
