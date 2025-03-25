@@ -86,7 +86,7 @@ def to_markdown_table(
         for fmt, column in zip((_get_format(tp) for tp in types), column_data)
     ]
     widths = [
-        min(max(len(name) + 2, *(len(it) + 2 for it in column)), 120)
+        max(len(name) + 2, *(l + 2 for it in column if (l := len(it)) < 50))
         for name, column in zip(columns, column_data)
     ]
 
