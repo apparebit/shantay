@@ -85,10 +85,14 @@ class TestPool(unittest.TestCase):
             self.assertNotEqual(offset, -1)
             self.assertTrue(offset + 7 <= len(lines))
             lines = lines[offset:offset + 7]
-            self.assertIn('submit fn="test.test_pool.task1", pool=0x', lines[0])
-            self.assertIn('pending-tasks=0', lines[0])
-            self.assertIn('submit fn="test.test_pool.task2", pool=0x', lines[1])
-            self.assertIn('pending-tasks=1', lines[1])
+            self.assertIn(
+                'submit fn="test.test_pool.task1", pool="pool-1", pending-tasks=0',
+                lines[0]
+            )
+            self.assertIn(
+                'submit fn="test.test_pool.task2", pool="pool-1", pending-tasks=1',
+                lines[1]
+            )
 
             # The order of the next four lines is largely non-deterministic,
             # except that task1 or task2 must run before task3 can be added and
@@ -103,7 +107,10 @@ class TestPool(unittest.TestCase):
                     run2 = index
                 elif 'task3 processes "3"' in line and run3 == -1:
                     run3 = index
-                elif 'submit fn="test.test_pool.task3", pool=0x' in line and add3 == -1:
+                elif (
+                    'submit fn="test.test_pool.task3", pool="pool-1"' in line
+                    and add3 == -1
+                ):
                     add3 = index
 
             self.assertNotEqual(run1, -1)
@@ -117,5 +124,4 @@ class TestPool(unittest.TestCase):
             self.assertTrue(add3 == 3 or add3 == 4)
             self.assertTrue(run3 == 4 or run3 == 5)
 
-            self.assertIn('shut down pool=0x', lines[6])
-            self.assertIn('cause="finish"', lines[6])
+            self.assertIn('shut down pool="pool-1", cause="finish"', lines[6])

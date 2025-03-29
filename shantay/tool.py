@@ -8,7 +8,7 @@ from typing import Any
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
-from .framing import format_summary, one_column_summary, resolve_query_binding
+from .framing import formatted_summary, resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
@@ -238,9 +238,7 @@ def _run(args: list[str]) -> None:
         elif options.task == "analyze":
             assert isinstance(result, pl.DataFrame)
             print("\n")
-            cover, frame = one_column_summary(result)
-            print(format_summary(cover, as_markdown=False))
-            print(format_summary(frame, as_markdown=False))
+            print(formatted_summary(result, markdown=False))
 
     v, u = scale_time(processor.runtime)
     print(f"\nCompleted task {options.task} in {v:,.1f} {u}")

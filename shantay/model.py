@@ -12,6 +12,7 @@ from .progress import NO_PROGRESS, Progress
 
 import polars
 type DataFrameType = polars.DataFrame
+type LazyFrameType = polars.LazyFrame
 type QueryExpression = polars.Expr
 del polars
 
@@ -373,12 +374,8 @@ def _days_in_month(year: int, month: int) -> int:
 
 
 META_FILE = "meta.json"
-STATISTICS_FILE = "meta-statistics.parquet"
+STATISTICS_FILE = "statistics.parquet"
 DIGEST_FILE = "sha256.txt"
-
-# Specific to DSA SoR DB
-KEYWORDS_FILE = "meta-keywords.parquet"
-PLATFORMS_FILE = "meta-platforms.parquet"
 
 
 class MetadataEntry(TypedDict, total=False):
@@ -424,12 +421,21 @@ class Coverage[R: Release]:
 class CollectorProtocol[R: Release](Protocol):
     """The protocol for incremental data frame generation."""
 
-    def add_frames(self, release: R, **kwargs: DataFrameType) -> None:
-        """Add named data frames for the given release."""
-        ...
+    # The name of the main statistics frame.
+    STATISTICS = "stats"
 
-    def consume_frames(self) -> Iterator[tuple[str, DataFrameType]]:
-        """Consume concatenated data frames by name."""
+    def collect(
+        self,
+        frame: DataFrameType | LazyFrameType,
+        release: Release,
+        batch_count: int,
+        total_rows: int,
+        total_rows_with_keywords: int,
+    ) -> None:
+        """Collect data."""
+
+    def to_frame(self) -> DataFrameType:
+        """Convert to data frame."""
         ...
 
 

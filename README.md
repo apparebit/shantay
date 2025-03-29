@@ -166,29 +166,39 @@ directory: Each line contains one hexadecimal ASCII digest, a space,and the
 batch file's name.
 
 
-### 2.3 Summary Statistics: meta.json and Three Parquet Files
+### 2.3 Summary Statistics: `meta.json` and `statistics.parquet`
 
-*Shantay* also maintains the following files inside the root directory with
-working data:
+In addition to yearly directories, *shantay* also stores two files inside the
+root directory with work data.
 
   - `meta.json` contains an object with the `filter` used for selecting the
     working data and some statistics about `releases`. `batch_count` must be the
     number of batch files and `sha256` must be the (recursive) digest of the
     digests in the `sha256.txt` file.
 
-The `batch_count` and `sha256` properties can be automatically recovered from
-the directory hierarchy. Simply run *shantay*'s recover task. It performs a good
-number of consistency checks to ensure that the directory hierarchy is
-well-formed. Futhermore, whereas other tasks are fail-fast and stop upon the
-first error, the recover task only fails after completing its file system
-traversal.
+    The `batch_count` and `sha256` properties can be automatically recovered
+    from the directory hierarchy. Simply run *shantay*'s recover task. It
+    performs a good number of consistency checks to ensure that the directory
+    hierarchy is well-formed. Futhermore, whereas other tasks are fail-fast and
+    stop upon the first error, the recover task only fails after completing its
+    file system traversal.
 
-Three more files contain summary statistics about the batch file contents:
+  - `statistics.parquet` contains monthly summary statistics about the working
+    data collected with the analyze task. Since a wide frame with individual
+    columns for every variable is unwieldy and Pola.rs implementation of lists
+    of structs is not robust enough, we use a long table with a limited number
+    of columns:
 
-  - `meta-statistics.parquet` contains the same data as `meta.json` plus counts
-    collected during analysis.
-  - `meta-keywords.parquet` contains data about the use of keywords.
-  - `meta-platforms.parquet` contains data about the composition of platforms.
+      - `start_date` and `end_date` denote the date coverage of every row.
+      - `column`, `tag`, and `entity` capture the source column, a symbolic tag
+        for filtered source data, and the entity captured by that row.
+      - `duration`, `variant`, and `count` represent the actual value. It can be
+        a simple count, with only `count` non-null, one entry for value counts,
+        with both `variant` and `count` non-null, or a duration, with `duration`
+        non-null.
+
+    Some column names are not found in the DSA transparency database and are new
+    statistics.
 
 
 ## 3. Workflow
@@ -206,10 +216,13 @@ processing (much) less data and executing (much) faster:
     original ZIP files, uncompresses and parses the included CSV files, extracts
     the data of interest, and writes that data to parquet files. This phase may
     require a day or two to run.
- 2. The __analyze__ task processes the parquet files. This phase probably
-    requires you pluggin in your own code, unless you want to repeat the
-    analysis I've been performing. This phase takes less than a minute to run
-    for all records about Protection of Minors (0.3% of all records).
+ 2. The __analyze__ task processes the parquet files. You probably want to
+    change the code somewhat, so that this phase collects statistics you are
+    interested in and not those reflecting my interests. To maximize code reuse,
+    I developed a standard set of metrics that can be easily collected for
+    different views. It is supplemented by a summary format that further
+    aggregates the data. This phase takes a few minutes to run for records about
+    Protection of Minors (0.3% of all records).
  3. The __visualize__ task produces summary tables and production-quality graphs
     from the analysis results. In addition to either printing plain text or
     generating Markdown and HTML output for Jupyter, this task also generates a

@@ -46,12 +46,13 @@ from .progress import Progress
 _PID = os.getpid()
 _PROGRESS = ["activity", "start", "step", "perform"]
 _logger = logging.getLogger(__spec__.parent)
-_status_queue = None
-_terminator = None
 
 
 # --------------------------------------------------------------------------------------
 # The coordinator
+
+
+_id = 0
 
 
 class Pool:
@@ -72,6 +73,10 @@ class Pool:
         context: None | Any = None,
         log_level: int = logging.WARNING,
     ) -> None:
+        global _id
+        _id += 1
+        self._id = f"pool-{_id}"
+
         if size is None:
             # First available in Python 3.13
             size = getattr(os, "process_cpu_count", lambda:None)()
@@ -119,6 +124,10 @@ class Pool:
         self._done = threading.Event()
 
     @property
+    def id(self) -> str:
+        return self._id
+
+    @property
     def size(self) -> int:
         return self._size
 
@@ -135,10 +144,10 @@ class Pool:
         assert self._state.is_running(), "pool is not accepting new tasks"
 
         _logger.debug(
-            'submit fn="%s.%s", pool=0x%x, pending-tasks=%d',
+            'submit fn="%s.%s", pool="%s", pending-tasks=%d',
             fn.__module__,
             fn.__qualname__,
-            id(self),
+            self._id,
             self._pending_tasks,
         )
 
@@ -151,7 +160,7 @@ class Pool:
     def _on_task_completion(self, future: Future) -> None:
         self._pending_tasks -= 1
         if self._pending_tasks == 0 and not self._state.is_running():
-            _logger.debug('shut down pool=0x%x, cause="task completion"', id(self))
+            _logger.debug('shut down pool="%s", cause="task completion"', self._id)
             self._shutdown()
 
     def finish(self) -> None:
@@ -160,7 +169,7 @@ class Pool:
         completion.
         """
         if self._state.set_finishing() and self._pending_tasks == 0:
-            _logger.debug('shut down pool=0x%x, cause="finish"', id(self))
+            _logger.debug('shut down pool="%s", cause="finish"', self._id)
             self._shutdown()
 
     def stop(self) -> bool:
@@ -173,16 +182,18 @@ class Pool:
             return False
 
         if self._pending_tasks == 0:
-            _logger.debug('shut down pool=0x%x, cause="stop"', id(self))
+            _logger.debug('shut down pool="%s", cause="stop"', self._id)
             self._shutdown()
             return True
 
-        _logger.debug("cancel workers of pool=0x%x", id(self))
+        _logger.debug('cancel workers of pool="%s"', self._id)
         for _ in range(self._size):
             try:
                 self._cancel_queue.put(None)
             except BaseException as x:
-                _logger.error('failed writing to pool=0x%x queue="cancel"', id(self), exc_info=x)
+                _logger.error(
+                    'failed to write to queue="cancel", pool="%s"', self._id, exc_info=x
+                )
                 break
 
         return True
@@ -199,7 +210,9 @@ class Pool:
         try:
             self._status_queue.put(None)
         except BaseException as x:
-            _logger.error('failed to write to queue="status"', exc_info=x)
+            _logger.error(
+                'failed to write to queue="status", pool="%s"', self._id, exc_info=x
+            )
 
         if self._status_manager != threading.current_thread():
             self._status_manager.join()
@@ -371,7 +384,15 @@ def is_cancelled() -> bool:
 
 
 class Cancelled(Exception):
-    """Signal for a cancelled task execution."""
+    """
+    Signal for a cancelled task execution. The exception's *three* `args` are
+    automatically filled in, comprising a helpful error message, the native
+    thread ID, and the process ID of the cancelled thread/process.
+    """
+    def __init__(self) -> None:
+        tid = threading.get_native_id()
+        pid = os.getpid()
+        super().__init__(f"thread {tid}, process {pid} was cancelled", tid, pid)
 
 
 # --------------------------------------------------------------------------------------
@@ -433,6 +454,12 @@ class WorkerLogHandler(logging.Handler):
 # --------------------------------------------------------------------------------------
 
 
+# The two globals are only used within worker processes, which are tied to a
+# pool instance. In other words, a process may instantiate more than one Pool.
+_status_queue = None
+_terminator = None
+
+
 def _initialize_worker(
     status_queue: mp.SimpleQueue,
     cancel_queue: mp.SimpleQueue,
@@ -461,7 +488,7 @@ def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
     except BaseException as x:
         _logger.error('failed reading from queue="cancel", worker=%d', _PID, exc_info=x)
     else:
-        _logger.debug("cancelled worker=%d", _PID)
+        _logger.debug("cancellation signal received by worker=%d", _PID)
         _is_cancelled.set()
 
 

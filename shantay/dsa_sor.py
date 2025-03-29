@@ -1,301 +1,22 @@
 from collections import Counter
 import csv
-import datetime as dt
 import hashlib
 import logging
 from pathlib import Path
 
 import polars as pl
 
-from .framing import validate_csam_statistics, validate_general_statistics
 from .model import (
-    CollectorProtocol, Coverage, Daily, Dataset, KEYWORDS_FILE,
-    PLATFORMS_FILE, Release, STATISTICS_FILE
+    CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, Release, STATISTICS_FILE
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
-    BASE_SCHEMA, ContentLanguageType, ContentType, CountryGroups, DecisionVisibility,
-    Keyword, SCHEMA, SCHEMA_OVERRIDES, StatementCategory, TerritorialScopeType
+    BASE_SCHEMA, CountryGroups, PARTIAL_SCHEMA, PLATFORM_NAMES, SCHEMA, VariantValueType
 )
 from .util import annotate_error
 
 
-_DEBUG_OUTLIERS = False
 _logger = logging.getLogger(__spec__.parent)
-
-
-def fix_prefix(prefix: str) -> str:
-    if prefix != "" and not prefix.endswith("_"):
-        prefix = f"{prefix}_"
-    return prefix
-
-
-def mean_timing(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        (pl.col("application_date").dt.date() - pl.col("content_date").dt.date())
-        .mean()
-        .alias(f"{prefix}mean_moderation_delay"),
-        (pl.col("created_at").dt.date() - pl.col("application_date").dt.date())
-        .mean()
-        .alias(f"{prefix}mean_reporting_delay"),
-    ]
-
-
-def decision_type_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-    return [
-        # Kinds of Decision
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}null_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}visibility_decision_only"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}monetary_decision_only"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}provision_decision_only"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}account_decision_only"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}visibility_monetary_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}visibility_provision_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}visibility_account_decision"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null())
-        .sum().alias(f"{prefix}monetary_provision_decision"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}monetary_account_decision"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}provision_account_decision"),
-        pl.col("decision_visibility").is_null()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}monetary_provision_account_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}visibility_provision_account_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}visibility_monetary_account_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}visibility_monetary_provision_decision"),
-        pl.col("decision_visibility").is_null().not_()
-        .and_(pl.col("decision_monetary").is_null().not_())
-        .and_(pl.col("decision_provision").is_null().not_())
-        .and_(pl.col("decision_account").is_null().not_())
-        .sum().alias(f"{prefix}all_kinds_decision"),
-    ]
-
-
-def decision_visibility_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-    return [
-        pl.col("decision_visibility").list.len().max().alias(f"{prefix}max_visibility_per_row"),
-        pl.col("decision_visibility").explode().drop_nulls().len().alias(f"{prefix}visibility_values"),
-        pl.col("decision_visibility").is_null().not_().sum().alias(f"{prefix}rows_with_visibility"),
-        pl.col("decision_visibility").is_null().sum().alias(f"{prefix}null_visibility_decision"),
-
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_REMOVED")
-        .sum().alias(f"{prefix}content_removed"),
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_DISABLED")
-        .sum().alias(f"{prefix}content_disabled"),
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_DEMOTED")
-        .sum().alias(f"{prefix}content_demoted"),
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_AGE_RESTRICTED")
-        .sum().alias(f"{prefix}content_age_restricted"),
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED")
-        .sum().alias(f"{prefix}content_interaction_restricted"),
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_CONTENT_LABELLED")
-        .sum().alias(f"{prefix}content_labeled"),
-        pl.col("decision_visibility").list.contains("DECISION_VISIBILITY_OTHER")
-        .sum().alias(f"{prefix}other_visibility"),
-    ]
-
-
-def decision_monetary_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("decision_monetary").eq("DECISION_MONETARY_SUSPENSION")
-        .sum().alias(f"{prefix}monetary_suspension"),
-        pl.col("decision_monetary").eq("DECISION_MONETARY_TERMINATION")
-        .sum().alias(f"{prefix}monetary_termination"),
-        pl.col("decision_monetary").eq("DECISION_MONETARY_OTHER")
-        .sum().alias(f"{prefix}monetary_other"),
-        pl.col("decision_monetary").is_null()
-        .sum().alias(f"{prefix}null_monetary_decision"),
-    ]
-
-
-def decision_provision_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("decision_provision").eq("DECISION_PROVISION_PARTIAL_SUSPENSION")
-        .sum().alias(f"{prefix}provision_partial_suspension"),
-        pl.col("decision_provision").eq("DECISION_PROVISION_TOTAL_SUSPENSION")
-        .sum().alias(f"{prefix}provision_total_suspension"),
-        pl.col("decision_provision").eq("DECISION_PROVISION_PARTIAL_TERMINATION")
-        .sum().alias(f"{prefix}provision_partial_termination"),
-        pl.col("decision_provision").eq("DECISION_PROVISION_TOTAL_TERMINATION")
-        .sum().alias(f"{prefix}provision_total_termination"),
-        pl.col("decision_provision").is_null()
-        .sum().alias(f"{prefix}null_provision_decision"),
-    ]
-
-
-def decision_account_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
-        .sum().alias(f"{prefix}account_suspended"),
-        pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
-        .sum().alias(f"{prefix}account_terminated"),
-        pl.col("decision_account").is_null()
-        .sum().alias(f"{prefix}null_account_decision"),
-    ]
-
-
-def account_type_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("account_type").eq("ACCOUNT_TYPE_BUSINESS")
-        .sum().alias(f"{prefix}account_type_business"),
-        pl.col("account_type").eq("ACCOUNT_TYPE_PRIVATE")
-        .sum().alias(f"{prefix}account_type_private"),
-        pl.col("account_type").is_null()
-        .sum().alias(f"{prefix}null_account_type"),
-    ]
-
-
-def decision_ground_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("decision_ground").eq("DECISION_GROUND_ILLEGAL_CONTENT")
-        .sum().alias(f"{prefix}illegal_content"),
-        pl.col("decision_ground").eq("DECISION_GROUND_INCOMPATIBLE_CONTENT")
-        .sum().alias(f"{prefix}incompatible_content"),
-        pl.col("decision_ground").is_null()
-        .sum().alias(f"{prefix}null_decision_ground"),
-        pl.col("incompatible_content_illegal").eq("Yes")
-        .sum().alias(f"{prefix}incompatible_content_illegal_yes"),
-        pl.col("incompatible_content_illegal").eq("No")
-        .sum().alias(f"{prefix}incompatible_content_illegal_no"),
-        pl.col("incompatible_content_illegal").is_null()
-        .sum().alias(f"{prefix}null_incompatible_content_illegal"),
-    ]
-
-
-def source_type_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("source_type").eq("SOURCE_ARTICLE_16")
-        .sum().alias(f"{prefix}source_article_16"),
-        pl.col("source_type").eq("SOURCE_TRUSTED_FLAGGER")
-        .sum().alias(f"{prefix}source_trusted_flagger"),
-        pl.col("source_type").eq("SOURCE_TYPE_OTHER_NOTIFICATION")
-        .sum().alias(f"{prefix}source_other_notification"),
-        pl.col("source_type").eq("SOURCE_VOLUNTARY")
-        .sum().alias(f"{prefix}source_voluntary"),
-        pl.col("source_type").is_null()
-        .sum().alias(f"{prefix}null_source_type"),
-    ]
-
-
-def automated_detection_and_decision_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("automated_detection").eq("Yes")
-        .sum().alias(f"{prefix}automated_detection_yes"),
-        pl.col("automated_detection").eq("No")
-        .sum().alias(f"{prefix}automated_detection_no"),
-        pl.col("automated_detection").is_null()
-        .sum().alias(f"{prefix}null_automated_detection"),
-        pl.col("automated_decision").eq("AUTOMATED_DECISION_FULLY")
-        .sum().alias(f"{prefix}automated_decision_fully"),
-        pl.col("automated_decision").eq("AUTOMATED_DECISION_PARTIALLY")
-        .sum().alias(f"{prefix}automated_decision_partially"),
-        pl.col("automated_decision").eq("AUTOMATED_DECISION_NOT_AUTOMATED")
-        .sum().alias(f"{prefix}automated_decision_not_automated"),
-        pl.col("automated_decision").is_null()
-        .sum().alias(f"{prefix}null_automated_decision"),
-    ]
-
-
-def content_type_breakdown(prefix: str) -> list[pl.Expr]:
-    prefix = fix_prefix(prefix)
-
-    return [
-        pl.col("content_type").list.len().max().alias(f"{prefix}max_content_types_per_row"),
-        pl.col("content_type").explode().drop_nulls().len().alias(f"{prefix}content_type_values"),
-        pl.col("content_type").is_null().not_().sum().alias(f"{prefix}rows_with_content_type"),
-        pl.col("content_type").is_null().sum().alias(f"{prefix}null_content_types"),
-
-        pl.col("content_type").list.contains("CONTENT_TYPE_APP")
-        .sum().alias(f"{prefix}content_type_app"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_AUDIO")
-        .sum().alias(f"{prefix}content_type_audio"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_IMAGE")
-        .sum().alias(f"{prefix}content_type_image"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_PRODUCT")
-        .sum().alias(f"{prefix}content_type_product"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_SYNTHETIC_MEDIA")
-        .sum().alias(f"{prefix}content_type_synthetic_media"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_TEXT")
-        .sum().alias(f"{prefix}content_type_text"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_VIDEO")
-        .sum().alias(f"{prefix}content_type_video"),
-        pl.col("content_type").list.contains("CONTENT_TYPE_OTHER")
-        .sum().alias(f"{prefix}content_type_other"),
-    ]
 
 
 class StatementsOfReasons(Dataset[Daily]):
@@ -490,7 +211,7 @@ class StatementsOfReasons(Dataset[Daily]):
         return pl.scan_csv(
             str(path),
             null_values=["", "[]"],
-            schema_overrides=SCHEMA_OVERRIDES,
+            schema_overrides=PARTIAL_SCHEMA,
             infer_schema=False,
         ).filter(filter)
 
@@ -541,7 +262,7 @@ class StatementsOfReasons(Dataset[Daily]):
         """
         return (
             frame
-            # Patch in the names of country groups
+            # Patch in the names of country groups as well as canonical platform names
             .with_columns(
                 pl.when(pl.col("territorial_scope") == CountryGroups.EEA)
                     .then(pl.lit("[\"EEA\"]"))
@@ -551,6 +272,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     .then(pl.lit("[\"EU\"]"))
                     .otherwise(pl.col("territorial_scope"))
                     .alias("territorial_scope"),
+                pl.col("platform_name").replace(PLATFORM_NAMES),
             )
             # Parse list-valued columns (assumes no [] values)
             .with_columns(
@@ -568,12 +290,12 @@ class StatementsOfReasons(Dataset[Daily]):
             )
             # Cast list elements and date columns to their types. Add released_on.
             .with_columns(
-                pl.col("decision_visibility").cast(pl.List(DecisionVisibility)),
-                pl.col("category_addition").cast(pl.List(StatementCategory)),
-                pl.col("category_specification").cast(pl.List(Keyword)),
-                pl.col("content_type").cast(pl.List(ContentType)),
-                pl.col("content_language").cast(ContentLanguageType),
-                pl.col("territorial_scope").cast(pl.List(TerritorialScopeType)),
+                pl.col("decision_visibility").cast(pl.List(VariantValueType)),
+                pl.col("category_addition").cast(pl.List(VariantValueType)),
+                pl.col("category_specification").cast(pl.List(VariantValueType)),
+                pl.col("content_type").cast(pl.List(VariantValueType)),
+                pl.col("content_language").cast(VariantValueType),
+                pl.col("territorial_scope").cast(pl.List(VariantValueType)),
                 pl.col(
                     "end_date_visibility_restriction",
                     "end_date_monetary_restriction",
@@ -583,7 +305,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     "application_date",
                     "created_at",
                 ).str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms"),
-                pl.lit(release.start_date).alias("released_on"),
+                pl.lit(release.start_date, dtype=pl.Date).alias("released_on"),
             )
         )
 
@@ -620,188 +342,38 @@ class StatementsOfReasons(Dataset[Daily]):
         self,
         root: Path,
         release: Release,
-        metadata: pl.DataFrame,
+        metadata: DataFrameType,
         collector: CollectorProtocol,
     ) -> None:
-        frame = pl.read_parquet(f"{root}/{release.batch_glob}")
-        start_date = pl.lit(release.start_date).alias("start_date")
-        end_date = pl.lit(release.end_date).alias("end_date")
-
-        batch_count, total_rows, total_rows_with_keywords = metadata.select(
+        frame = metadata.select(
             pl.col("batch_count").sum(),
             pl.col("total_rows").sum(),
             pl.col("total_rows_with_keywords").sum(),
-        ).row(0)
-
-        csam = (
-            frame.filter(pl.col("category_specification")
-            .list.contains("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"))
-        ).select(
-            # Just CSAM
-            pl.len().alias("csam"),
-
-            # Timing, content types
-            *mean_timing("csam_"),
-            *content_type_breakdown("csam_"),
-
-            # Decision combinations
-            *decision_type_breakdown("csam_"),
-            *decision_visibility_breakdown("csam_"),
-            *decision_monetary_breakdown("csam_"),
-            *decision_provision_breakdown("csam_"),
-            *decision_account_breakdown("csam_"),
-
-            # CSAM, Account Suspended, End Date Account Restriction
-            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
-            .and_(pl.col("end_date_account_restriction").is_null())
-            .sum().alias("csam_account_suspended_null_date"),
-            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED")
-            .and_(pl.col("end_date_account_restriction").is_null().not_())
-            .sum().alias("csam_account_suspended_until_date"),
-
-            # CSAM, Account Terminated, End Date Account Restriction
-            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
-            .and_(pl.col("end_date_account_restriction").is_null())
-            .sum().alias("csam_account_terminated_null_date"),
-            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED")
-            .and_(pl.col("end_date_account_restriction").is_null().not_())
-            .sum().alias("csam_account_terminated_until_date"),
-
-            *account_type_breakdown("csam_"),
-            *decision_ground_breakdown("csam_"),
-            *source_type_breakdown("csam_"),
-            *automated_detection_and_decision_breakdown("csam_"),
         )
 
-        stats = frame.select(
-            # Age the data
-            start_date,
-            end_date,
+        if isinstance(frame, pl.LazyFrame):
+            frame = frame.collect()
 
-            # Stats about archival data
-            pl.lit(total_rows).alias("total_rows"),
-            pl.lit(total_rows_with_keywords).alias("total_rows_with_keywords"),
+        batch_count, total_rows, total_rows_with_keywords = frame.row(0)
 
-            # Timing, content types
-            *mean_timing(""),
-            *content_type_breakdown(""),
-
-            # Stats about batching
-            pl.lit(batch_count).alias("batch_count"),
-
-            # Stats about working set
-            pl.len().alias("rows"),
-            pl.col("category_specification").list.len().sum()
-            .alias("keywords"),
-            pl.col("category_specification").list.len().gt(0).sum()
-            .alias("rows_with_keywords"),
-            pl.col("category_specification").list.len().max()
-            .alias("max_keywords_per_row"),
-
-            # Decision Kind, Provision Decisions
-            *decision_type_breakdown(""),
-            *decision_visibility_breakdown(""),
-            *decision_monetary_breakdown(""),
-            *decision_provision_breakdown(""),
-            *decision_account_breakdown(""),
-            *account_type_breakdown(""),
-            *decision_ground_breakdown(""),
-
-            # Account Suspended, End Date Account Restriction
-            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED").and_(
-                pl.col("end_date_account_restriction").is_null()
-            ).sum().alias("account_suspended_null_date"),
-            pl.col("decision_account").eq("DECISION_ACCOUNT_SUSPENDED").and_(
-                pl.col("end_date_account_restriction").is_null().not_()
-            ).sum().alias("account_suspended_until_date"),
-
-            # Account Terminated, End Date Account Restriction
-            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").and_(
-                pl.col("end_date_account_restriction").is_null()
-            ).sum().alias("account_terminated_null_date"),
-            pl.col("decision_account").eq("DECISION_ACCOUNT_TERMINATED").and_(
-                pl.col("end_date_account_restriction").is_null().not_()
-            ).sum().alias("account_terminated_until_date"),
-
-            *source_type_breakdown(""),
-            *automated_detection_and_decision_breakdown(""),
-        ).with_columns(
-            # FIXME Update to UInt128 when that type can be written to parquet files.
-            pl.exclude("start_date", "end_date", "batch_count", "max_keywords_per_row")
-            .cast(pl.UInt64),
-            pl.col("batch_count").cast(pl.UInt64),
-            pl.col("max_keywords_per_row").cast(pl.UInt32),
-        ).with_columns(
-            pl.col("start_date", "end_date").cast(dt.date)
+        working_data = pl.scan_parquet(f"{root}/{release.batch_glob}").with_columns(
+            pl.col("platform_name").replace(PLATFORM_NAMES)
         )
-
-        stats = stats.hstack(csam)
-
-        keywords = frame.select(
-            pl.col("category_specification")
-            .list.explode()
-            .drop_nulls()
-            .value_counts()
-            .struct.unnest()
-        ).select(
-            start_date,
-            end_date,
-            pl.col("category_specification").alias("keyword"),
-            pl.col("count"),
+        collector.collect(
+            working_data,
+            release,
+            batch_count,
+            total_rows,
+            total_rows_with_keywords
         )
-
-        platforms = frame.select(
-            pl.col("platform_name").alias("platform"),
-            pl.col("category_specification"),
-        ).group_by("platform").agg(
-            pl.len().alias("total"),
-            pl.col("category_specification").is_null().not_().sum().alias("has_keyword"),
-            pl.col("category_specification").list.contains("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
-            .sum().alias("is_csam"),
-        ).select(
-            start_date,
-            end_date,
-            pl.col("platform", "total", "has_keyword", "is_csam")
-        )
-
-        frames = dict(
-            stats=stats,
-            keywords=keywords,
-            platforms=platforms,
-        )
-
-        if _DEBUG_OUTLIERS:
-            frames["outliers"] = frame.filter(
-                (2 <= pl.col("category_specification").list.len())
-                | (2 <= pl.col("decision_visibility").list.len())
-            )
-
-        collector.add_frames(release, **frames)
 
     @annotate_error(filename_arg="root")
     def combine_releases(
         self, root: Path, coverage: Coverage, collector: CollectorProtocol
     ) -> pl.DataFrame:
-        summary = None
-
-        for key, frame in collector.consume_frames():
-            if key == "stats":
-                summary = frame
-                validate_general_statistics(frame)
-                validate_csam_statistics(frame)
-                self.write_parquet(frame, root / STATISTICS_FILE)
-            elif key == "outliers":
-                # Requires _DEBUG_OUTLIERS
-                self.write_parquet(frame, root / "outliers.parquet")
-            elif key == "keywords":
-                self.write_parquet(frame, root / KEYWORDS_FILE)
-            elif key == "platforms":
-                self.write_parquet(frame, root / PLATFORMS_FILE)
-            else:
-                raise ValueError(f"unexpected frame {key}")
-
-        assert summary is not None
-        return summary
+        frame = collector.to_frame()
+        self.write_parquet(frame, root / STATISTICS_FILE)
+        return frame
 
     def write_parquet(self, frame: pl.DataFrame, path: Path) -> None:
         tmp = path.with_suffix(".tmp.parquet")

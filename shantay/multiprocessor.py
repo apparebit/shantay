@@ -1,5 +1,4 @@
 from concurrent.futures import Future
-from dataclasses import dataclass
 import logging
 import multiprocessing as mp
 import os
@@ -9,9 +8,11 @@ import time
 from types import FrameType
 from typing import Any
 
-from .framing import collect_release_metadata
+from .framing import collect_release_metadata, Collector
 from .metadata import Metadata
-from .model import Coverage, Dataset, Release, Storage
+from .model import (
+    Coverage, DataFrameType, Dataset, Release, Storage
+)
 from .pool import Cancelled, Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
 
@@ -96,14 +97,19 @@ class Multiprocessor[R: Release]:
             return False
 
         assert self._pool is not None
-        future = self._pool.submit(
-            run_on_worker,
-            task=self._task,
-            dataset=self._dataset,
-            storage=self._storage,
-            filter=self._metadata.filter,
-            release=release,
-        )
+        try:
+            future = self._pool.submit(
+                run_on_worker,
+                task=self._task,
+                dataset=self._dataset,
+                storage=self._storage,
+                filter=self._metadata.filter,
+                metadata=self._metadata_frame,
+                release=release,
+            )
+        except Exception as x:
+            _logger.error('task rejected by pool="%s"', self._pool.id)
+            return False
 
         future.add_done_callback(self._done_with_task)
         return True
@@ -133,19 +139,18 @@ class Multiprocessor[R: Release]:
         return release
 
     def _done_with_task(self, future: Future) -> bool:
+        assert self._pool is not None
+
         try:
             result = future.result()
-        except:
-            return self._schedule_task()
-
-        if isinstance(result, _Cancellation):
-            _logger.debug('received cancellation notice from worker=%d', result.pid)
-            # Make sure the entire pool is cancelled
-            assert self._pool is not None
+        except Cancelled as x:
+            _logger.debug('worker=%d, status="cancelled"', x.args[2])
             self._pool.stop()
             return False
+        except Exception as x:
+            return self._schedule_task()
 
-        elif self._task == "prepare":
+        if self._task == "prepare":
             release = result["release"]
             del result["release"]
             self._metadata[release] = result
@@ -159,7 +164,7 @@ class Multiprocessor[R: Release]:
 
             return self._schedule_task()
         else:
-            raise ValueError(f"invalid task {self._task}")
+            raise AssertionError(f"invalid task {self._task}")
 
     def stop(self) -> bool:
         assert self._pool is not None
@@ -196,45 +201,31 @@ class Multiprocessor[R: Release]:
         sys.exit(1)
 
 
-@dataclass(frozen=True, slots=True)
-class _Cancellation:
-    """
-    A sentinel value of sorts.
-
-    A worker returns an instance in lieu of raising a Cancelled exception, since
-    exceptions don't pickle so well. Since the cancellation protocol for pools
-    is cooperative, the abstractions leak beyond pool. It may be worth trying to
-    contain them better.
-    """
-    pid: int
-
-
 def run_on_worker[R: Release](
     task: str,
     dataset: Dataset[R],
     storage: Storage,
     filter: str,
+    metadata_frame: DataFrameType,
     release: R,
 ) -> Any:
+    """
+    Run a task in a worker process.
+
+    This function runs a prepare or analyze task in a worker process. All of the
+    function's arguments are used for both tasks, with exception of filter,
+    which is only used by prepare, and metadata_frame, which is only used by
+    analyze. The result for a prepare task is the metadata entry for the
+    release. The result for an analyze task is the statistics data frame for the
+    release.
+    """
     pid = os.getpid()
 
-    try:
-        result = _run_on_worker(pid, task, dataset, storage, filter, release)
-    except Cancelled:
-        result = _Cancellation(pid)
-
-    return result
-
-def _run_on_worker[R: Release](
-    pid: int,
-    task: str,
-    dataset: Dataset[R],
-    storage: Storage,
-    filter: str,
-    release: R,
-) -> Any:
     coverage = Coverage(release, release, filter)
-    metadata = Metadata(filter)
+    if task == "prepare":
+        metadata = Metadata(filter)
+    else:
+        metadata = Metadata.read_json(storage.working_root)
     processor = Processor(
         dataset=dataset,
         storage=storage.isolate(pid),
@@ -248,8 +239,12 @@ def _run_on_worker[R: Release](
         processor.prepare_batches(release)
         record = metadata[release]
         result = dict(release=release, **record)
+    elif task == "analyze":
+        collector = Collector()
+        processor.analyze_release(release, metadata_frame, collector)
+        result = collector.to_frame()
     else:
-        raise ValueError(f"invalid task {task}")
+        raise AssertionError(f"invalid task {task}")
 
     _logger.debug('finished task=%s, release=%s, worker=%d', task, release, pid)
     return result
