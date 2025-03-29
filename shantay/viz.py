@@ -10,11 +10,10 @@ import mistune
 import polars as pl
 
 from .framing import (
-    collect_release_metadata, format_summary, is_row_within_period, one_column_summary,
-    validate_csam_statistics, validate_general_statistics
+    collect_release_metadata, formatted_summary, is_row_within_period
 )
 from .metadata import Metadata
-from .model import KEYWORDS_FILE, PLATFORMS_FILE, ReleaseRange, STATISTICS_FILE, Storage
+from .model import ReleaseRange, STATISTICS_FILE, Storage
 from .schema import KEYWORDS_MINOR_PROTECTION_PLUS, SCHEMA, StatementCategory
 from .util import scale, to_markdown_table
 
@@ -22,7 +21,10 @@ from .util import scale, to_markdown_table
 TIMELINE_WIDTH = 600
 TIMELINE_HEIGHT = 400
 
-MARKDOWN_HEADER = re.compile(r"<h[1-3]>[^<]*</h[1-3]>")
+QUANT_WIDTH = 500
+QUANT_HEIGHT = 250
+
+HTML_HEADLINE = re.compile(r"<h([1-3])>([^<]*)</h[1-3]>")
 
 FRAME_BORDER = re.compile(r' border="1"')
 FRAME_CLASS = re.compile(r' class="dataframe"')
@@ -83,13 +85,7 @@ thead th {
     font-weight: bold;
 }
 th, td {
-    padding: 0.2em;
-}
-th:first-child, td:first-child {
-    padding-left: 0.4em
-}
-th:last-child, td:last-child {
-    padding-right: 0.4em
+    padding: 0.25em 0.5em;
 }
 thead > tr:first-of-type {
     background: #e0e0e0;
@@ -97,15 +93,15 @@ thead > tr:first-of-type {
 thead > tr {
     background: #f0f0f0;
 }
-thead > tr:first-of-type > :where(th, td) {
-    padding-top: 0.4em;
-}
+/*thead > tr:first-of-type > :where(th, td) {
+    padding-top: 0.35em;
+}*/
 thead > tr:last-of-type > :where(th, td) {
-    padding-bottom: 0.3em;
+    padding-bottom: 0.35em;
 }
 tbody > tr:first-of-type > :where(th, td) {
     border-top: solid 0.15em var(--black);
-    padding-top: 0.3em;
+    padding-top: 0.35em;
 }
 tbody > tr:nth-child(even) {
     background: #f0f0f0
@@ -113,7 +109,6 @@ tbody > tr:nth-child(even) {
 td {
     font-variant-numeric: tabular-nums;
     text-align: right;
-    margin: 2.25em;
 }
 th {
     text-align: right;
@@ -286,12 +281,16 @@ class Visualizer:
         pl.Config.set_tbl_rows(100)
         pl.Config.set_float_precision(3)
         pl.Config.set_thousands_separator(",")
+        pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
         pl.Config.set_fmt_str_lengths(
-            (max(len(s) for s in StatementCategory.categories) // 10 + 2) * 10
+            (max(len(s) for s in StatementCategory) // 10 + 2) * 10
         )
 
     def html(self, markup: str) -> None:
-        self._renderer.html(markup)
+        if self._renderer.plain and (hn := HTML_HEADLINE.fullmatch(markup)) is not None:
+            self._renderer.md(f"{'#' * int(hn.group(1))} {hn.group(2)}")
+        else:
+            self._renderer.html(markup)
 
         assert self._document is not None
         self._document.write(markup)
@@ -308,14 +307,14 @@ class Visualizer:
 
         assert self._document is not None
         html = str(mistune.html(markdown))
-        hn = MARKDOWN_HEADER.match(html)
+        hn = HTML_HEADLINE.match(html)
         if not disclosure or hn is None:
             self._document.write(html)
             self._document.write("\n\n")
             return
 
-        summary = hn.group(0)
-        html = html[len(summary):]
+        summary = hn.group(2)
+        html = html[len(hn.group(0)):]
         self._document.write("<details>\n")
         self._document.write(f"<summary>{summary}</summary>\n")
         self._document.write(html)
@@ -372,10 +371,6 @@ class Visualizer:
             Metadata.read_json(self._working_root).records
         )
         statistics = pl.read_parquet(self._working_root / STATISTICS_FILE)
-        validate_general_statistics(statistics)
-        validate_csam_statistics(statistics)
-        keywords = pl.read_parquet(self._working_root / KEYWORDS_FILE)
-        platforms = pl.read_parquet(self._working_root / PLATFORMS_FILE)
 
         # Restrict rendered data to *full* months. That essentially drops the
         # first week of data from the DSA SoR DB.
@@ -388,18 +383,21 @@ class Visualizer:
         within_range = is_row_within_period(range)
         self._metadata = metadata.filter(within_range)
         self._statistics = statistics.filter(within_range)
-        self._keywords = keywords.filter(within_range)
-        self._platforms = platforms.filter(within_range)
-        self._summary = Summary.of(self._metadata, self._platforms)
+        self._summary = Summary.of(self._metadata, self._statistics)
 
         # Determine global keyword usage and keywords with at least 1% use.
-        self._keyword_usage = (
-            self._keywords.group_by("keyword")
-            .agg(pl.col("count").sum())
-            .with_columns(
-                (pl.col("count") / pl.col("count").sum() * 100).alias("pct")
-            )
-            .sort(pl.col("count"), descending=True)
+        self._keyword_usage = self._statistics.select(
+            pl.col("keyword_value_counts").list.explode().struct.unnest()
+        ).rename({
+            "category_specification": "keyword"
+        }).group_by(
+            "keyword"
+        ).agg(
+            pl.col("count").sum()
+        ).with_columns(
+            (pl.col("count") / pl.col("count").sum() * 100).alias("pct")
+        ).sort(
+            pl.col("count"), descending=True
         )
 
         frequent_keywords = (
@@ -412,13 +410,6 @@ class Visualizer:
             k: KEYWORDS_MINOR_PROTECTION_PLUS[k] for k in frequent_keywords
         }
 
-        # Determine platforms with CSAM as keyword
-        self._platforms_with_csam = self._platforms.filter(
-            pl.col("is_csam").gt(pl.lit(0))
-        ).select(
-            pl.col("platform").unique()
-        )
-
     def render_heading(self) -> None:
         self.html(
             '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA '
@@ -427,10 +418,9 @@ class Visualizer:
 
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
-        self.markdown(self._summary.markdown())
-        cover, frame = one_column_summary(self._statistics)
-        self.markdown(format_summary(cover, as_markdown=True))
-        self.markdown(format_summary(frame, as_markdown=True))
+        self.markdown(self._summary.to_markdown())
+        self.markdown(formatted_summary(self._statistics))
+
 
         self.html("<h2>Table Schemas</h2>")
         remark = (
@@ -447,16 +437,7 @@ class Visualizer:
             disclosure=True,
         )
         self.markdown(
-            format_schema(self._statistics, title="meta-statistics.parquet"),
-            disclosure=True,
-        )
-        self.markdown(
-            format_schema(self._keywords, title="meta-keywords.parquet"),
-            disclosure=True,
-            render=not self._renderer.plain
-        )
-        self.markdown(
-            format_schema(self._platforms, title="meta-platforms.parquet"),
+            format_schema(self._statistics, title=STATISTICS_FILE),
             disclosure=True,
         )
 
@@ -466,10 +447,19 @@ class Visualizer:
         self.chart("keyword-pie", pie)
 
         self.html("<h2>Platforms</h2>")
-        table = self._platforms.select(
-            pl.col("platform").unique().sort(descending=False)
+        table = self._statistics.select(
+            pl.col("platform_value_counts").list.explode().struct.unnest()
+        ).group_by(
+            "platform_name"
+        ).agg(
+            pl.col("count").sum()
+        ).sort(
+            "count", descending=True
+        ).with_row_index(
+            offset=1
         )
-        self.frame(table.with_row_index(), all_text=True)
+
+        self.frame(table, all_text=True)
 
     def render_timelines(self) -> None:
         self.html("<h2>Timelines</h2>")
@@ -481,13 +471,23 @@ class Visualizer:
             self.daily_sor_percentage_minor_prot(rolling_mean_days=7),
             self.daily_keywords_percent_minor_prot(),
             self.daily_keywords_percent_minor_prot(rolling_mean_days=7),
-            self.monthly_delays(),
-            self.monthly_content_types(prefix=""),
+            self.monthly_delays(label="Protection of Minors"),
+            #self.monthly_content_types(prefix=""),
             self.monthly_platform_counts_minor_prot(),
             self.monthly_keyword_usage_minor_prot(),
         ).resolve_scale(
             x="shared",
             color="independent",
+        ))
+
+        self.html("<h3>SoRs by Platform</h3>")
+        self.chart("platform-breakdown", alt.vconcat(
+            self.total_sors_by_platform_minor_prot(),
+            self.total_sors_by_platform_minor_prot(threshold=50_000),
+        ).resolve_scale(
+            x="independent",
+        ).configure_scale(
+            barBandPaddingInner=0.05,
         ))
 
         self.html("<h3>CSAM SoRs</h3>")
@@ -505,15 +505,15 @@ class Visualizer:
         self.chart("csam-breakdown", alt.vconcat(
             self.monthly_share_of_csam_per_platform(percent=True),
             self.monthly_share_of_csam_per_platform(percent=False),
-            self.monthly_delays(prefix="csam_", label=" for CSAM"),
+            self.monthly_delays(prefix="csam_", label="CSAM"),
         ).resolve_scale(color='independent'))
 
         self.chart("csam-timelines", alt.vconcat(
             self.monthly_csam_sors(),
-            self.monthly_content_types(prefix="csam_"),
+            #self.monthly_content_types(prefix="csam_"),
             self.monthly_decision_grounds_for_csam(),
             self.monthly_decision_kinds_for_csam(),
-            self.monthly_visibility_changes_for_csam(),
+            #self.monthly_visibility_changes_for_csam(),
             self.monthly_provision_decisions_for_csam(),
             self.monthly_monetary_decisions_for_csam(),
             self.monthly_account_decisions_for_csam(),
@@ -627,7 +627,7 @@ class Visualizer:
         })
 
         return self.create_chart(
-            f"Mean Moderation & Reporting Delays{label} - Monthly Durations",
+            f"{label} SoRs: Moderation & Reporting Delays — Monthly Means",
             table,
             variable="Mean Delay",
             var_label="Days",
@@ -710,16 +710,19 @@ class Visualizer:
         KEY = "Platforms w/ Keywords"
         CSAM = "Platforms w/ CSAM"
 
-        table = self._platforms.lazy().with_columns(
+        table = self._statistics.lazy().with_columns(
             (pl.col("start_date") + dt.timedelta(days=15)).alias("mid_date"),
         ).group_by(
             pl.col("mid_date").dt.year().alias("year"),
             pl.col("mid_date").dt.month().alias("month"),
         ).agg(
             pl.col("mid_date").first(),
-            pl.col("platform").unique().alias(ALL),
-            pl.col("platform").filter(pl.col("has_keyword").gt(pl.lit(0))).unique().alias(KEY),
-            pl.col("platform").filter(pl.col("is_csam").gt(pl.lit(0))).unique().alias(CSAM),
+            pl.col("platform_value_counts")
+            .list.explode().struct.field("platform_name").unique().alias(ALL),
+            pl.col("platform_with_keyword_value_counts")
+            .list.explode().struct.field("platform_name").unique().alias(KEY),
+            pl.col("platform_with_csam_value_counts")
+            .list.explode().struct.field("platform_name").unique().alias(CSAM),
         ).sort(
             "mid_date"
         ).with_columns(
@@ -755,22 +758,89 @@ class Visualizer:
             ).interactive()
         )
 
-    def monthly_keyword_usage_minor_prot(self) -> alt.Chart | alt.LayerChart:
-        table = (
-            self._keywords.filter(
-                pl.col("keyword").is_in(self._short_keywords)
-            ).group_by(
-                pl.col("start_date").dt.year().alias("year"),
-                pl.col("start_date").dt.month().alias("month"),
-                pl.col("keyword")
-            ).agg(
-                pl.col("start_date").min() + dt.timedelta(days=5),
-                pl.col("end_date").max() - dt.timedelta(days=5),
-                pl.col("count").sum(),
-            ).with_columns(
-                pl.col("keyword").cast(pl.String).replace(self._short_keywords)
-                .alias("Keyword")
+    def total_sors_by_platform_minor_prot(
+        self, threshold: None | int = None
+    ) -> alt.Chart | alt.LayerChart:
+        table = self._statistics.lazy().select(
+            pl.col("platform_value_counts").list.explode().struct.unnest()
+        ).group_by(
+            "platform_name"
+        ).agg(
+            pl.col("count").sum()
+        ).sort(
+            "count"
+        ).filter(
+            pl.col("count") >= (threshold if threshold else 1)
+        ).collect()
+
+        if threshold:
+            base = alt.Chart(
+                table,
+                title=f"Protection of Minors SoRs: {table.height} Platforms ≥ "
+                f"{threshold:,} SoRs — Total Counts"
+            ).encode(
+                alt.X("platform_name:N", sort="y")
+                .axis(labelAngle=-45)
+                .title("Platform"),
+                alt.Y("count:Q")
+                .scale(type="log", domain=(10_000, 100_000_000), clamp=True)
+                .title("log(Statements of Reasons)"),
+                alt.Text("count:Q", format=",d"),
             )
+        else:
+            base = alt.Chart(
+                table, title="Protection of Minors SoRs by Platform — Total Counts"
+            ).encode(
+                alt.X("platform_name:N", sort="y")
+                .axis(labelAngle=-45, labelFontSize=8)
+                .title("Platform"),
+                alt.Y("count:Q")
+                .title("Statements of Reasons"),
+                alt.Text("count:Q", format=",d"),
+            )
+
+        chart = base.mark_bar(
+            tooltip=True,
+            color=f"{PURPLE}90" if threshold else PURPLE,
+        ).properties(
+            width=QUANT_WIDTH,
+            height=QUANT_HEIGHT,
+        )
+
+        if threshold is None or threshold < 50_000:
+            return chart
+        else:
+            text = base.mark_text(
+                yOffset=30,
+                angle=315,
+                fontSize=8,
+                fontWeight="bold",
+            )
+
+            return chart + text
+
+    def monthly_keyword_usage_minor_prot(self) -> alt.Chart | alt.LayerChart:
+        table = self._statistics.select(
+            pl.col("start_date", "end_date", "keyword_value_counts")
+        ).explode(
+            "keyword_value_counts"
+        ).with_columns(
+            pl.col("keyword_value_counts").struct.unnest()
+        ).rename({
+            "category_specification": "keyword"
+        }).filter(
+            pl.col("keyword").is_in(self._short_keywords)
+        ).group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+            pl.col("keyword")
+        ).agg(
+            pl.col("start_date").min() + dt.timedelta(days=5),
+            pl.col("end_date").max() - dt.timedelta(days=5),
+            pl.col("count").sum(),
+        ).with_columns(
+            pl.col("keyword").cast(pl.String).replace(self._short_keywords)
+            .alias("Keyword")
         )
 
         chart = (
@@ -821,30 +891,61 @@ class Visualizer:
     # Timelines: CSAM
 
     def monthly_share_of_csam_per_platform(self, percent: bool) -> alt.Chart:
-        frame = self._platforms.filter(
-            pl.col("platform").is_in(self._platforms_with_csam.get_column("platform"))
+        frame = self._statistics.lazy()
+        frame = frame.select(
+            pl.col("platform_value_counts").list.explode().struct.unnest()
         ).group_by(
-            pl.col("platform")
+            "platform_name"
         ).agg(
-            pl.col("total").sum(),
-            pl.col("has_keyword").sum(),
-            pl.col("is_csam").sum(),
+            pl.col("count").sum()
+        ).join(
+            frame.select(
+                pl.col("platform_with_keyword_value_counts").list.explode().struct.unnest()
+            ).group_by(
+                "platform_name"
+            ).agg(
+                pl.col("count").sum()
+            ),
+            on="platform_name",
+            how="right",
+        ).rename({
+            "count_right": "with_keyword"
+        }).join(
+            frame.select(
+                pl.col("platform_with_csam_value_counts").list.explode().struct.unnest()
+            ).group_by(
+                "platform_name"
+            ).agg(
+                pl.col("count").sum()
+            ),
+            on="platform_name",
+            how="right",
+        ).rename({
+            "count_right": "with_csam",
+        }).with_columns(
+            pl.col("with_keyword", "with_csam").fill_null(0)
         ).with_columns(
-            (pl.col("has_keyword") - pl.col("is_csam")).alias("other_keyword"),
-            (pl.col("total") - pl.col("has_keyword")).alias("no_keyword"),
+            (pl.col("with_keyword") - pl.col("with_csam")).alias("other_keyword"),
+            (pl.col("count") - pl.col("with_keyword")).alias("no_keyword"),
+        ).sort(
+            "platform_name"
         )
 
+        title = "Keywords Used by Platforms Reporting CSAM — "
         if percent:
+            title += "Percentage Fractions"
             frame = frame.select(
-                pl.col("platform"),
-                (pl.col("is_csam") / pl.col("total") * 100).alias("is_csam"),
-                (pl.col("other_keyword") / pl.col("total") * 100).alias("other_keyword"),
-                (pl.col("no_keyword") / pl.col("total") * 100).alias("no_keyword"),
+                pl.col("platform_name"),
+                (pl.col("with_csam") / pl.col("count") * 100).alias("with_csam"),
+                (pl.col("other_keyword") / pl.col("count") * 100).alias("other_keyword"),
+                (pl.col("no_keyword") / pl.col("count") * 100).alias("no_keyword"),
             )
+        else:
+            title += "Total Counts"
 
         frame = frame.rename({
-            "platform": "Platform",
-            "is_csam": "CSAM",
+            "platform_name": "Platform",
+            "with_csam": "CSAM",
             "other_keyword": "Other Keyword",
             "no_keyword": "—none—",
         }).unpivot(
@@ -852,13 +953,13 @@ class Visualizer:
             on=["CSAM", "Other Keyword", "—none—"],
             variable_name="Kind",
             value_name="Percent" if percent else "SoRs",
-        )
+        ).collect()
 
         y_data = "sum(Percent):Q" if percent else "sum(SoRs):Q"
         y_title = "Percent Fraction" if percent else "Statements of Reasons"
 
         return alt.Chart(
-            frame, title="Breakdown for Statements of Reasons by Keyword",
+            frame, title=title
         ).mark_bar(
             size=30,
             tooltip=True,
@@ -961,25 +1062,25 @@ class Visualizer:
             width=TIMELINE_WIDTH,
         ).interactive()
 
-    def monthly_content_types(self, prefix: str) -> alt.Chart:
-        table = self.extract_table2("Content Type", {
-            f"{prefix}content_type_app": "App",
-            f"{prefix}content_type_audio": "Audio",
-            f"{prefix}content_type_image": "Image",
-            f"{prefix}content_type_product": "Product",
-            f"{prefix}content_type_synthetic_media": "Synthetic Media",
-            f"{prefix}content_type_text": "Text",
-            f"{prefix}content_type_video": "Video",
-            f"{prefix}content_type_other": "Other",
-        })
+    # def monthly_content_types(self, prefix: str) -> alt.Chart:
+    #     table = self.extract_table2("Content Type", {
+    #         f"{prefix}content_type_app": "App",
+    #         f"{prefix}content_type_audio": "Audio",
+    #         f"{prefix}content_type_image": "Image",
+    #         f"{prefix}content_type_product": "Product",
+    #         f"{prefix}content_type_synthetic_media": "Synthetic Media",
+    #         f"{prefix}content_type_text": "Text",
+    #         f"{prefix}content_type_video": "Video",
+    #         f"{prefix}content_type_other": "Other",
+    #     })
 
-        return self.create_chart(
-            "Content Types for CSAM - Monthly Counts",
-            table,
-            variable="Content Type",
-            domain=["Audio", "Image", "Product", "Synthetic Media", "Text", "Video", "Other"],
-            range=[LIGHT_BLUE, BLUE, ORANGE, RED, PINK, PURPLE, GRAY],
-        )
+    #     return self.create_chart(
+    #         "Content Types for CSAM - Monthly Counts",
+    #         table,
+    #         variable="Content Type",
+    #         domain=["Audio", "Image", "Product", "Synthetic Media", "Text", "Video", "Other"],
+    #         range=[LIGHT_BLUE, BLUE, ORANGE, RED, PINK, PURPLE, GRAY],
+    #     )
 
     def monthly_decision_grounds_for_csam(self) -> alt.Chart | alt.LayerChart:
         assert 0 == self._statistics.select(
@@ -1106,25 +1207,53 @@ class Visualizer:
             range=[ORANGE, RED, GRAY],
         )
 
-    def monthly_visibility_changes_for_csam(self) -> alt.Chart | alt.LayerChart:
-        table = self.extract_table2("Visibility Decision", {
-            "csam_content_removed": "Removed",
-            "csam_content_disabled": "Disabled",
-            "csam_content_demoted": "Demoted",
-            "csam_content_age_restricted": "Age Restricted",
-            "csam_content_interaction_restricted": "Interaction Restricted",
-            "csam_content_labeled": "Labeled",
-            "csam_other_visibility": "Other",
-            "csam_null_visibility_decision": "—none—",
-        })
+    # def monthly_visibility_changes_for_csam(self) -> alt.Chart | alt.LayerChart:
+    #     table = self._statistics.select(
+    #         pl.col("start_date", "end_date", "csam_visibility_decision_value_counts")
+    #     ).explode(
+    #         "visibility_decision_value_counts"
+    #     )
 
-        return self.create_chart(
-            "Visibility Decisions for CSAM - Monthly Counts",
-            table,
-            variable="Visibility Decision",
-            domain=["Removed", "Disabled", "Other", "—none—"],
-            range=[LIGHT_BLUE, RED, BLUE, GRAY],
-        )
+
+
+
+    #     .group_by(
+    #         pl.col("start_date").dt.year().alias("year"),
+    #         pl.col("start_date").dt.month().alias("month"),
+    #     ).agg(
+    #         pl.col("start_date").min() + dt.timedelta(days=5),
+    #         pl.col("end_date").max() - dt.timedelta(days=5),
+    #         *(
+    #             pl.col(c).sum() for c in columns.keys()
+    #         )
+    #     ).rename(
+    #         columns
+    #     ).unpivot(
+    #         index=["start_date", "end_date"],
+    #         on=[*columns.values()],
+    #         variable_name=variable,
+    #         value_name="Count",
+    #     )
+
+
+    #     table = self.extract_table2("Visibility Decision", {
+    #         "csam_content_removed": "Removed",
+    #         "csam_content_disabled": "Disabled",
+    #         "csam_content_demoted": "Demoted",
+    #         "csam_content_age_restricted": "Age Restricted",
+    #         "csam_content_interaction_restricted": "Interaction Restricted",
+    #         "csam_content_labeled": "Labeled",
+    #         "csam_other_visibility": "Other",
+    #         "csam_null_visibility_decision": "—none—",
+    #     })
+
+    #     return self.create_chart(
+    #         "Visibility Decisions for CSAM - Monthly Counts",
+    #         table,
+    #         variable="Visibility Decision",
+    #         domain=["Removed", "Disabled", "Other", "—none—"],
+    #         range=[LIGHT_BLUE, RED, BLUE, GRAY],
+    #     )
 
     def monthly_automated_detection_for_csam(self) -> alt.Chart:
         table = self.extract_table2("Automated Detection", {
@@ -1202,7 +1331,7 @@ class Summary:
     max_platforms_csam: int
 
     @classmethod
-    def of(cls, metadata: pl.DataFrame, platforms: pl.DataFrame) -> Self:
+    def of(cls, metadata: pl.DataFrame, statistics: pl.DataFrame) -> Self:
         """Create the summary."""
         start_date, end_date, batch_rows, batch_memory, mean_minor_prot_pct = (
             metadata.select(
@@ -1230,17 +1359,20 @@ class Summary:
             ).row(0)
         )
 
-        max_platforms = platforms.select(pl.col("platform").unique().len()).item()
-        max_platforms_keywords = platforms.filter(
-            pl.col("has_keyword").gt(pl.lit(0))
-        ).select(
-            pl.col("platform").unique().len()
-        ).item()
-        max_platforms_csam = platforms.filter(
-            pl.col("is_csam").gt(pl.lit(0))
-        ).select(
-            pl.col("platform").unique().len()
-        ).item()
+        def get_max_platforms(column: str) -> pl.Expr:
+            return (
+                pl.col(column)
+                .list.explode()
+                .struct.field("platform_name")
+                .unique()
+                .len()
+            )
+
+        max_platforms, max_platforms_keywords, max_platforms_csam = statistics.select(
+            get_max_platforms("platform_value_counts").alias("total"),
+            get_max_platforms("platform_with_keyword_value_counts").alias("with_keyword"),
+            get_max_platforms("platform_with_csam_value_counts").alias("with_csams"),
+        ).row(0)
 
         return cls(
             start_date=start_date,
@@ -1256,11 +1388,18 @@ class Summary:
             max_platforms_csam=max_platforms_csam,
         )
 
-    def markdown(self) -> str:
+    def to_frame(self) -> pl.DataFrame:
+        return pl.DataFrame(self._rows(), orient="row", schema=["Attribute", "Value"])
+
+    def to_markdown(self) -> str:
+        return to_markdown_table(*self._rows(), columns=["Attribute", "Value"])
+
+    def _rows(self) -> list[list[str]]:
         row_size, row_unit = scale(self.batch_rows)
         total_rows, total_unit = scale(self.total_rows)
         mem_size, mem_unit = scale(self.batch_memory)
-        return to_markdown_table(
+
+        return [
             [
                 "Dates",
                 f"{self.start_date} to {self.end_date} (inclusive)"
@@ -1285,9 +1424,7 @@ class Summary:
                 "Size of in-memory frames",
                 f"{mem_size:,.1f} {mem_unit}byte"
             ],
-            columns=["Attribute", "Value"],
-        )
-
+        ]
 
 # --------------------------------------------------------------------------------------
 # Schema Rendering
