@@ -1,16 +1,24 @@
 """
-Schema definitions.
+Schemata
 
-This project originally used precise enum types for fields with categorical
-values. However, that makes summarizing the data harder, as that place different
-types into the same variant column (for a long frame). The alternative requires
-nested lists of structs (for a wide frame) and are surprisingly buggy in
-Pola.rs. That ideal schema should still guide all data wrangling, but Pola.rs
-fare better with less strict types.
+Shantay uses `SCHEMA` as its schema for transparency database records. That
+schema is as tight as possible, using specific enumerations where they are
+documented. But to successfully ingest database records, the tool also uses the
+weaker schemas `PARTIAL_SCHEMA` and `BASE_SCHEMA`. Data frames read in with
+either schema are incrementally transformed to the tighter main schema.
+Meanwhile, statistics data needs to combine many different enumerations in the
+same column and hence uses more relaxed type constraints.
 """
+import datetime as dt
 import enum
-from types import MappingProxyType
+from types import GenericAlias, MappingProxyType
+from typing import Any, get_args, get_origin
+
 import polars as pl
+
+
+# ======================================================================================
+# Language and Country Codes
 
 
 class ContentLanguage(enum.Enum):
@@ -234,6 +242,24 @@ class TerritorialScope(enum.Enum):
     SK = "Slovakia"
 
 
+class TerritorialAlias(enum.StrEnum):
+    EU = (
+    '["AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR","HR","HU","IE",'
+    '"IT","LT","LU","LV","MT","NL","PL","PT","RO","SE","SI","SK"]'
+    )
+    EEA = (
+        '["AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR","HR","HU","IE",'
+        '"IS","IT","LI","LT","LU","LV","MT","NL","NO","PL","PT","RO","SE","SI","SK"]'
+    )
+    EEA_no_IS = (
+        '["AT","BE","BG","CY","CZ","DE","DK","EE","ES","FI","FR","GR","HR","HU","IE",'
+        '"IT","LI","LT","LU","LV","MT","NL","NO","PL","PT","RO","SE","SI","SK"]'
+    )
+
+
+# ======================================================================================
+
+
 AccountType = (
     "ACCOUNT_TYPE_BUSINESS",
     "ACCOUNT_TYPE_PRIVATE",
@@ -294,6 +320,14 @@ DecisionVisibility = (
     "DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED",
     "DECISION_VISIBILITY_CONTENT_LABELLED",
     "DECISION_VISIBILITY_OTHER",
+)
+
+
+InformationSource = (
+    "SOURCE_ARTICLE_16",
+    "SOURCE_TRUSTED_FLAGGER",
+    "SOURCE_TYPE_OTHER_NOTIFICATION",
+    "SOURCE_VOLUNTARY",
 )
 
 
@@ -415,44 +449,6 @@ Keyword = (
 )
 
 
-SourceType = (
-    "SOURCE_ARTICLE_16",
-    "SOURCE_TRUSTED_FLAGGER",
-    "SOURCE_TYPE_OTHER_NOTIFICATION",
-    "SOURCE_VOLUNTARY",
-)
-
-
-StatementCategory = (
-    "STATEMENT_CATEGORY_ANIMAL_WELFARE",
-    "STATEMENT_CATEGORY_CONSUMER_INFORMATION",
-    "STATEMENT_CATEGORY_CYBER_VIOLENCE",
-    "STATEMENT_CATEGORY_CYBER_VIOLENCE_AGAINST_WOMEN",
-    "STATEMENT_CATEGORY_DATA_PROTECTION_AND_PRIVACY_VIOLATIONS",
-    "STATEMENT_CATEGORY_ILLEGAL_OR_HARMFUL_SPEECH",
-    "STATEMENT_CATEGORY_INTELLECTUAL_PROPERTY_INFRINGEMENTS",
-    "STATEMENT_CATEGORY_NEGATIVE_EFFECTS_ON_CIVIC_DISCOURSE_OR_ELECTIONS",
-    "STATEMENT_CATEGORY_NON_CONSENSUAL_BEHAVIOUR",
-    "STATEMENT_CATEGORY_NOT_SPECIFIED_NOTICE",
-    "STATEMENT_CATEGORY_OTHER_VIOLATION_TC",
-    "STATEMENT_CATEGORY_PORNOGRAPHY_OR_SEXUALIZED_CONTENT",
-    "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
-    "STATEMENT_CATEGORY_RISK_FOR_PUBLIC_SECURITY",
-    "STATEMENT_CATEGORY_SCAMS_AND_FRAUD",
-    "STATEMENT_CATEGORY_SELF_HARM",
-    "STATEMENT_CATEGORY_SCOPE_OF_PLATFORM_SERVICE",
-    "STATEMENT_CATEGORY_UNSAFE_AND_ILLEGAL_PRODUCTS",
-    "STATEMENT_CATEGORY_UNSAFE_AND_PROHIBITED_PRODUCTS",
-    "STATEMENT_CATEGORY_VIOLENCE",
-)
-
-
-YesNo = (
-    "Yes",
-    "No",
-)
-
-
 PlatformName = (
     "AliExpress",
     "Badoo",
@@ -501,27 +497,197 @@ PlatformName = (
 )
 
 
+CANONICAL_PLATFORM_NAMES = MappingProxyType({
+    "Discord Netherlands B.V.": "Discord",
+    "OTTO Market": "OTTO",
+    "Quora Ireland Limited": "Quora",
+    "WhatsApp Channels": "WhatsApp",
+    "willhaben internet service GmbH & Co KG": "willhaben",
+    "www.gutefrage.net": "gutefrage.net"
+})
+
+
 # See
 # https://transparency.dsa.ec.europa.eu/page/additional-explanation-for-statement-attributes
 # for two-level classification for types of violative activity.
 
-VariantValueType = pl.Enum((
-    *PlatformName,
-    *(v.name for v in ContentLanguage),
-    *(v.name for v in TerritorialScope if v.name not in ContentLanguage.__members__),
-    *AccountType,
-    *AutomatedDecision,
-    *ContentType,
-    *DecisionAccount,
-    *DecisionGround,
-    *DecisionMonetary,
-    *DecisionProvision,
-    *DecisionVisibility,
-    *Keyword,
-    *SourceType,
-    *StatementCategory,
-    *YesNo,
+StatementCategory = (
+    "STATEMENT_CATEGORY_ANIMAL_WELFARE",
+    "STATEMENT_CATEGORY_CONSUMER_INFORMATION",
+    "STATEMENT_CATEGORY_CYBER_VIOLENCE",
+    "STATEMENT_CATEGORY_CYBER_VIOLENCE_AGAINST_WOMEN",
+    "STATEMENT_CATEGORY_DATA_PROTECTION_AND_PRIVACY_VIOLATIONS",
+    "STATEMENT_CATEGORY_ILLEGAL_OR_HARMFUL_SPEECH",
+    "STATEMENT_CATEGORY_INTELLECTUAL_PROPERTY_INFRINGEMENTS",
+    "STATEMENT_CATEGORY_NEGATIVE_EFFECTS_ON_CIVIC_DISCOURSE_OR_ELECTIONS",
+    "STATEMENT_CATEGORY_NON_CONSENSUAL_BEHAVIOUR",
+    "STATEMENT_CATEGORY_NOT_SPECIFIED_NOTICE",
+    "STATEMENT_CATEGORY_OTHER_VIOLATION_TC",
+    "STATEMENT_CATEGORY_PORNOGRAPHY_OR_SEXUALIZED_CONTENT",
+    "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+    "STATEMENT_CATEGORY_RISK_FOR_PUBLIC_SECURITY",
+    "STATEMENT_CATEGORY_SCAMS_AND_FRAUD",
+    "STATEMENT_CATEGORY_SELF_HARM",
+    "STATEMENT_CATEGORY_SCOPE_OF_PLATFORM_SERVICE",
+    "STATEMENT_CATEGORY_UNSAFE_AND_ILLEGAL_PRODUCTS",
+    "STATEMENT_CATEGORY_UNSAFE_AND_PROHIBITED_PRODUCTS",
+    "STATEMENT_CATEGORY_VIOLENCE",
+)
+
+
+YesNo = (
+    "Yes",
+    "No",
+)
+
+
+# ======================================================================================
+# Schemata
+
+
+FIELDS = MappingProxyType({
+    "uuid": str,
+
+    "decision_visibility": list[DecisionVisibility],
+    "decision_visibility_other": str,
+    "end_date_visibility_restriction": dt.datetime,
+
+    "decision_monetary": DecisionMonetary,
+    "decision_monetary_other": str,
+    "end_date_monetary_restriction": dt.datetime,
+
+    "decision_provision": DecisionProvision,
+    "end_date_service_restriction": dt.datetime,
+
+    "decision_account": DecisionAccount,
+    "end_date_account_restriction": dt.datetime,
+
+    "account_type": AccountType,
+
+    "decision_ground": DecisionGround,
+    "decision_ground_reference_url": str,
+
+    "illegal_content_legal_ground": str,
+    "illegal_content_explanation": str,
+
+    "incompatible_content_ground": str,
+    "incompatible_content_explanation": str,
+    "incompatible_content_illegal": YesNo,
+
+    "category": StatementCategory,
+    "category_addition": list[StatementCategory],
+    "category_specification": list[Keyword],
+    "category_specification_other": str,
+
+    "content_type": list[ContentType],
+    "content_type_other": str,
+    "content_language": tuple(v.name for v in ContentLanguage),
+    "content_date": dt.datetime,
+
+    "territorial_scope": list[tuple(v.name for v in TerritorialScope)],
+    "application_date": dt.datetime,
+    "decision_facts": str,
+
+    "source_type": InformationSource,
+    "source_identity": str,
+    "automated_detection": YesNo,
+    "automated_decision": AutomatedDecision,
+
+    "platform_name": str,
+    "platform_uid": str,
+
+    "created_at": dt.datetime,
+    #"release_on": dt.date,
+})
+
+
+def polarize(ptype: GenericAlias | tuple[str, ...] | type) -> Any:
+    """
+    Convert a Python type to a Pola.rs type. This function handles int, float,
+    str, datetime.date, datetime.datetime, and list[<type>]. It also treats
+    tuples of strings as enumerations.
+    """
+    if ptype is dt.date:
+        return pl.Date
+    if ptype is dt.datetime:
+        return pl.Datetime(time_unit="ms")
+    if ptype is int:
+        return pl.Int64
+    if ptype is float:
+        return pl.Float64
+    if ptype is str:
+        return pl.String
+    if isinstance(ptype, tuple) and all(isinstance(v, str) for v in ptype):
+        return pl.Enum(ptype)
+
+    origin = get_origin(ptype)
+    args = get_args(ptype)
+
+    if origin is list:
+        if len(args) == 1 and not isinstance(args[0], str):
+            return pl.List(polarize(args[0]))
+
+        return pl.List(polarize(args))
+
+    raise ValueError(f'cannot convert "{ptype}"')
+
+
+def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
+    partial = {}
+    base = {}
+    full = {}
+
+    for name, ptype in FIELDS.items():
+        dtype = polarize(ptype)
+        is_enum = isinstance(dtype, pl.Enum)
+
+        if is_enum and name != "content_language":
+            partial[name] = dtype
+
+        if is_enum:
+            base[name] = dtype
+        else:
+            base[name] = pl.String
+
+        full[name] = dtype
+
+    return pl.Schema(partial), pl.Schema(base), pl.Schema(full)
+
+PARTIAL_SCHEMA, BASE_SCHEMA, SCHEMA = _generate_schemata()
+del _generate_schemata
+
+
+ColumnValueType = pl.Enum((
+    "start_date",
+    "end_date",
+    "batch_count",
+    "total_rows",
+    "total_rows_with_keywords",
+    "rows",
+    "decision_type",
+    "visibility_restriction_duration",
+    "monetary_restriction_duration",
+    "service_restriction_duration",
+    "account_restriction_duration",
+    "moderation_delay",
+    "disclosure_delay",
+    *(c for c in SCHEMA.names())
 ))
+
+
+STATISTICS_SCHEMA = pl.Schema({
+    "start_date": pl.Date,
+    "end_date": pl.Date,
+    "tag": pl.Categorical(),
+    "column": ColumnValueType,
+    "entity": pl.Categorical(),
+    "duration": pl.Duration(time_unit="ms"),
+    "variant": pl.Categorical(),
+    "count": pl.UInt64,
+})
+
+
+# ======================================================================================
 
 
 KEYWORDS_MINOR_PROTECTION = MappingProxyType({
@@ -543,16 +709,6 @@ KEYWORDS_MINOR_PROTECTION_PLUS = MappingProxyType(KEYWORDS_MINOR_PROTECTION | {
     "KEYWORD_NUDITY": "Nudity",
     "KEYWORD_ONLINE_BULLYING_INTIMIDATION": "Bullying",
     "KEYWORD_REGULATED_GOODS_SERVICES": "Regulated",
-})
-
-
-PLATFORM_NAMES = MappingProxyType({
-    "Discord Netherlands B.V.": "Discord",
-    "OTTO Market": "OTTO",
-    "Quora Ireland Limited": "Quora",
-    "WhatsApp Channels": "WhatsApp",
-    "willhaben internet service GmbH & Co KG": "willhaben",
-    "www.gutefrage.net": "gutefrage.net"
 })
 
 
@@ -764,234 +920,3 @@ KEYWORDS_V2 = frozenset([
     # --- Other
     "KEYWORD_OTHER",
 ])
-
-
-# The complete and final schema.
-FIELDS = MappingProxyType({
-    "uuid": pl.String,
-
-    "decision_visibility": pl.List(VariantValueType),
-    "decision_visibility_other": pl.String,
-    "end_date_visibility_restriction": pl.Datetime(time_unit="ms"),
-
-    "decision_monetary": VariantValueType,
-    "decision_monetary_other": pl.String,
-    "end_date_monetary_restriction": pl.Datetime(time_unit="ms"),
-
-    "decision_provision": VariantValueType,
-    "end_date_service_restriction": pl.Datetime(time_unit="ms"),
-
-    "decision_account": VariantValueType,
-    "end_date_account_restriction": pl.Datetime(time_unit="ms"),
-
-    "account_type": VariantValueType,
-
-    "decision_ground": VariantValueType,
-    "decision_ground_reference_url": pl.String,
-
-    "illegal_content_legal_ground": pl.String,
-    "illegal_content_explanation": pl.String,
-
-    "incompatible_content_ground": pl.String,
-    "incompatible_content_explanation": pl.String,
-    "incompatible_content_illegal": VariantValueType,
-
-    "category": VariantValueType,
-    "category_addition": pl.List(VariantValueType),
-    "category_specification": pl.List(VariantValueType),
-    "category_specification_other": pl.String,
-
-    "content_type": pl.List(VariantValueType),
-    "content_type_other": pl.String,
-    "content_language": VariantValueType,
-    "content_date": pl.Datetime(time_unit="ms"),
-
-    "territorial_scope": pl.List(VariantValueType),
-    "application_date": pl.Datetime(time_unit="ms"),
-    "decision_facts": pl.String,
-
-    "source_type": VariantValueType,
-    "source_identity": pl.String,
-    "automated_detection": VariantValueType,
-    "automated_decision": VariantValueType,
-
-    "platform_name": pl.String,
-    "platform_uid": pl.String,
-
-    "created_at": pl.Datetime(time_unit="ms"),
-    "released_on": pl.Datetime(time_unit="ms"),
-})
-
-
-def generate_schemas() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
-    base = {}
-    partial = {}
-
-    for name, dtype in FIELDS.items():
-        if dtype == VariantValueType:
-            partial[name] = dtype
-
-        if name == "released_on":
-            continue
-
-        base[name] = dtype if dtype == VariantValueType else pl.String
-
-    return pl.Schema(FIELDS), pl.Schema(base), pl.Schema(partial)
-
-SCHEMA, BASE_SCHEMA, PARTIAL_SCHEMA = generate_schemas()
-del generate_schemas
-
-
-# --------------------------------------------------------------------------------------
-
-_EU = tuple([
-    "AT",
-    "BE",
-    "BG",
-    "CY",
-    "CZ",
-    "DE",
-    "DK",
-    "EE",
-    "ES",
-    "FI",
-    "FR",
-    "GR",
-    "HR",
-    "HU",
-    "IE",
-    "IT",
-    "LT",
-    "LU",
-    "LV",
-    "MT",
-    "NL",
-    "PL",
-    "PT",
-    "RO",
-    "SE",
-    "SI",
-    "SK",
-])
-
-_EEA = tuple([
-    "AT",
-    "BE",
-    "BG",
-    "CY",
-    "CZ",
-    "DE",
-    "DK",
-    "EE",
-    "ES",
-    "FI",
-    "FR",
-    "GR",
-    "HR",
-    "HU",
-    "IE",
-    "IS",
-    "IT",
-    "LI",
-    "LT",
-    "LU",
-    "LV",
-    "MT",
-    "NL",
-    "NO",
-    "PL",
-    "PT",
-    "RO",
-    "SE",
-    "SI",
-    "SK",
-])
-
-_EEA_no_IS = tuple([
-    "AT",
-    "BE",
-    "BG",
-    "CY",
-    "CZ",
-    "DE",
-    "DK",
-    "EE",
-    "ES",
-    "FI",
-    "FR",
-    "GR",
-    "HR",
-    "HU",
-    "IE",
-    "IT",
-    "LI",
-    "LT",
-    "LU",
-    "LV",
-    "MT",
-    "NL",
-    "NO",
-    "PL",
-    "PT",
-    "RO",
-    "SE",
-    "SI",
-    "SK",
-])
-
-class CountryGroups:
-    EU="[" + ",".join(f'"{c}"' for c in _EU) + "]"
-    EEA="[" + ",".join(f'"{c}"' for c in _EEA) + "]"
-    EEA_no_IS="[" + ",".join(f'"{c}"' for c in _EEA_no_IS) + "]"
-
-
-ColumnValueType = pl.Enum((
-    "start_date",
-    "end_date",
-    "batch_count",
-    "total_rows",
-    "total_rows_with_keywords",
-    "rows",
-    "decision_type",
-    "visibility_restriction_duration",
-    "monetary_restriction_duration",
-    "service_restriction_duration",
-    "account_restriction_duration",
-    "moderation_delay",
-    "disclosure_delay",
-    *(c for c in SCHEMA.names())
-))
-
-
-EntityValueType = pl.Enum((
-    "application_date__end_date_visibility_restriction",
-    "application_date__end_date_monetary_restriction",
-    "application_date__end_date_service_restriction",
-    "application_date__end_date_account_restriction",
-    "with_end_date_visibility_restriction",
-    "with_end_date_service_restriction",
-    "with_end_date_account_restriction",
-    "with_category_specification",
-    "with_KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
-    "content_date__application_date",
-    "application_date__created_at",
-    "elements",
-    "max_elements_per_row",
-    "rows_with_elements",
-    "all_null",
-    "vis",
-    "mon",
-    "vis_mon",
-    "pro",
-    "vis_pro",
-    "mon_pro",
-    "vis_mon_pro",
-    "acc",
-    "vis_acc",
-    "mon_acc",
-    "vis_mon_acc",
-    "pro_acc",
-    "vis_pro_acc",
-    "mon_pro_acc",
-    "vis_mon_pro_acc",
-))

@@ -1,6 +1,7 @@
 from abc import abstractmethod, ABCMeta
 from collections import Counter
 from collections.abc import Iterator
+from contextlib import AbstractContextManager
 from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
@@ -348,6 +349,9 @@ class DateRange(Period):
         """
         return self.last
 
+    def intersect(self, other: Self) -> Self:
+        return type(self)(max(self.first, other.first), min(self.last, other.last))
+
     def to_release_range(self) -> ReleaseRange[Daily]:
         """Convert to the corresponding daily release range."""
         return ReleaseRange(Daily.of(self.first), Daily.of(self.last))
@@ -417,6 +421,9 @@ class Coverage[R: Release]:
     def __len__(self) -> int:
         return self.last - self.first + 1
 
+    def to_date_range(self) -> DateRange:
+        return DateRange(self.first.start_date, self.last.end_date)
+
 
 class CollectorProtocol[R: Release](Protocol):
     """The protocol for incremental data frame generation."""
@@ -476,6 +483,10 @@ class Dataset[R: Release](metaclass=ABCMeta):
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
+
+    @abstractmethod
+    def analysis_context(self) -> AbstractContextManager:
+        """Create a new analysis context to cover calls to analyze_release."""
 
     @abstractmethod
     def analyze_release(

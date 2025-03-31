@@ -25,7 +25,7 @@ import polars as pl
 
 from .metadata import FullMetadataEntry
 from .model import ConfigError, DateRange, Period, QueryExpression, Release
-from .schema import ColumnValueType, EntityValueType, VariantValueType
+from .schema import ColumnValueType, STATISTICS_SCHEMA
 from .util import scale_time
 
 
@@ -121,6 +121,9 @@ def resolve_query_binding(s: str) -> QueryExpression:
     return v
 
 
+# --------------------------------------------------------------------------------------
+
+
 class _FieldType(enum.Enum):
     """The different field types in a snapshot."""
     ROWS = enum.auto()
@@ -142,13 +145,13 @@ class _ValueCountsPlusField:
     other_field: str
     other_value: None | str = None
     other_is_list: None | bool = None
-
+    self_is_list: bool = False
 
 # The fields cover all DSA transparency database entries without unconstrained text.
 _FIELDS = {
     "rows": _FieldType.ROWS,
     "decision_type": _FieldType.DECISION_TYPE,
-    "decision_visibility": _ValueCountsPlusField("end_date_visibility_restriction", None, True),
+    "decision_visibility": _ValueCountsPlusField("end_date_visibility_restriction", self_is_list=True),
     "visibility_restriction_duration": _DurationField("application_date", "end_date_visibility_restriction"),
     "decision_monetary": _FieldType.VALUE_COUNTS,
     "monetary_restriction_duration": _DurationField("application_date", "end_date_monetary_restriction"),
@@ -178,7 +181,12 @@ _FIELDS = {
 
 
 class Reducer:
-
+    """
+    A class to extract summary statistics from a data frame in a principled
+    fashion. Concrete subclasses are `Collector` for deriving statistics from
+    the working data and `Summarizer` for further condensing a collector's data
+    into a (long) list of key, value pairs.
+    """
     def __init__(self) -> None:
         self._source = None
         self._tag = None
@@ -194,7 +202,7 @@ class Reducer:
     ) -> Iterator[Self]:
         """Create a context for the release."""
         old_source, self._source = self._source, frame
-        old_tag, self._tag = self._tag, tag
+        old_tag, self._tag = self._tag, (tag if tag != "" else None)
         old_release, self._release = self._release, release
         try:
             yield self
@@ -211,7 +219,7 @@ class Reducer:
     ) -> Iterator[Self]:
         """Create a tagged context."""
         old_source, self._source = self._source, frame
-        old_tag, self._tag = self._tag, tag
+        old_tag, self._tag = self._tag, (tag if tag != "" else None)
         try:
             yield self
         finally:
@@ -219,51 +227,42 @@ class Reducer:
             self._tag = old_tag
 
 
+# --------------------------------------------------------------------------------------
+
+
 class Collector(Reducer):
+    """Analyze the data while also collecting the results."""
 
     def add_frame(
         self,
         column: str,
         entity: None | str = None,
-        # Three value columns
+        # Three value columns, but count and value_counts are mutually exclusive
         duration: None | pl.Expr = None,
-        variant: None | str = None,
         count: None | int | pl.Expr = None,
-        # value_counts replaces variant and/or count
         value_counts: None | pl.Expr = None,
     ) -> None:
         """Add a frame, which has a small number of rows."""
         if duration is not None:
-            effective_duration = duration.cast(pl.Duration).alias("duration")
+            effective_values = [duration.cast(pl.Duration(time_unit="ms")).alias("duration")]
         else:
-            effective_duration = pl.lit(None, dtype=pl.Duration).alias("duration")
+            effective_values = [pl.lit(None, dtype=pl.Duration(time_unit="ms")).alias("duration")]
 
-        if value_counts is None and count is None:
-            effective_count_variant = [
-                pl.lit(None, dtype=VariantValueType).alias("variant"),
-                pl.lit(None, dtype=pl.UInt64).alias("count"),
-            ]
-        elif value_counts is not None:
-            assert count is None, "pass either value_counts or counts/variant but not all"
-            assert variant is None, "pass either value_counts or counts/variant but not all"
-            effective_count_variant = [
-                value_counts.value_counts().list.explode().struct.with_fields(
-                    pl.field(column).cast(VariantValueType),
-                    pl.field("count").cast(pl.UInt64),
-                ).struct.unnest()
-            ]
-        elif isinstance(count, int): # value_count must be None
-            effective_count_variant = [
-                pl.lit(None, dtype=VariantValueType).alias("variant"),
-                pl.lit(count, dtype=pl.UInt64).alias("count"),
-            ]
-        elif isinstance(count, pl.Expr):
-            effective_count_variant = [
-                pl.lit(None, dtype=VariantValueType).alias("variant"),
-                count.cast(pl.UInt64).alias("count"),
-            ]
+        if value_counts is None:
+            effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant"))
+            if count is None:
+                effective_values.append(pl.lit(None, dtype=pl.UInt64).alias("count"))
+            elif isinstance(count, int):
+                effective_values.append(pl.lit(count, dtype=pl.UInt64).alias("count"))
+            elif isinstance(count, pl.Expr):
+                effective_values.append(count.cast(pl.UInt64).alias("count"))
+            else:
+                raise AssertionError("unreachable")
         else:
-            raise AssertionError("unreachable")
+            assert count is None, "provide count or value_counts but not both"
+            effective_values.append(
+                value_counts.value_counts().list.explode().struct.unnest()
+            )
 
         tag = self._tag if self._tag != "" else None
         entity = entity if entity != "" else None
@@ -273,31 +272,30 @@ class Collector(Reducer):
         frame = self._source.select(
             pl.lit(self._release.start_date, dtype=pl.Date).alias("start_date"),
             pl.lit(self._release.end_date, dtype=pl.Date).alias("end_date"),
-            pl.lit(tag, dtype=pl.String).alias("tag"),
+            pl.lit(tag, dtype=pl.Categorical).alias("tag"),
             pl.lit(column, dtype=ColumnValueType).alias("column"),
-            pl.lit(entity, dtype=EntityValueType).alias("entity"),
-            effective_duration,
-            *effective_count_variant,
+            pl.lit(entity, dtype=pl.Categorical).alias("entity"),
+            *effective_values,
         )
+
+        if column == "batch_count":
+            print(frame)
 
         if value_counts is not None:
             frame = frame.rename({
                 column: "variant",
-            })
+            }).with_columns(
+                pl.col("variant").cast(pl.String).cast(pl.Categorical),
+                pl.col("count").cast(pl.UInt64)
+            )
+
+        if column == "batch_count":
+            print(frame)
 
         self._frames.append(frame)
 
-    def collect_value_counts(self, column: str, entity: str, values: pl.Expr) -> None:
-        """Collect values counts for column."""
-        self.add_frame(column, entity=entity, value_counts=values)
-
-    def collect_duration(self, name: str, start: str, end: str) -> None:
-        """Collect difference between end and start columns as duration."""
-        self.add_frame(
-             name, entity=f"{start}__{end}", duration=(pl.col(end)-pl.col(start)).drop_nulls(), count=1
-        )
-
     def collect_decision_type(self) -> None:
+        """Collect counts for the combination of four decision types."""
         # 4 decision types makes for 16 combinations thereof
         for count in range(16):
             expr = None
@@ -317,23 +315,17 @@ class Collector(Reducer):
                     expr = expr.and_(clause)
 
             assert expr is not None
-            entity = "all_null" if count == 0 else "_".join(suffix)
+            entity = "is_null" if count == 0 else "_".join(suffix)
             self.add_frame("decision_type", entity=entity, count=expr.sum())
 
-    def collect_header(
-        self, batch_count: int, total_rows: int, total_rows_with_keywords: int
-    ) -> None:
-        self.add_frame("batch_count", count=batch_count)
-        self.add_frame("total_rows", count=total_rows)
-        self.add_frame("total_rows_with_keywords", count=total_rows_with_keywords)
-
     def collect_snapshot(self) -> None:
+        """Collect the standard statistics for the current data frame."""
         for key, value in _FIELDS.items():
             match value:
                 case _FieldType.ROWS:
                     self.add_frame(key, count=pl.len())
                 case _FieldType.VALUE_COUNTS:
-                    self.collect_value_counts(key, "", pl.col(key))
+                    self.add_frame(key, value_counts=pl.col(key))
                 case _FieldType.LIST_VALUE_COUNTS:
                     self.add_frame(
                         key, entity="elements",
@@ -347,30 +339,58 @@ class Collector(Reducer):
                         key, entity="rows_with_elements",
                         count=pl.col(key).list.len().gt(0).sum()
                     )
-                    self.collect_value_counts(key, "", pl.col(key).list.explode())
+                    self.add_frame(key, value_counts=pl.col(key).list.explode())
                 case _FieldType.DECISION_TYPE:
                     self.collect_decision_type()
                 case _DurationField(start, end):
-                    self.collect_duration(key, start, end)
-                case _ValueCountsPlusField(other_field, other_value, other_is_list):
-                    self.collect_value_counts(
-                        key, "",
-                        values=pl.col(key).list.explode() if other_is_list else pl.col(key))
+                    self.add_frame(key, entity="is_null", count=pl.col(end).is_null().sum())
+                    self.add_frame(key, entity="count", count=(pl.col(end) - pl.col(start)).count())
+                    self.add_frame(key, entity="min", duration=(pl.col(end) - pl.col(start)).min())
+                    self.add_frame(key, entity="mean", duration=(pl.col(end) - pl.col(start)).mean())
+                    self.add_frame(key, entity="max", duration=(pl.col(end) - pl.col(start)).max())
+                case _ValueCountsPlusField(other_field, other_value, other_is_list, self_is_list):
+                    values = pl.col(key).list.explode() if self_is_list else pl.col(key)
+                    self.add_frame(key, value_counts=values)
                     if self._tag != "baseline":
                         continue
-                    self.collect_value_counts(
-                        key, entity=f"with_{other_field}",
-                        values=pl.col(key).filter(pl.col(other_field).is_null().not_())
+                    self.add_frame(
+                        key,
+                        entity=(
+                            "with_end_date" if other_field.startswith("end_date")
+
+                            else f"with_{other_field}"
+                        ),
+                        value_counts=values.filter(pl.col(other_field).is_null().not_())
                     )
                     if other_value is None:
                         continue
-                    self.collect_value_counts(
+                    self.add_frame(
                         key, entity=f"with_{other_value}",
-                        values=pl.col(key).filter(
+                        value_counts=values.filter(
                             pl.col(other_field).eq(other_value) if not other_is_list
                             else pl.col(other_field).list.contains(other_value)
                         )
                     )
+
+    def collect_header(
+        self,
+        batch_count: int,
+        total_rows: int,
+        total_rows_with_keywords: int,
+    ) -> None:
+        """Create a header frame with the given statistics."""
+        assert self._release is not None
+        header = pl.DataFrame({
+            "start_date": 3 * [self._release.start_date],
+            "end_date": 3 * [self._release.end_date],
+            "tag": 3 * ["baseline"],
+            "column": ["batch_count", "total_rows", "total_rows_with_keywords"],
+            "entity": [None, None, None],
+            "duration": [None, None, None],
+            "variant": [None, None, None],
+            "count": [batch_count, total_rows, total_rows_with_keywords],
+        }, schema=STATISTICS_SCHEMA)
+        self._frames.append(header)
 
     def collect(
         self,
@@ -380,6 +400,7 @@ class Collector(Reducer):
         total_rows: int,
         total_rows_with_keywords: int,
     ) -> None:
+        """Collect all necessary data in partial data frames."""
         with self.release(frame, "baseline", release) as this:
             this.collect_header(batch_count, total_rows, total_rows_with_keywords)
             this.collect_snapshot()
@@ -393,58 +414,112 @@ class Collector(Reducer):
             this.collect_snapshot()
 
     def to_frame(self) -> pl.DataFrame:
+        """Combine the collected partial frames into one."""
         frame = pl.concat(self._frames, how="vertical")
         if isinstance(frame, pl.LazyFrame):
             frame = frame.collect()
         return frame
 
 
+# --------------------------------------------------------------------------------------
+
+
+"""
+The type of summary statistics, which is a list of key, value pairs. To aid with
+presentation, some of the pairs may be empty, containing `SPACER` instances (see
+below).
+"""
 type Summary = list[tuple[str, Any]]
 
 
+class _Spacer:
+    """A marker object for empty cells."""
+    def __str__(self) -> str:
+        return ""
+
+"""A spacer object."""
+SPACER = _Spacer()
+del _Spacer
+
+
+class NothingType:
+    pass
+
+NOTHING = NothingType()
+
+
 class Summarizer(Reducer):
+    """Summarize analysis results."""
 
     def __init__(self) -> None:
         super().__init__()
         self._summary = []
 
-    def extract_count(
+    def predicate(
+        self,
+        column: NothingType | str = NOTHING,
+        entity: NothingType | None | str = NOTHING,
+        variant: NothingType | None | str = NOTHING,
+    ) -> pl.Expr:
+        """Build a predicate for some combination of column, entity, and variant."""
+        if self._tag is None or self._tag == "":
+            predicate = pl.col("tag").is_null()
+        else:
+            predicate = pl.col("tag").eq(self._tag)
+
+        if column is not NOTHING:
+            predicate = predicate.and_(pl.col("column").eq(column))
+        if entity is None:
+            predicate = predicate.and_(pl.col("entity").is_null())
+        elif entity is not NOTHING:
+            predicate = predicate.and_(pl.col("entity").eq(entity))
+        if variant is None:
+            predicate = predicate.and_(pl.col("variant").is_null())
+        elif variant is not NOTHING:
+            predicate = predicate.and_(pl.col("variant").eq(variant))
+
+        return predicate
+
+    def extract_value(
         self,
         column: str,
-        entity: str = "",
+        entity: None | str = None,
     ) -> int | dt.timedelta:
+        """Extract the aggregated value with the given column and entity."""
         assert self._source is not None
-        filtered = pl.col("count").filter(
-            pl.col("tag").eq(self._tag)
-            .and_(pl.col("column").eq(column))
-            .and_(pl.col("entity").eq(entity))
-        )
 
-        if entity == "min":
-            op = "min"
-        elif entity in ("max", "max_elements_per_row"):
+        if entity == "mean":
+            return self._source.lazy().filter(
+                self.predicate(column=column, variant=None)
+            ).select(
+                (pl.col("count").filter(pl.col("entity").eq("mean"))
+                * pl.col("count").filter(pl.col("entity").eq("count"))).sum()
+                / pl.col("count").filter(pl.col("entity").eq("count")).sum()
+            ).collect().item()
+        elif entity in ("min", "max"):
+            op = entity
+        elif entity == "max_elements_per_row":
             op = "max"
-        elif entity == "mean":
-            op = "mean"
         else:
             op = "sum"
-        filtered = getattr(filtered, op)()
 
-        frame = self._source.select(filtered)
+        filter = pl.col("count").filter(
+            self.predicate(column, entity, None)
+        )
+        frame = self._source.select(getattr(filter, op)())
         if isinstance(frame, pl.LazyFrame):
             return frame.collect().item()
         else:
             return frame.item()
 
-    def extract_value_counts(self, column: str, entity: str) -> pl.DataFrame:
+    def extract_value_counts(self, column: str, entity: None | str) -> pl.DataFrame:
+        """Extract the value counts for the given column and entity."""
         assert self._source is not None
         frame = self._source.filter(
-            pl.col("tag").eq(self._tag)
-            .and_(pl.col("column").eq(column))
-            .and_(pl.col("entity").eq(entity))
+            self.predicate(column, entity)
         ).select(
-            pl.col("tag", "column", "entity"),
-            pl.col("count").sum()
+            pl.col("tag", "column", "entity", "variant"),
+            pl.col("count")
         ).sort(
             "count", descending=True
         )
@@ -454,44 +529,55 @@ class Summarizer(Reducer):
         else:
             return frame
 
-    def collect1(self, column: str, entity: str) -> None:
-        parts = column.rsplit("_", maxsplit=1)
-        assert len(parts) < 2 or parts[-1] not in ("delay", "duration")
-        value = self.extract_count(column, entity)
-        self._summary.append((f"{column} #{self._tag} @{entity}", value))
+    def spacer(self) -> None:
+        self._summary.append((SPACER, SPACER))
 
-    def collect_value_counts(self, column: str, entity: str = "") -> None:
+    def collect1(self, column: str, entity: None | str = None) -> None:
+        variable = column if entity is None or entity == "" else f"{column}.{entity}"
+        value = self.extract_value(column, entity)
+        self._summary.append((variable, value))
+
+    def collect_value_counts(self, column: str, entity: None | str = None) -> None:
         for row in self.extract_value_counts(column, entity).rows():
-            tag, column, entity, count = row
-            self._summary.append((f"{column} #{tag} @{entity}", count))
+            _, column, entity, variant, count = row
+            var = column
+            if entity:
+                var = f"{var}.{entity}"
+            if variant is None:
+                var = f"{var}.is_null"
+            else:
+                var = f"{var}.{variant}"
+
+            self._summary.append((var, count))
 
     def summarize_snapshot(self) -> None:
         for field_name, field_type in _FIELDS.items():
             match field_type:
                 case _FieldType.ROWS:
-                    self.extract_count("rows")
+                    self.extract_value("rows")
                 case _FieldType.VALUE_COUNTS:
-                    self._summary.append(("", ""))
+                    self.spacer()
                     self.collect_value_counts(field_name)
                 case _FieldType.LIST_VALUE_COUNTS:
-                    self._summary.append(("", ""))
+                    self.spacer()
                     self.collect1(field_name, "elements")
                     self.collect1(field_name, "max_elements_per_row")
                     self.collect1(field_name, "rows_with_elements")
                     self.collect_value_counts(field_name)
-                case _DurationField(_, _):
-                    self._summary.append(("", ""))
+                case _DurationField(start, end):
+                    self.spacer()
+                    self.collect1(field_name, "is_null")
+                    self.collect1(field_name, "count")
                     self.collect1(field_name, "min")
                     self.collect1(field_name, "mean")
                     self.collect1(field_name, "max")
-                    self.collect1(field_name, "nulls")
                 case _ValueCountsPlusField(other_field, other_value, _):
-                    self._summary.append(("", ""))
+                    self.spacer()
                     self.collect_value_counts(field_name)
-                    self._summary.append(("", ""))
+                    self.spacer()
                     self.collect_value_counts(field_name, f"with_{other_field}")
                     if other_value is not None:
-                        self._summary.append(("", ""))
+                        self.spacer()
                         self.collect_value_counts(field_name, f"with_{other_value}")
                 case _FieldType.DECISION_TYPE:
                     for count in range(16):
@@ -503,25 +589,36 @@ class Summarizer(Reducer):
 
                         self.collect1(
                             field_name,
-                            "_".join(suffix) if count != 0  else "none",
+                            "_".join(suffix) if count != 0  else "is_null",
                         )
 
     def summarize(self, frame: pl.DataFrame) -> Summary:
-        self._summary = [
-            ("start_date", frame.select(pl.col("start_date").min()).item()),
-            ("end_date", frame.select(pl.col("end_date").max()).item()),
-            ("batch_count", self.extract_count("batch_count")),
-            ("total_rows", self.extract_count("total_rows")),
-            ("total_rows_with_keywords", self.extract_count("total_rows_with_keywords")),
+        with self.tagged_frame("baseline", frame) as this:
+            this._summary = [
+                ("start_date", frame.select(pl.col("start_date").min()).item()),
+                ("end_date", frame.select(pl.col("end_date").max()).item()),
+                ("batch_count", this.extract_value("batch_count")),
+                ("total_rows", this.extract_value("total_rows")),
+                ("total_rows_with_keywords", this.extract_value("total_rows_with_keywords")),
+            ]
+
+        # Make sure that baseline comes first
+        tags = [
+            "baseline",
+            *(
+                t
+                for t in frame.select(pl.col("tag").unique()).get_column("tag").to_list()
+                if t != "baseline"
+            )
         ]
 
-        for tag in frame.select(pl.col("tag").unique()).get_column("tag"):
+        for tag in tags:
             with self.tagged_frame(tag, frame) as this:
-                this._summary.append(("", ""))
-                this._summary.append(("", ""))
+                self.spacer()
+                self.spacer()
                 # The synthetic baseline tag is liable to vanish...
                 this._summary.append(("TAG", this._tag if this._tag != "baseline" else "—none—"))
-                this._summary.append(("", ""))
+                self.spacer()
                 this.summarize_snapshot()
 
         return self._summary
@@ -539,11 +636,15 @@ class Summarizer(Reducer):
         text_summary = []
         for var, val in self._summary:
             try:
-                if var == "":
+                if var is SPACER:
                     var = "\u2800" if markdown else " "
 
-                if val == "":
+                if var == "TAG":
+                    pass # Don't meddle with tags
+                elif val is SPACER:
                     val = "\u2800" if markdown else " "
+                elif val is None:
+                    val = "⋯⋯"
                 elif var.endswith("_pct"):
                     val = f"{val:.3f}"
                 elif isinstance(val, dt.date):
@@ -553,10 +654,12 @@ class Summarizer(Reducer):
                     val /= dt.timedelta(seconds=1)
                     v, u = scale_time(val)
                     val = f"{v:.2f} {u}s"
+                elif isinstance(val, int):
+                    val = f"{val:,}"
                 elif isinstance(val, float):
-                    val = f"FLOAT({val})"
+                    val = f"{val:.2f}"
                 else:
-                    val = f"{int(val):,}"
+                    val = f"BAD({val})"
 
                 text_summary.append((var, val))
 
@@ -567,8 +670,11 @@ class Summarizer(Reducer):
                 raise
 
         # Limit the variable and value widths to 100 columns total
-        var_width = min(max(len(r[0]) for r in text_summary), 45)
-        val_width = min(max(len(r[1]) for r in text_summary), 55)
+        var_width = max(len(r[0]) for r in text_summary)
+        val_width = max(len(r[1]) for r in text_summary)
+        if 120 < var_width + val_width:
+            var_width = min(60, var_width)
+            val_width = min(60, val_width)
 
         if markdown:
             lines = [
@@ -592,6 +698,10 @@ class Summarizer(Reducer):
 
 
 def formatted_summary(frame: pl.DataFrame, markdown: bool = True) -> str:
+    """
+    Summarize the analysis results and return a nicely formatted, plain-text
+    table.
+    """
     summarizer = Summarizer()
     summarizer.summarize(frame)
     return summarizer.formatted_summary(markdown)

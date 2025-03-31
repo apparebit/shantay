@@ -1,8 +1,11 @@
 from collections import Counter
+from collections.abc import Iterator
+from contextlib import contextmanager
 import csv
 import hashlib
 import logging
 from pathlib import Path
+from typing import Self
 
 import polars as pl
 
@@ -11,7 +14,7 @@ from .model import (
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
-    BASE_SCHEMA, CountryGroups, PARTIAL_SCHEMA, PLATFORM_NAMES, SCHEMA, VariantValueType
+    BASE_SCHEMA, PARTIAL_SCHEMA, CANONICAL_PLATFORM_NAMES, SCHEMA, TerritorialAlias
 )
 from .util import annotate_error
 
@@ -264,15 +267,15 @@ class StatementsOfReasons(Dataset[Daily]):
             frame
             # Patch in the names of country groups as well as canonical platform names
             .with_columns(
-                pl.when(pl.col("territorial_scope") == CountryGroups.EEA)
+                pl.when(pl.col("territorial_scope") == TerritorialAlias.EEA.value)
                     .then(pl.lit("[\"EEA\"]"))
-                    .when(pl.col("territorial_scope") == CountryGroups.EEA_no_IS)
+                    .when(pl.col("territorial_scope") == TerritorialAlias.EEA_no_IS.value)
                     .then(pl.lit("[\"EEA_no_IS\"]"))
-                    .when(pl.col("territorial_scope") == CountryGroups.EU)
+                    .when(pl.col("territorial_scope") == TerritorialAlias.EU.value)
                     .then(pl.lit("[\"EU\"]"))
                     .otherwise(pl.col("territorial_scope"))
                     .alias("territorial_scope"),
-                pl.col("platform_name").replace(PLATFORM_NAMES),
+                pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES),
             )
             # Parse list-valued columns (assumes no [] values)
             .with_columns(
@@ -290,12 +293,12 @@ class StatementsOfReasons(Dataset[Daily]):
             )
             # Cast list elements and date columns to their types. Add released_on.
             .with_columns(
-                pl.col("decision_visibility").cast(pl.List(VariantValueType)),
-                pl.col("category_addition").cast(pl.List(VariantValueType)),
-                pl.col("category_specification").cast(pl.List(VariantValueType)),
-                pl.col("content_type").cast(pl.List(VariantValueType)),
-                pl.col("content_language").cast(VariantValueType),
-                pl.col("territorial_scope").cast(pl.List(VariantValueType)),
+                pl.col("decision_visibility").cast(SCHEMA["decision_visibility"]),
+                pl.col("category_addition").cast(SCHEMA["category_addition"]),
+                pl.col("category_specification").cast(SCHEMA["category_specification"]),
+                pl.col("content_type").cast(SCHEMA["content_type"]),
+                pl.col("content_language").cast(SCHEMA["content_language"]),
+                pl.col("territorial_scope").cast(SCHEMA["territorial_scope"]),
                 pl.col(
                     "end_date_visibility_restriction",
                     "end_date_monetary_restriction",
@@ -337,6 +340,15 @@ class StatementsOfReasons(Dataset[Daily]):
             batch_memory=int(batch_memory),
         )
 
+    @contextmanager
+    def analysis_context(self) -> Iterator[Self]:
+        """Create a new analysis context (manager)."""
+        pl.enable_string_cache()
+        try:
+            yield self
+        finally:
+            pl.disable_string_cache()
+
     @annotate_error(filename_arg="root")
     def analyze_release(
         self,
@@ -350,14 +362,14 @@ class StatementsOfReasons(Dataset[Daily]):
             pl.col("total_rows").sum(),
             pl.col("total_rows_with_keywords").sum(),
         )
-
-        if isinstance(frame, pl.LazyFrame):
-            frame = frame.collect()
-
         batch_count, total_rows, total_rows_with_keywords = frame.row(0)
 
-        working_data = pl.scan_parquet(f"{root}/{release.batch_glob}").with_columns(
-            pl.col("platform_name").replace(PLATFORM_NAMES)
+        count = sum(1 for _ in root.glob(release.batch_glob))
+        glob = f"{root}/{release.batch_glob}"
+        _logger.debug('analyzing file-count=%d, glob="%s"', count, glob)
+
+        working_data = pl.read_parquet(glob).with_columns(
+            pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES)
         )
         collector.collect(
             working_data,

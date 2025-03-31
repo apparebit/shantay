@@ -13,7 +13,12 @@ if __name__ == "__main__":
     stream = sys.stdout
     styled = StyledStream(stream)
 
-    if os.name != "nt":
+    skip_types = False
+    if "--skip-types" in sys.argv:
+        del sys.argv[sys.argv.index("--skip-types")]
+        skip_types = True
+
+    if not skip_types and os.name != "nt":
         print(styled.h0("Type Checking…"))
         try:
             subprocess.run(["npm", "run", "pyright"], check=True)

@@ -240,9 +240,10 @@ def run_on_worker[R: Release](
         record = metadata[release]
         result = dict(release=release, **record)
     elif task == "analyze":
-        collector = Collector()
-        processor.analyze_release(release, metadata_frame, collector)
-        result = collector.to_frame()
+        with dataset.analysis_context():
+            collector = Collector()
+            processor.analyze_release(release, metadata_frame, collector)
+            result = collector.to_frame()
     else:
         raise AssertionError(f"invalid task {task}")
 

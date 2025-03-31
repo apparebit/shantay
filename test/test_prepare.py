@@ -156,7 +156,7 @@ class TestPrepare(unittest.TestCase):
 
             self.assertEqual(
                 digest,
-                "3424726df35d7ccb680ffdf5e593cd23b335e0084309defe01860b70c039fcbb",
+                "ef0f18cf26fcfe1658dd1f6f1bb1dcd394b5b6b2564b1e864c41a912ca149b9f",
             )
 
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
@@ -171,30 +171,32 @@ class TestPrepare(unittest.TestCase):
             self.assertEqual(counters["batch_rows_with_keywords"], 2 + 0)
 
             memory = round(counters["batch_memory"] / 1_000)
-            self.assertTrue(100 <= memory <= 140)
+            self.assertLess(10, memory)
+            self.assertLess(memory, 30)
 
             self.assertTrue(batch1.exists())
             self.assertFileEqual(batch1, FIXTURE / release.batch_file(1))
 
         with self.subTest("analyze release data"):
-            collector = Collector()
-            release_metadata = pl.DataFrame(
-                {
-                    "batch_count": [2],
-                    "total_rows": [665],
-                    "total_rows_with_keywords": [212],
-                }
-            )
-            dataset.analyze_release(
-                STAGING, release.to_monthly(), release_metadata, collector
-            )
+            with dataset.analysis_context():
+                collector = Collector()
+                release_metadata = pl.DataFrame(
+                    {
+                        "batch_count": [2],
+                        "total_rows": [665],
+                        "total_rows_with_keywords": [212],
+                    }
+                )
+                dataset.analyze_release(
+                    STAGING, release.to_monthly(), release_metadata, collector
+                )
 
-            frame = collector.to_frame()
-            frame_data = frame.to_dict(as_series=False)
-            self.assertTrue(frame_data, EXPECTED_ANALYSIS)
+                frame = collector.to_frame()
+                frame_data = frame.to_dict(as_series=False)
+                self.assertTrue(frame_data, EXPECTED_ANALYSIS)
 
-            # Write to parquet
-            frame.write_parquet(STAGING / STATISTICS_FILE)
+                # Write to parquet
+                frame.write_parquet(STAGING / STATISTICS_FILE)
 
         with self.subTest("check log file"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)

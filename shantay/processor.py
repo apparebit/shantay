@@ -348,7 +348,9 @@ class Processor[R: Release]:
         from .framing import Collector, collect_release_metadata
 
         range, metadata = collect_release_metadata(self._metadata.records)
-        range = range.to_release_range().to_monthly()
+        range = range.intersect(
+            self._coverage.to_date_range()
+        ).to_release_range().to_monthly()
 
         # Prepare progress tracker
         self._progress.activity(
@@ -356,14 +358,15 @@ class Processor[R: Release]:
         )
         self._progress.start(range.last - range.first + 1)
 
-        collector = Collector()
-        for index, release in enumerate(range):
-            self.analyze_release(release, metadata, collector)
-            self._progress.step(index + 1, extra=release.id)
+        with self._dataset.analysis_context():
+            collector = Collector()
+            for index, release in enumerate(range):
+                self.analyze_release(release, metadata, collector)
+                self._progress.step(index + 1, extra=release.id)
 
-        return self._dataset.combine_releases(
-            self._storage.working_root, self._coverage, collector
-        )
+            return self._dataset.combine_releases(
+                self._storage.working_root, self._coverage, collector
+            )
 
     def analyze_release(
         self,
