@@ -268,14 +268,7 @@ class TestPrepare(unittest.TestCase):
             )
 
 
-# Shantay's new and improved analysis data format is a long table with only few
-# columns, as opposed to a wide table with a great many columns. The long table
-# unfortunately suffers from smearing all kinds of values together, see
-# VariantValueType. However, it makes up for that in general robustness because
-# the wide table either has a plethora of columns that must be managed manually
-# or uses embedded lists of structs with value counts. The former is tedious and
-# results in way too much boilerplate code. The latter doesn't work because of
-# Pola.rs bugs. Hence, the long version seems the least bad.
+# Shantay's current analysis data format is a very long table...
 EXPECTED_ANALYSIS = {
     "column": [
         "batch_count",

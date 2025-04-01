@@ -29,6 +29,10 @@ from .schema import ColumnValueType, STATISTICS_SCHEMA
 from .util import scale_time
 
 
+BASELINE_TAG = "Baseline"
+CSAM_TAG = "CSAM"
+
+
 _DECISION_OFFSET = len("decision_")
 
 _DECISION_TYPES = (
@@ -37,7 +41,6 @@ _DECISION_TYPES = (
     "decision_provision",
     "decision_account",
 )
-
 
 def collect_release_metadata(
     records: Iterator[FullMetadataEntry]
@@ -233,7 +236,7 @@ class Reducer:
 class Collector(Reducer):
     """Analyze the data while also collecting the results."""
 
-    def add_frame(
+    def add_row(
         self,
         column: str,
         entity: None | str = None,
@@ -242,7 +245,7 @@ class Collector(Reducer):
         count: None | int | pl.Expr = None,
         value_counts: None | pl.Expr = None,
     ) -> None:
-        """Add a frame, which has a small number of rows."""
+        """Add a row currently is implemented as adding a frame."""
         if duration is not None:
             effective_values = [duration.cast(pl.Duration(time_unit="ms")).alias("duration")]
         else:
@@ -278,9 +281,6 @@ class Collector(Reducer):
             *effective_values,
         )
 
-        if column == "batch_count":
-            print(frame)
-
         if value_counts is not None:
             frame = frame.rename({
                 column: "variant",
@@ -288,9 +288,6 @@ class Collector(Reducer):
                 pl.col("variant").cast(pl.String).cast(pl.Categorical),
                 pl.col("count").cast(pl.UInt64)
             )
-
-        if column == "batch_count":
-            print(frame)
 
         self._frames.append(frame)
 
@@ -316,61 +313,65 @@ class Collector(Reducer):
 
             assert expr is not None
             entity = "is_null" if count == 0 else "_".join(suffix)
-            self.add_frame("decision_type", entity=entity, count=expr.sum())
+            self.add_row("decision_type", entity=entity, count=expr.sum())
 
     def collect_snapshot(self) -> None:
         """Collect the standard statistics for the current data frame."""
         for key, value in _FIELDS.items():
             match value:
                 case _FieldType.ROWS:
-                    self.add_frame(key, count=pl.len())
+                    self.add_row(key, count=pl.len())
                 case _FieldType.VALUE_COUNTS:
-                    self.add_frame(key, value_counts=pl.col(key))
+                    self.add_row(key, value_counts=pl.col(key))
                 case _FieldType.LIST_VALUE_COUNTS:
-                    self.add_frame(
+                    self.add_row(
                         key, entity="elements",
                         count=pl.col(key).list.len().cast(pl.UInt64).sum()
                     )
-                    self.add_frame(
+                    self.add_row(
                         key, entity="max_elements_per_row",
                         count=pl.col(key).list.len().max()
                     )
-                    self.add_frame(
+                    self.add_row(
                         key, entity="rows_with_elements",
                         count=pl.col(key).list.len().gt(0).sum()
                     )
-                    self.add_frame(key, value_counts=pl.col(key).list.explode())
+                    self.add_row(key, value_counts=pl.col(key).list.explode())
                 case _FieldType.DECISION_TYPE:
                     self.collect_decision_type()
                 case _DurationField(start, end):
-                    self.add_frame(key, entity="is_null", count=pl.col(end).is_null().sum())
-                    self.add_frame(key, entity="count", count=(pl.col(end) - pl.col(start)).count())
-                    self.add_frame(key, entity="min", duration=(pl.col(end) - pl.col(start)).min())
-                    self.add_frame(key, entity="mean", duration=(pl.col(end) - pl.col(start)).mean())
-                    self.add_frame(key, entity="max", duration=(pl.col(end) - pl.col(start)).max())
+                    self.add_row(key, entity="is_null", count=pl.col(end).is_null().sum())
+                    self.add_row(key, entity="count", count=(pl.col(end) - pl.col(start)).count())
+                    self.add_row(key, entity="min", duration=(pl.col(end) - pl.col(start)).min())
+                    self.add_row(key, entity="mean", duration=(pl.col(end) - pl.col(start)).mean())
+                    self.add_row(key, entity="max", duration=(pl.col(end) - pl.col(start)).max())
                 case _ValueCountsPlusField(other_field, other_value, other_is_list, self_is_list):
                     values = pl.col(key).list.explode() if self_is_list else pl.col(key)
-                    self.add_frame(key, value_counts=values)
-                    if self._tag != "baseline":
+                    self.add_row(key, value_counts=values)
+                    if self._tag != BASELINE_TAG:
                         continue
-                    self.add_frame(
+
+                    values = pl.col(key).filter(pl.col(other_field).is_null().not_())
+                    if self_is_list:
+                        values = values.list.explode()
+                    self.add_row(
                         key,
                         entity=(
                             "with_end_date" if other_field.startswith("end_date")
-
                             else f"with_{other_field}"
                         ),
-                        value_counts=values.filter(pl.col(other_field).is_null().not_())
+                        value_counts=values,
                     )
                     if other_value is None:
                         continue
-                    self.add_frame(
-                        key, entity=f"with_{other_value}",
-                        value_counts=values.filter(
-                            pl.col(other_field).eq(other_value) if not other_is_list
-                            else pl.col(other_field).list.contains(other_value)
-                        )
-                    )
+
+                    if other_is_list:
+                        values = pl.col(key).filter(pl.col(other_field).list.contains(other_value))
+                    else:
+                        values = pl.col(key).filter(pl.col(other_field).eq(other_value))
+                    if self_is_list:
+                        values = values.list.explode()
+                    self.add_row(key, entity=f"with_{other_value}", value_counts=values)
 
     def collect_header(
         self,
@@ -383,7 +384,7 @@ class Collector(Reducer):
         header = pl.DataFrame({
             "start_date": 3 * [self._release.start_date],
             "end_date": 3 * [self._release.end_date],
-            "tag": 3 * ["baseline"],
+            "tag": 3 * [BASELINE_TAG],
             "column": ["batch_count", "total_rows", "total_rows_with_keywords"],
             "entity": [None, None, None],
             "duration": [None, None, None],
@@ -401,7 +402,7 @@ class Collector(Reducer):
         total_rows_with_keywords: int,
     ) -> None:
         """Collect all necessary data in partial data frames."""
-        with self.release(frame, "baseline", release) as this:
+        with self.release(frame, BASELINE_TAG, release) as this:
             this.collect_header(batch_count, total_rows, total_rows_with_keywords)
             this.collect_snapshot()
 
@@ -410,7 +411,7 @@ class Collector(Reducer):
                 "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
             )
         )
-        with self.release(csam, "csam", release) as this:
+        with self.release(csam, CSAM_TAG, release) as this:
             this.collect_snapshot()
 
     def to_frame(self) -> pl.DataFrame:
@@ -424,22 +425,37 @@ class Collector(Reducer):
 # --------------------------------------------------------------------------------------
 
 
+@dataclass(frozen=True, slots=True)
+class Tag:
+    """A tag."""
+
+    tag: str
+
+    def __format__(self, spec) -> str:
+        return str.__format__(self.tag, spec)
+
+    def __len__(self) -> int:
+        return len(self.tag) + 2
+
+    def __str__(self) -> str:
+        return self.tag
+
+
+class Spacer:
+    """A marker object for empty cells."""
+    def __str__(self) -> str:
+        return ""
+
+"""The canonical spacer object."""
+SPACER = Spacer()
+
+
 """
 The type of summary statistics, which is a list of key, value pairs. To aid with
 presentation, some of the pairs may be empty, containing `SPACER` instances (see
 below).
 """
-type Summary = list[tuple[str, Any]]
-
-
-class _Spacer:
-    """A marker object for empty cells."""
-    def __str__(self) -> str:
-        return ""
-
-"""A spacer object."""
-SPACER = _Spacer()
-del _Spacer
+type Summary = list[tuple[str | Tag | Spacer, Any]]
 
 
 class NothingType:
@@ -484,17 +500,19 @@ class Summarizer(Reducer):
         self,
         column: str,
         entity: None | str = None,
+        duration: bool = False,
     ) -> int | dt.timedelta:
         """Extract the aggregated value with the given column and entity."""
         assert self._source is not None
-
         if entity == "mean":
             return self._source.lazy().filter(
                 self.predicate(column=column, variant=None)
             ).select(
-                (pl.col("count").filter(pl.col("entity").eq("mean"))
-                * pl.col("count").filter(pl.col("entity").eq("count"))).sum()
-                / pl.col("count").filter(pl.col("entity").eq("count")).sum()
+                (
+                    (pl.col("duration").filter(pl.col("entity").eq("mean")).cast(pl.UInt64)
+                    * pl.col("count").filter(pl.col("entity").eq("count"))).sum()
+                    // pl.col("count").filter(pl.col("entity").eq("count")).sum()
+                ).cast(pl.Duration(time_unit="ms"))
             ).collect().item()
         elif entity in ("min", "max"):
             op = entity
@@ -503,7 +521,7 @@ class Summarizer(Reducer):
         else:
             op = "sum"
 
-        filter = pl.col("count").filter(
+        filter = pl.col("duration" if duration else "count").filter(
             self.predicate(column, entity, None)
         )
         frame = self._source.select(getattr(filter, op)())
@@ -529,12 +547,28 @@ class Summarizer(Reducer):
         else:
             return frame
 
-    def spacer(self) -> None:
-        self._summary.append((SPACER, SPACER))
+    @contextmanager
+    def spacer_on_demand(self) -> Iterator[None]:
+        actual_summary = self._summary
+        self._summary = []
+        try:
+            yield None
+        finally:
+            if 0 < len(self._summary):
+                self.spacer(actual_summary)
+                actual_summary.extend(self._summary)
+            self._summary = actual_summary
 
-    def collect1(self, column: str, entity: None | str = None) -> None:
+    def spacer(self, summary: None | Summary = None) -> None:
+        if summary is None:
+            summary = self._summary
+        summary.append((SPACER, SPACER))
+
+    def collect1(
+        self, column: str, entity: None | str = None, duration: bool = False
+    ) -> None:
         variable = column if entity is None or entity == "" else f"{column}.{entity}"
-        value = self.extract_value(column, entity)
+        value = self.extract_value(column, entity, duration=duration)
         self._summary.append((variable, value))
 
     def collect_value_counts(self, column: str, entity: None | str = None) -> None:
@@ -568,16 +602,22 @@ class Summarizer(Reducer):
                     self.spacer()
                     self.collect1(field_name, "is_null")
                     self.collect1(field_name, "count")
-                    self.collect1(field_name, "min")
-                    self.collect1(field_name, "mean")
-                    self.collect1(field_name, "max")
+                    self.collect1(field_name, "min", duration=True)
+                    self.collect1(field_name, "mean", duration=True)
+                    self.collect1(field_name, "max", duration=True)
                 case _ValueCountsPlusField(other_field, other_value, _):
                     self.spacer()
                     self.collect_value_counts(field_name)
-                    self.spacer()
-                    self.collect_value_counts(field_name, f"with_{other_field}")
-                    if other_value is not None:
-                        self.spacer()
+
+                    with self.spacer_on_demand():
+                        entity = (
+                            "with_end_date" if other_field.startswith("end_date")
+                            else f"with_{other_field}"
+                        )
+                        self.collect_value_counts(field_name, entity)
+                    if other_value is None:
+                        continue
+                    with self.spacer_on_demand():
                         self.collect_value_counts(field_name, f"with_{other_value}")
                 case _FieldType.DECISION_TYPE:
                     for count in range(16):
@@ -593,7 +633,7 @@ class Summarizer(Reducer):
                         )
 
     def summarize(self, frame: pl.DataFrame) -> Summary:
-        with self.tagged_frame("baseline", frame) as this:
+        with self.tagged_frame(BASELINE_TAG, frame) as this:
             this._summary = [
                 ("start_date", frame.select(pl.col("start_date").min()).item()),
                 ("end_date", frame.select(pl.col("end_date").max()).item()),
@@ -604,11 +644,11 @@ class Summarizer(Reducer):
 
         # Make sure that baseline comes first
         tags = [
-            "baseline",
+            BASELINE_TAG,
             *(
                 t
                 for t in frame.select(pl.col("tag").unique()).get_column("tag").to_list()
-                if t != "baseline"
+                if t != BASELINE_TAG
             )
         ]
 
@@ -616,8 +656,8 @@ class Summarizer(Reducer):
             with self.tagged_frame(tag, frame) as this:
                 self.spacer()
                 self.spacer()
-                # The synthetic baseline tag is liable to vanish...
-                this._summary.append(("TAG", this._tag if this._tag != "baseline" else "—none—"))
+                assert this._tag is not None
+                this._summary.append((Tag(this._tag), Tag(this._tag)))
                 self.spacer()
                 this.summarize_snapshot()
 
@@ -633,35 +673,46 @@ class Summarizer(Reducer):
         empty rows. That ensures that Markdown table formatting logic recognizes
         these cells as non-empty without actually displaying anything.
         """
-        text_summary = []
+        formatted_pairs = []
         for var, val in self._summary:
             try:
-                if var is SPACER:
-                    var = "\u2800" if markdown else " "
+                if isinstance(var, Tag):
+                    # Delay formatting of tag for non-markdown output
+                    # so that we can center it
+                    assert isinstance(val, Tag)
+                    svar = f"## {var} ##" if markdown else var
+                elif var is SPACER:
+                    svar = "\u2800" if markdown else " "
+                else:
+                    svar = var
 
-                if var == "TAG":
-                    pass # Don't meddle with tags
+                if isinstance(val, Tag):
+                    assert isinstance(var, Tag)
+                    sval = f"## {val} ##" if markdown else val
                 elif val is SPACER:
-                    val = "\u2800" if markdown else " "
+                    sval = "\u2800" if markdown else " "
                 elif val is None:
-                    val = "⋯⋯"
-                elif var.endswith("_pct"):
-                    val = f"{val:.3f}"
+                    sval = "␀"
+                elif (
+                    var is not SPACER
+                    and not isinstance(var, Tag)
+                    and var.endswith("_pct")
+                ):
+                    sval = f"{val:.3f}"
                 elif isinstance(val, dt.date):
-                    val = val.isoformat()
+                    sval = val.isoformat()
                 elif isinstance(val, dt.timedelta):
                     # Convert to seconds as float, then scale to suitable unit
-                    val /= dt.timedelta(seconds=1)
-                    v, u = scale_time(val)
-                    val = f"{v:.2f} {u}s"
+                    v, u = scale_time(val / dt.timedelta(seconds=1))
+                    sval = f"{v:,.1f} {u}s"
                 elif isinstance(val, int):
-                    val = f"{val:,}"
+                    sval = f"{val:,}"
                 elif isinstance(val, float):
-                    val = f"{val:.2f}"
+                    sval = f"{val:.2f}"
                 else:
-                    val = f"BAD({val})"
+                    sval = f"FIXME({val})"
 
-                text_summary.append((var, val))
+                formatted_pairs.append((svar, sval))
 
             except Exception as x:
                 print(f"{var}: {val}")
@@ -670,8 +721,8 @@ class Summarizer(Reducer):
                 raise
 
         # Limit the variable and value widths to 100 columns total
-        var_width = max(len(r[0]) for r in text_summary)
-        val_width = max(len(r[1]) for r in text_summary)
+        var_width = max(len(r[0]) for r in formatted_pairs)
+        val_width = max(len(r[1]) for r in formatted_pairs)
         if 120 < var_width + val_width:
             var_width = min(60, var_width)
             val_width = min(60, val_width)
@@ -688,9 +739,20 @@ class Summarizer(Reducer):
                 f"├─{        '─' * var_width}─┼─{      '─' * val_width}─┤",
             ]
 
-        bar = "|" if markdown else "│"
-        for var, val in text_summary:
-            lines.append(f"{bar} {var:<{var_width}} {bar} {val:>{val_width}} {bar}")
+        bar = "|" if markdown else "\u2502"
+        for var, val in formatted_pairs:
+            if isinstance(var, Tag) and not markdown:
+                assert isinstance(val, Tag)
+                var = f" {var} ".center(var_width + 2, "═")
+                val = f" {val} ".center(val_width + 2, "═")
+                lines.append(
+                    f"╞{var}╪{val}╡"
+                )
+                continue
+
+            lines.append(
+                f"{bar} {var:<{var_width}} {bar} {val:>{val_width}} {bar}"
+            )
         if not markdown:
             lines.append(f"└─{'─' * var_width}─┴─{'─' * val_width}─┘")
 
