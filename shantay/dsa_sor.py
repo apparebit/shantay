@@ -368,7 +368,7 @@ class StatementsOfReasons(Dataset[Daily]):
         glob = f"{root}/{release.batch_glob}"
         _logger.debug('analyzing file-count=%d, glob="%s"', count, glob)
 
-        working_data = pl.read_parquet(glob).with_columns(
+        working_data = pl.scan_parquet(glob).with_columns(
             pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES)
         )
         collector.collect(
@@ -376,7 +376,7 @@ class StatementsOfReasons(Dataset[Daily]):
             release,
             batch_count,
             total_rows,
-            total_rows_with_keywords
+            total_rows_with_keywords,
         )
 
     @annotate_error(filename_arg="root")

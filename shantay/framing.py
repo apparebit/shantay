@@ -381,7 +381,14 @@ class Collector(Reducer):
     ) -> None:
         """Create a header frame with the given statistics."""
         assert self._release is not None
-        header = pl.DataFrame({
+
+        # Pola.rs uses different code paths for pl.concat depending on whether
+        # the first frame is lazy or not. All but the first three fields are
+        # derived from the source frame and hence automatically do the right
+        # thing. Let's ensure the first three fields, which are contained in the
+        # first frame, also do the right thing.
+        Frame = pl.LazyFrame if isinstance(self._source, pl.LazyFrame) else pl.DataFrame
+        header = Frame({
             "start_date": 3 * [self._release.start_date],
             "end_date": 3 * [self._release.end_date],
             "tag": 3 * [BASELINE_TAG],
@@ -391,6 +398,7 @@ class Collector(Reducer):
             "variant": [None, None, None],
             "count": [batch_count, total_rows, total_rows_with_keywords],
         }, schema=STATISTICS_SCHEMA)
+
         self._frames.append(header)
 
     def collect(
@@ -588,7 +596,8 @@ class Summarizer(Reducer):
         for field_name, field_type in _FIELDS.items():
             match field_type:
                 case _FieldType.ROWS:
-                    self.extract_value("rows")
+                    self.collect1("rows")
+                    self.spacer()
                 case _FieldType.VALUE_COUNTS:
                     self.spacer()
                     self.collect_value_counts(field_name)
