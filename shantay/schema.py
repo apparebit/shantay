@@ -681,9 +681,11 @@ STATISTICS_SCHEMA = pl.Schema({
     "tag": pl.Categorical(),
     "column": ColumnValueType,
     "entity": pl.Categorical(),
-    "duration": pl.Duration(time_unit="ms"),
     "variant": pl.Categorical(),
     "count": pl.UInt64,
+    "min": pl.UInt64,
+    "mean": pl.UInt64,
+    "max": pl.UInt64,
 })
 
 
