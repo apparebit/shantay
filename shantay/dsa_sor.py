@@ -9,7 +9,6 @@ from typing import Self
 
 import polars as pl
 
-from .framing import validate
 from .model import (
     CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, Release, STATISTICS_FILE
 )
@@ -384,8 +383,7 @@ class StatementsOfReasons(Dataset[Daily]):
     def combine_releases(
         self, root: Path, coverage: Coverage, collector: CollectorProtocol
     ) -> pl.DataFrame:
-        frame = collector.to_frame()
-        validate(frame)
+        frame = collector.to_frame(validate=True)
         self.write_parquet(frame, root / STATISTICS_FILE)
         return frame
 

@@ -441,7 +441,7 @@ class CollectorProtocol[R: Release](Protocol):
     ) -> None:
         """Collect data."""
 
-    def to_frame(self) -> DataFrameType:
+    def to_frame(self, validate: bool = False) -> DataFrameType:
         """Convert to data frame."""
         ...
 

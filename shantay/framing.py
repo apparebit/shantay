@@ -353,7 +353,7 @@ class Collector:
         self.add_rows(
             field,
             entity=f"with_{other_field}",
-            variant=pl.concat_str("variant", "variant_too", separator="+"),
+            variant=pl.concat_str("variant", "variant_too", separator="‖"),
             count=pl.col("count"),
             frame=frame,
         )
@@ -474,18 +474,20 @@ class Collector:
         with self.source_data(frame=csam, release=release, tag=CSAM_TAG) as this:
             this.collect_body()
 
-    def to_frame(self) -> pl.DataFrame:
+    def to_frame(self, validate: bool = False) -> pl.DataFrame:
         """Combine the collected partial frames into one."""
         frame = pl.concat(self._frames, how="vertical")
         if isinstance(frame, pl.LazyFrame):
             frame = frame.collect()
+        if validate:
+            validate_row_counts(frame)
         return frame
 
 
 # --------------------------------------------------------------------------------------
 
 
-def validate(frame: pl.DataFrame) -> None:
+def validate_row_counts(frame: pl.DataFrame) -> None:
     frame = frame.filter(pl.col("tag").is_null())
     rows = get_count(frame, "rows")
 
