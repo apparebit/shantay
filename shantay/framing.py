@@ -485,6 +485,30 @@ class Collector:
 # --------------------------------------------------------------------------------------
 
 
+def validate(frame: pl.DataFrame) -> None:
+    frame = frame.filter(pl.col("tag").is_null())
+    rows = get_count(frame, "rows")
+
+    assert rows == get_count(frame, "decision_type")
+    assert rows == get_count(frame, "decision_visibility", entity=None)
+    assert rows == get_count(frame, "decision_monetary", entity=None)
+    assert rows == get_count(frame, "decision_provision", entity=None)
+    assert rows == get_count(frame, "decision_account", entity=None)
+    assert rows == get_count(frame, "account_type", entity=None)
+    assert rows == get_count(frame, "decision_ground", entity=None)
+    assert rows == get_count(frame, "incompatible_content_illegal", entity=None)
+    assert rows == get_count(frame, "category", entity=None)
+    assert rows == get_count(frame, "content_type", entity=None)
+    assert rows == get_count(frame, "content_language", entity=None)
+    assert rows == get_count(frame, "moderation_delay", entity=None)
+    assert rows == get_count(frame, "disclosure_delay", entity=None)
+    assert rows == get_count(frame, "source_type", entity=None)
+    assert rows == get_count(frame, "automated_detection", entity=None)
+    assert rows == get_count(frame, "automated_decision", entity=None)
+    assert rows == get_count(frame, "platform_name", entity=None)
+    assert rows == get_count(frame, "platform_name", entity="with_category_specification")
+
+
 class _NoArgumentProvided:
     pass
 
@@ -523,6 +547,19 @@ def predicate(
         predicate = predicate.and_(pl.col("variant").eq(variant))
 
     return predicate
+
+
+def get_count(
+    frame: pl.DataFrame,
+    column: str,
+    entity: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
+    variant: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
+) -> int:
+    return frame.filter(
+        predicate(column, entity=entity, variant=variant)
+    ).select(
+        pl.col("count").sum()
+    ).item()
 
 
 def aggregates() -> list[pl.Expr]:
