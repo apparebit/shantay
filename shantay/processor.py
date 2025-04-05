@@ -384,7 +384,7 @@ class Processor[R: Release]:
 
     def visualize(self) -> None:
         """Visualize the analysis results."""
-        visualize(self._storage, notebook=False)
+        visualize(self._storage, self._coverage, notebook=False)
 
 
 def extracted_data_exists(root: Path, release: Release, metadata: Metadata) -> bool:

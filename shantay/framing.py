@@ -53,11 +53,11 @@ def collect_release_metadata(
     The data frame uses `u64` for columns containing counts. The corresponding
     resolution is barely sufficient for the current use case and hence switching
     to `u128` is highly desirable. However, for now, that is impossible because
-    Pola.rs does not yet support writing parquet files with the later integers.
+    Pola.rs does not yet support writing parquet files with the larger integers.
     """
     frame = pl.json_normalize([*records]).with_columns(
         pl.col("release").str.to_date("%Y-%m-%d"),
-        pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.UInt64),
+        pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.Int64),
     ).select(
         pl.col("release").alias("start_date"),
         pl.col("release").alias("end_date"),
@@ -268,9 +268,9 @@ class Collector:
 
             value = kwargs.get(key, None)
             if value is None or isinstance(value, int):
-                effective_values.append(pl.lit(value, dtype=pl.UInt64).alias(key))
+                effective_values.append(pl.lit(value, dtype=pl.Int64).alias(key))
             else:
-                effective_values.append(value.cast(pl.UInt64).alias(key))
+                effective_values.append(value.cast(pl.Int64).alias(key))
 
         assert self._release is not None
         frame = frame.select(
@@ -287,7 +287,7 @@ class Collector:
                 column: "variant",
             }).with_columns(
                 pl.col("variant").cast(pl.String).cast(pl.Categorical),
-                pl.col("count").cast(pl.UInt64)
+                pl.col("count").cast(pl.Int64)
             )
 
         self._frames.append(frame)
@@ -326,20 +326,14 @@ class Collector:
         assert self._source is not None
         frame = self._source
         if field_is_list:
-            frame = frame.with_columns(
-                pl.col(field).list.explode(),
-                pl.col(other_field),
-            )
+            frame = frame.explode(field)
         if other_is_list:
-            frame = frame.with_columns(
-                pl.col(field),
-                pl.col(other_field).list.explode(),
-            )
+            frame = frame.explode(other_field)
 
         frame = frame.group_by(
             field, other_field
         ).agg(
-            pl.count().cast(pl.UInt64).alias("count"),
+            pl.count().cast(pl.Int64).alias("count"),
         ).sort(
             ["count", field, other_field], descending=True
         ).rename({
@@ -395,7 +389,7 @@ class Collector:
                 case _FieldType.LIST_VALUE_COUNTS:
                     self.add_rows(
                         key, entity="elements",
-                        count=pl.col(key).list.len().cast(pl.UInt64).sum()
+                        count=pl.col(key).list.len().cast(pl.Int64).sum()
                     )
                     self.add_rows(
                         key, entity="elements_per_row",
@@ -409,24 +403,33 @@ class Collector:
                 case _FieldType.DECISION_TYPE:
                     self.collect_decision_type()
                 case _DurationField(start, end):
+                    # Convert to millseconds, i.e., an integer
+                    duration = (pl.col(end) - pl.col(start)).dt.total_milliseconds()
+                    assert self._source is not None
+
+                    df = self._source.select(duration.count())
+                    if isinstance(df, pl.LazyFrame):
+                        df = df.collect()
+                    for r in df.rows():
+                        for el in r:
+                            if el is not None and el < 0:
+                                print(f"{el}    {start} {end}")
+                    print(df)
+
+
                     self.add_rows(
                         key,
-                        count=(pl.col(end) - pl.col(start)).count(),
-                        min=(pl.col(end) - pl.col(start)).min(),
-                        mean=(pl.col(end) - pl.col(start)).mean(),
-                        max=(pl.col(end) - pl.col(start)).max(),
+                        count=duration.count(),
+                        min=duration.min(),
+                        mean=duration.mean(),
+                        max=duration.max(),
                     )
                 case _ValueCountsPlusField(self_is_list, other_field, other_is_list):
                     self.collect_value_counts_plus(
                         key, self_is_list, other_field, other_is_list
                     )
 
-    def collect_header(
-        self,
-        batch_count: int,
-        total_rows: int,
-        total_rows_with_keywords: int,
-    ) -> None:
+    def collect_header(self, metadata: pl.DataFrame) -> None:
         """Create a header frame with the given statistics."""
         assert self._release is not None
 
@@ -435,18 +438,38 @@ class Collector:
         # derived from the source frame and hence automatically do the right
         # thing. Let's ensure the first three fields, which are contained in the
         # first frame, also do the right thing.
+        column = [
+            "batch_count",
+            "batch_rows",
+            "batch_rows_with_keywords",
+            "batch_memory",
+            "total_rows",
+            "total_rows_with_keywords",
+        ]
+
+        count = [
+            (metadata.select(pl.col(n).sum()).item() if n in metadata.columns else None)
+            for n in (
+                "batch_count", "batch_rows", "batch_rows_with_keywords",
+                "batch_memory", "total_rows", "total_rows_with_keywords",
+            )
+        ]
+
+        length = len(column)
+        assert length == len(count)
+
         Frame = pl.LazyFrame if isinstance(self._source, pl.LazyFrame) else pl.DataFrame
         header = Frame({
-            "start_date": 3 * [self._release.start_date],
-            "end_date": 3 * [self._release.end_date],
-            "tag": 3 * [None],
-            "column": ["batch_count", "total_rows", "total_rows_with_keywords"],
-            "entity": [None, None, None],
-            "variant": [None, None, None],
-            "count": [batch_count, total_rows, total_rows_with_keywords],
-            "min": [None, None, None],
-            "mean": [None, None, None],
-            "max": [None, None, None],
+            "start_date": length * [self._release.start_date],
+            "end_date": length * [self._release.end_date],
+            "tag": length * [None],
+            "column": column,
+            "entity": length * [None],
+            "variant": length * [None],
+            "count": count,
+            "min": length * [None],
+            "mean": length * [None],
+            "max": length * [None],
         }, schema=STATISTICS_SCHEMA)
 
         self._frames.append(header)
@@ -455,13 +478,11 @@ class Collector:
         self,
         frame: pl.DataFrame | pl.LazyFrame,
         release: Release,
-        batch_count: int,
-        total_rows: int,
-        total_rows_with_keywords: int,
+        meta_frame: pl.DataFrame,
     ) -> None:
         """Collect all necessary data in partial data frames."""
         with self.source_data(frame=frame, release=release) as this:
-            this.collect_header(batch_count, total_rows, total_rows_with_keywords)
+            this.collect_header(meta_frame)
             this.collect_body()
 
         # FIXME: This is not only specific to the DSA SoR DB but also specific
@@ -665,14 +686,15 @@ class Summarizer:
         column: str,
         entity: None | str,
         statistic: Statistic = "count",
-    ) -> int:
+    ) -> None | int:
         """Extract a single count for the given column and entity."""
         assert self._source is not None
-        return self._source.filter(
+        frame = self._source.filter(
             predicate(column, entity=entity)
         ).select(
             pl.col(statistic)
-        ).item()
+        )
+        return frame.item() if frame.height == 1 else None
 
     def get_value_counts(self, column: str, entity: None | str = None) -> pl.DataFrame:
         """Extract the value counts for the given column and entity."""
@@ -784,6 +806,11 @@ class Summarizer:
                 ("start_date", frame.select(pl.col("start_date").min()).item()),
                 ("end_date", frame.select(pl.col("end_date").max()).item()),
                 ("batch_count", this.get_value("batch_count", entity=None)),
+                ("batch_rows", this.get_value("batch_rows", entity=None)),
+                ("batch_rows_with_keywords", this.get_value(
+                    "batch_rows_with_keywords", entity=None
+                )),
+                ("batch_memory", this.get_value("batch_memory", entity=None)),
                 ("total_rows", this.get_value("total_rows", entity=None)),
                 ("total_rows_with_keywords", this.get_value(
                     "total_rows_with_keywords", entity=None

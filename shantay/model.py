@@ -172,13 +172,13 @@ class Daily(Release):
         """Get a glob for all batch files for the release."""
         return f"{self.year}/{self.month:02}/{self.day:02}/{self.id}-?????.parquet"
 
-    def to_full_first_month(self) -> "Monthly":
+    def to_first_full_month(self) -> "Monthly":
         monthly = Monthly(self.year, self.month)
         if self.day != 1:
             monthly = monthly.next()
         return monthly
 
-    def to_full_last_month(self) -> "Monthly":
+    def to_last_full_month(self) -> "Monthly":
         monthly = Monthly(self.year, self.month)
         if self.day != _days_in_month(self.year, self.month):
             monthly = monthly.previous()
@@ -359,8 +359,8 @@ class DateRange(Period):
     def to_full_monthly_range(self) -> ReleaseRange[Monthly]:
         """Convert to a monthly release range with fully covered months."""
         return ReleaseRange(
-            Daily.of(self.first).to_full_first_month(),
-            Daily.of(self.last).to_full_last_month(),
+            Daily.of(self.first).to_first_full_month(),
+            Daily.of(self.last).to_last_full_month(),
         )
 
 
@@ -435,9 +435,7 @@ class CollectorProtocol[R: Release](Protocol):
         self,
         frame: DataFrameType | LazyFrameType,
         release: Release,
-        batch_count: int,
-        total_rows: int,
-        total_rows_with_keywords: int,
+        meta_frame: DataFrameType,
     ) -> None:
         """Collect data."""
 

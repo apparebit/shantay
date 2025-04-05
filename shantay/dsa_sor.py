@@ -357,27 +357,20 @@ class StatementsOfReasons(Dataset[Daily]):
         metadata: DataFrameType,
         collector: CollectorProtocol,
     ) -> None:
-        frame = metadata.select(
-            pl.col("batch_count").sum(),
-            pl.col("total_rows").sum(),
-            pl.col("total_rows_with_keywords").sum(),
-        )
-        batch_count, total_rows, total_rows_with_keywords = frame.row(0)
-
         count = sum(1 for _ in root.glob(release.batch_glob))
         glob = f"{root}/{release.batch_glob}"
-        _logger.debug('analyzing file-count=%d, glob="%s"', count, glob)
+        _logger.debug(
+            'analyzing release="%s", file-count=%d, glob="%s"', release, count, glob
+        )
 
-        working_data = pl.scan_parquet(glob).with_columns(
+        # When using scan_parquet() instead, shantay makes seemingly rapid
+        # progress analyzing the data, only to get stuck at the 100% mark
+        # executing collect(). Even if eager processing is a bit slower, it
+        # provides a more consistent appearance of progress.
+        working_data = pl.read_parquet(glob).with_columns(
             pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES)
         )
-        collector.collect(
-            working_data,
-            release,
-            batch_count,
-            total_rows,
-            total_rows_with_keywords,
-        )
+        collector.collect(working_data, release, metadata)
 
     @annotate_error(filename_arg="root")
     def combine_releases(

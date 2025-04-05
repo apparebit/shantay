@@ -10,10 +10,10 @@ import mistune
 import polars as pl
 
 from .framing import (
-    collect_release_metadata, formatted_summary, is_row_within_period
+    collect_release_metadata, formatted_summary, is_row_within_period, predicate
 )
 from .metadata import Metadata
-from .model import ReleaseRange, STATISTICS_FILE, Storage
+from .model import ConfigError, Coverage, ReleaseRange, STATISTICS_FILE, Storage
 from .schema import KEYWORDS_MINOR_PROTECTION_PLUS, SCHEMA, StatementCategory
 from .util import scale, to_markdown_table
 
@@ -165,12 +165,14 @@ KEYWORD_PALETTE = [
 # --------------------------------------------------------------------------------------
 
 
-def visualize(storage: Storage, notebook: bool = False) -> None:
+def visualize(storage: Storage, coverage: Coverage, notebook: bool = False) -> None:
     charts = storage.staging_root / "charts"
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(storage.working_root, storage.staging_root, renderer)
+    visualizer = Visualizer(
+        storage.working_root, storage.staging_root, coverage, renderer
+    )
     visualizer.run()
 
 
@@ -265,11 +267,13 @@ class Visualizer:
         self,
         working_root: Path,
         staging_root: Path,
+        coverage: Coverage,
         renderer: Renderer,
         with_extras: bool = False
     ) -> None:
         self._working_root = working_root
         self._staging_root = staging_root
+        self._coverage = coverage
         self._with_extras = with_extras
         self._renderer = renderer
         self._timelines = False
@@ -374,27 +378,30 @@ class Visualizer:
 
         # Restrict rendered data to *full* months. That essentially drops the
         # first week of data from the DSA SoR DB.
-        range = range.to_release_range()
+        range = range.intersect(self._coverage.to_date_range()).to_release_range()
         self._range = ReleaseRange(
-            range.first.to_full_first_month(),
-            range.last.to_full_last_month()
+            range.first.to_first_full_month(),
+            range.last.to_last_full_month()
         )
 
         within_range = is_row_within_period(range)
         self._metadata = metadata.filter(within_range)
         self._statistics = statistics.filter(within_range)
+        if self._statistics.height == 0:
+            raise ConfigError("cannot visualize less than a full month of data")
+
         self._summary = Summary.of(self._metadata, self._statistics)
 
         # Determine global keyword usage and keywords with at least 1% use.
-        self._keyword_usage = self._statistics.select(
-            pl.col("keyword_value_counts").list.explode().struct.unnest()
-        ).rename({
-            "category_specification": "keyword"
-        }).group_by(
-            "keyword"
+        self._keyword_usage = self._statistics.filter(
+            predicate("category_specification", entity=None)
+        ).group_by(
+            "variant"
         ).agg(
             pl.col("count").sum()
-        ).with_columns(
+        ).rename({
+            "variant": "keyword"
+        }).with_columns(
             (pl.col("count") / pl.col("count").sum() * 100).alias("pct")
         ).sort(
             pl.col("count"), descending=True
@@ -447,10 +454,10 @@ class Visualizer:
         self.chart("keyword-pie", pie)
 
         self.html("<h2>Platforms</h2>")
-        table = self._statistics.select(
-            pl.col("platform_value_counts").list.explode().struct.unnest()
+        table = self._statistics.filter(
+            predicate("platform_name", entity=None)
         ).group_by(
-            "platform_name"
+            "variant"
         ).agg(
             pl.col("count").sum()
         ).sort(
@@ -527,6 +534,7 @@ class Visualizer:
 
     # ==================================================================================
     # Timelines: Overview
+
 
     def daily_sor_counts_minor_prot(
         self,
@@ -1010,26 +1018,23 @@ class Visualizer:
     def extract_table3(
         self,
         frame: pl.DataFrame,
-        variable: str,
-        columns: dict[str, str],
+        column: str,
+        variants: dict[str, str],
     ) -> pl.DataFrame:
         """Extract a long table from an arbitrary data frame."""
-        return frame.group_by(
+        return frame.filter(
+            predicate(column, entity=None)
+        ).group_by(
             pl.col("start_date").dt.year().alias("year"),
             pl.col("start_date").dt.month().alias("month"),
+            pl.col("column"),
+            pl.col("variant"),
         ).agg(
             pl.col("start_date").min() + dt.timedelta(days=5),
             pl.col("end_date").max() - dt.timedelta(days=5),
-            *(
-                pl.col(c).sum() for c in columns.keys()
-            )
-        ).rename(
-            columns
-        ).unpivot(
-            index=["start_date", "end_date"],
-            on=[*columns.values()],
-            variable_name=variable,
-            value_name="Count",
+            pl.col("count").sum(),
+        ).with_columns(
+            pl.col("variant").replace(variants)
         )
 
     def create_chart(
@@ -1213,10 +1218,6 @@ class Visualizer:
     #     ).explode(
     #         "visibility_decision_value_counts"
     #     )
-
-
-
-
     #     .group_by(
     #         pl.col("start_date").dt.year().alias("year"),
     #         pl.col("start_date").dt.month().alias("month"),
@@ -1359,20 +1360,29 @@ class Summary:
             ).row(0)
         )
 
-        def get_max_platforms(column: str) -> pl.Expr:
-            return (
-                pl.col(column)
-                .list.explode()
-                .struct.field("platform_name")
-                .unique()
-                .len()
-            )
+        max_platforms = statistics.filter(
+            predicate("platform_name", entity=None, tag=None)
+        ).select(
+            pl.col("variant").n_unique()
+        ).item()
 
-        max_platforms, max_platforms_keywords, max_platforms_csam = statistics.select(
-            get_max_platforms("platform_value_counts").alias("total"),
-            get_max_platforms("platform_with_keyword_value_counts").alias("with_keyword"),
-            get_max_platforms("platform_with_csam_value_counts").alias("with_csams"),
-        ).row(0)
+        frame = statistics.filter(
+            predicate("platform_name", entity="with_category_specification", tag=None)
+        ).with_columns(
+            pl.col("variant").cast(pl.String).str.split(by="‖")
+        )
+
+        max_platforms_with_keywords = frame.filter(
+            pl.col("variant").list.last().ne("is_null")
+        ).select(
+            pl.col("variant").list.first().n_unique()
+        ).item()
+
+        max_platforms_with_csam = frame.filter(
+            pl.col("variant").list.last().eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
+        ).select(
+            pl.col("variant").list.first().n_unique()
+        ).item()
 
         return cls(
             start_date=start_date,
@@ -1384,8 +1394,8 @@ class Summary:
             mean_batch_keywords_pct=mean_batch_keywords_pct,
             mean_total_keywords_pct=mean_total_keywords_pct,
             max_platforms=max_platforms,
-            max_platforms_keywords=max_platforms_keywords,
-            max_platforms_csam=max_platforms_csam,
+            max_platforms_keywords=max_platforms_with_keywords,
+            max_platforms_csam=max_platforms_with_csam,
         )
 
     def to_frame(self) -> pl.DataFrame:

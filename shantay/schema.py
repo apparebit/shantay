@@ -661,6 +661,9 @@ ColumnValueType = pl.Enum((
     "start_date",
     "end_date",
     "batch_count",
+    "batch_rows",
+    "batch_rows_with_keywords",
+    "batch_memory",
     "total_rows",
     "total_rows_with_keywords",
     "rows",
@@ -682,10 +685,10 @@ STATISTICS_SCHEMA = pl.Schema({
     "column": ColumnValueType,
     "entity": pl.Categorical(),
     "variant": pl.Categorical(),
-    "count": pl.UInt64,
-    "min": pl.UInt64,
-    "mean": pl.UInt64,
-    "max": pl.UInt64,
+    "count": pl.Int64,
+    "min": pl.Int64,
+    "mean": pl.Int64,
+    "max": pl.Int64,
 })
 
 
