@@ -18,6 +18,10 @@ STAGING = ROOT / "tmp"
 LOGFILE = STAGING / "log.log"
 SENTINEL = STAGING / "pool.run"
 
+ONE = "1"
+TWO = "2"
+THREE = "3"
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,23 +59,24 @@ class TestPool(unittest.TestCase):
 
     def test_pool(self) -> None:
         pool = Pool(size=2, log_level=logging.DEBUG)
-        future1 = pool.submit(task1, "1")
-        future2 = pool.submit(task2, "2")
+        future1 = pool.submit(task1, ONE)
+        future2 = pool.submit(task2, TWO)
 
         future3 = None
         def schedule3(_: object) -> None:
             nonlocal future3
             if future3 is None:
-                future3 = pool.submit(task3, "3")
+                future3 = pool.submit(task3, THREE)
 
         future1.add_done_callback(schedule3)
         future2.add_done_callback(schedule3)
 
+        # Check task results, which also waits for task completion
         with self.subTest("check results"):
-            self.assertEqual(future1.result(), "1")
-            self.assertEqual(future2.result(), "2")
+            self.assertEqual(future1.result(), ONE)
+            self.assertEqual(future2.result(), TWO)
             assert future3 is not None
-            self.assertEqual(future3.result(), "3")
+            self.assertEqual(future3.result(), THREE)
 
         pool.finish()
 
