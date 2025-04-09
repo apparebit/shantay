@@ -157,7 +157,7 @@ class Pool:
         self._index_table.sync()
         return future
 
-    def _on_task_completion(self, future: Future) -> None:
+    def _on_task_completion(self, _: Future) -> None:
         self._pending_tasks -= 1
         if self._pending_tasks == 0 and not self._state.is_running():
             _logger.debug('shut down pool="%s", cause="task completion"', self._id)
@@ -169,7 +169,7 @@ class Pool:
         completion.
         """
         if self._state.set_finishing() and self._pending_tasks == 0:
-            _logger.debug('shut down pool="%s", cause="finish"', self._id)
+            _logger.debug('shut down pool="%s", cause="finish()"', self._id)
             self._shutdown()
 
     def stop(self) -> bool:
@@ -182,7 +182,7 @@ class Pool:
             return False
 
         if self._pending_tasks == 0:
-            _logger.debug('shut down pool="%s", cause="stop"', self._id)
+            _logger.debug('shut down pool="%s", cause="stop()"', self._id)
             self._shutdown()
             return True
 
@@ -480,6 +480,7 @@ def _initialize_worker(
         daemon=True,
     )
     _terminator.start()
+    logger.info('initialized pool worker process pid=%d', _PID)
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
