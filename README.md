@@ -6,14 +6,20 @@ Python-based command line tool for analyzing the European Commission's [DSA
 transparency database](https://transparency.dsa.ec.europa.eu/). That database
 contains granular records about online platforms' content moderation actions.
 
+I've written [a blog post about my initial
+impressions](https://apparebit.com/blog/2025/sashay-shantay) of the DSA
+transparency database. Let's just say that, Brussels, we've got, uhm, problems
+(plural)!
 
-## 1. The Cost of Shrinking Big Data
+
+## 1. Big Data on Consumer Hardware
 
 To support the broadest possible user base in exploring this dataset, which
 already comprises 1.5 TB of compressed CSV files, *shantay* punts on traditional
-techniques for scaling data processing. Instead, it is designed for minimizing
-resource requirements. The tool makes do with what you can comfortably spare. In
-other words, a regular laptop/desktop with a 2 TB Samsung T7 drive for long-term
+techniques for scaling data processing across ever more powerful machines and
+compute clusters. Instead, it is designed for the opposite, minimizing resource
+requirements. The tool makes do with what you can comfortably spare. In other
+words, a regular laptop/desktop with a 2 TB Samsung T7 drive for long-term
 storage will do (for now). While *shantay* is not concerned with traditional
 notions of big data scalability, single node performance and developer
 experience do matter. For that reason, *shantay* uses [Pola.rs](https://pola.rs)
@@ -28,7 +34,7 @@ results is nearly instantaneous, taking seconds at most.
 
 Since extraction does not saturate my iMac's CPU or memory bus, I did integrate
 process-based multiprocessing with *shantay*. It is enabled with the
-`--multiproc` command line option. For the prepare task processing the archives
+`--multiproc` command line option. For the prepare task, processing the archives
 for 2024/5/2 and 5/3 either serially or in parallel, the serial version took 4.5
 minutes and the parallel one took 2.6 minutes, yielding a speedup of 1.7x.
 
@@ -36,11 +42,6 @@ minutes and the parallel one took 2.6 minutes, yielding a speedup of 1.7x.
 (39) with about the same number of rows (300,000) and require roughly the same
 memory (< 390 MB). The time for the parallel version does not include the time
 to create the worker pool.)
-
-I've written [a blog post about my initial
-impressions](https://apparebit.com/blog/2025/sashay-shantay) of the DSA
-transparency database. Let's just say that, Brussels, we've got, uhm, problems
-(plural)!
 
 
 ## 2. Getting Started
