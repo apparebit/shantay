@@ -387,12 +387,28 @@ class Cancelled(Exception):
     """
     Signal for a cancelled task execution. The exception's *three* `args` are
     automatically filled in, comprising a helpful error message, the native
-    thread ID, and the process ID of the cancelled thread/process.
+    thread ID, and the process ID of the cancelled thread/process. They also are
+    conveniently accessible through dedicated properties.
     """
     def __init__(self) -> None:
         tid = threading.get_native_id()
         pid = os.getpid()
         super().__init__(f"thread {tid}, process {pid} was cancelled", tid, pid)
+
+    @property
+    def msg(self) -> str:
+        """Get a descriptive message for the cancelled task."""
+        return self.args[0]
+
+    @property
+    def tid(self) -> int:
+        """Get the native thread ID of the cancelled task."""
+        return self.args[1]
+
+    @property
+    def pid(self) -> int:
+        """Get the process ID of the cancelled task."""
+        return self.args[2]
 
 
 # --------------------------------------------------------------------------------------
