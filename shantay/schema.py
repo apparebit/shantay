@@ -9,12 +9,18 @@ either schema are incrementally transformed to the tighter main schema.
 Meanwhile, statistics data needs to combine many different enumerations in the
 same column and hence uses more relaxed type constraints.
 """
+from collections.abc import Sequence
+from dataclasses import dataclass
 import datetime as dt
 import enum
 from types import GenericAlias, MappingProxyType
-from typing import Any, get_args, get_origin
+from typing import Any, get_args, get_origin, Literal
 
 import polars as pl
+
+from .color import (
+    BLUE, BROWN, CYAN, GRAY, GREEN, LIGHT_BLUE, ORANGE, PINK, PURPLE, RED
+)
 
 
 # ======================================================================================
@@ -260,75 +266,178 @@ class TerritorialAlias(enum.StrEnum):
 # ======================================================================================
 
 
-AccountType = (
-    "ACCOUNT_TYPE_BUSINESS",
-    "ACCOUNT_TYPE_PRIVATE",
+type VariantNamesAndColors = dict[None |str, tuple[str, str]]
+
+@dataclass(frozen=True, slots=True)
+class MetricDeclaration:
+    """A declarative specification of how to visually present a variant."""
+
+    field: str | Sequence[str]
+    label: str
+    selector: Literal["column", "entity", "variant"]
+    quantity: Literal["count", "min", "mean", "max"]
+    quant_label: str
+    variants: VariantNamesAndColors
+
+    def __init__(
+        self,
+        field: str | Sequence[str],
+        label: str,
+        variants: VariantNamesAndColors,
+        *,
+        selector: Literal["column", "entity", "variant"] = "variant",
+        quantity: Literal["count", "min", "mean", "max"] = "count",
+        quant_label: str = "Statements of Reasons",
+    ) -> None:
+        object.__setattr__(self, "field", field)
+        object.__setattr__(self, "label", label)
+        object.__setattr__(self, "variants", MappingProxyType(variants))
+        object.__setattr__(self, "selector", selector)
+        object.__setattr__(self, "quantity", quantity)
+        object.__setattr__(self, "quant_label", quant_label)
+
+    def has_variants(self) -> bool:
+        return 0 < len(self.variants)
+
+    def has_null_variant(self) -> bool:
+        return None in self.variants
+
+    def variant_names(self) -> list[str]:
+        return [k for k in self.variants.keys() if k is not None]
+
+    def enum(self) -> pl.Enum:
+        return pl.Enum(self.variant_names())
+
+    def replacements(self) -> dict[None | str, str]:
+        return {k: v[0] for k, v in self.variants.items()}
+
+    def variant_labels(self) -> list[str]:
+        return [v[0] for v in self.variants.values()]
+
+    def variant_colors(self) -> list[str]:
+        return [v[1] for v in self.variants.values()]
+
+    def groupings(self) -> list[pl.Expr]:
+        groupings = [pl.col("column")]
+        if self.selector != "column":
+            groupings.append(pl.col("entity"))
+        if self.selector == "variant":
+            groupings.append(pl.col("variant"))
+        return groupings
+
+
+AccountType = MetricDeclaration("account_type", "Account Types", {
+    "ACCOUNT_TYPE_BUSINESS": ("Business", ORANGE),
+    "ACCOUNT_TYPE_PRIVATE": ("Individual", BLUE),
+    None: ("—none—", RED),
+})
+
+
+AutomatedDecision = MetricDeclaration("automated_decision", "Automated Decisions", {
+    "AUTOMATED_DECISION_FULLY": ("Fully Automated", CYAN),
+    "AUTOMATED_DECISION_PARTIALLY": ("Partially Automated", BLUE),
+    "AUTOMATED_DECISION_NOT_AUTOMATED": ("Not Automated", GREEN),
+    None: ("—none—", RED),
+})
+
+
+AutomatedDetection = MetricDeclaration("automated_detection", "Automated Detection", {
+    "Yes": ("Automated", LIGHT_BLUE),
+    "No": ("Not Automated", PURPLE),
+    None: ("—none—", RED),
+})
+
+
+ContentType = MetricDeclaration("content_type", "Content Types", {
+    "CONTENT_TYPE_APP": ("App", CYAN),
+    "CONTENT_TYPE_AUDIO": ("Audio", GREEN),
+    "CONTENT_TYPE_IMAGE": ("Image", BLUE),
+    "CONTENT_TYPE_PRODUCT": ("Product", RED),
+    "CONTENT_TYPE_SYNTHETIC_MEDIA": ("Synthetic Media", PINK),
+    "CONTENT_TYPE_TEXT": ("Text", ORANGE),
+    "CONTENT_TYPE_VIDEO": ("Video", PURPLE),
+    "CONTENT_TYPE_OTHER": ("Other", LIGHT_BLUE),
+    None: ("—none—", GRAY),
+})
+
+
+DecisionAccount = MetricDeclaration("decision_account", "Account Decisions", {
+    "DECISION_ACCOUNT_SUSPENDED": ("Suspended", ORANGE),
+    "DECISION_ACCOUNT_TERMINATED": ("Terminated", RED),
+    None: ("—none—", GRAY),
+})
+
+
+DecisionGround = MetricDeclaration("decision_ground", "Decision Grounds", {
+    "DECISION_GROUND_ILLEGAL_CONTENT": ("Illegal", ORANGE),
+    "DECISION_GROUND_INCOMPATIBLE_CONTENT": ("Incompatible", GREEN),
+})
+
+
+# Combine decision_ground and incompatible_content_illegal
+DecisionGroundAndLegality = MetricDeclaration(
+    ["decision_ground", "incompatible_content_illegal"],
+    "Decision Grounds",
+    DecisionGround.variants | {"Yes": ("Incompatible & Illegal", RED)}
 )
 
 
-AutomatedDecision = (
-    "AUTOMATED_DECISION_FULLY",
-    "AUTOMATED_DECISION_PARTIALLY",
-    "AUTOMATED_DECISION_NOT_AUTOMATED",
-)
+DecisionMonetary = MetricDeclaration("decision_monetary", "Monetary Decisions", {
+   "DECISION_MONETARY_SUSPENSION": ("Suspended", ORANGE),
+   "DECISION_MONETARY_TERMINATION": ("Terminated", RED),
+   "DECISION_MONETARY_OTHER": ("Other", PINK),
+   None: ("—none—", GRAY),
+})
 
 
-ContentType = (
-    "CONTENT_TYPE_APP",
-    "CONTENT_TYPE_AUDIO",
-    "CONTENT_TYPE_IMAGE",
-    "CONTENT_TYPE_PRODUCT",
-    "CONTENT_TYPE_SYNTHETIC_MEDIA",
-    "CONTENT_TYPE_TEXT",
-    "CONTENT_TYPE_VIDEO",
-    "CONTENT_TYPE_OTHER",
-)
+DecisionProvision = MetricDeclaration("decision_provision", "Service Provision Decisions", {
+    "DECISION_PROVISION_PARTIAL_SUSPENSION": ("Partially Suspended", LIGHT_BLUE),
+    "DECISION_PROVISION_TOTAL_SUSPENSION": ("Suspended", BLUE),
+    "DECISION_PROVISION_PARTIAL_TERMINATION": ("Partially Terminated", ORANGE),
+    "DECISION_PROVISION_TOTAL_TERMINATION": ("Terminated", RED),
+    None: ("—none—", GRAY),
+})
 
 
-DecisionAccount = (
-    "DECISION_ACCOUNT_SUSPENDED",
-    "DECISION_ACCOUNT_TERMINATED",
-)
+DecisionType = MetricDeclaration("decision_type", "Decision Types", {
+    "vis": ("Visibility", BLUE),
+    "mon": ("Monetary", GREEN),
+    "vis_mon": ("Visibility & Monetary", CYAN),
+    "pro": ("Provision", LIGHT_BLUE),
+    "vis_pro": ("Visibility & Provision", ORANGE),
+    "mon_pro": ("Monetary & Provision", GREEN),
+    "vis_mon_pro": ("Visibility, Monetary, Provision", CYAN),
+    "acc": ("Account", PURPLE),
+    "vis_acc": ("Visibility & Account", GREEN),
+    "mon_acc": ("Monetary & Account", CYAN),
+    "vis_mon_acc": ("Visibility, Monetary, Account", GREEN),
+    "pro_acc": ("Provision & Account", CYAN),
+    "vis_pro_acc": ("Visibility, Provision, Account", RED),
+    "mon_pro_acc": ("Monetary, Provision, Account", GREEN),
+    "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", CYAN),
+    None: ("—none—", GRAY),
+}, selector="entity")
 
 
-DecisionGround = (
-    "DECISION_GROUND_ILLEGAL_CONTENT",
-    "DECISION_GROUND_INCOMPATIBLE_CONTENT",
-)
+DecisionVisibility = MetricDeclaration("decision_visibility", "Visibility Decisions", {
+    "DECISION_VISIBILITY_CONTENT_REMOVED": ("Removed", LIGHT_BLUE),
+    "DECISION_VISIBILITY_CONTENT_DISABLED": ("Disabled", RED),
+    "DECISION_VISIBILITY_CONTENT_DEMOTED": ("Demoted", ORANGE),
+    "DECISION_VISIBILITY_CONTENT_AGE_RESTRICTED": ("Age-Restricted", GREEN),
+    "DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED": ("Interaction Restricted", PURPLE),
+    "DECISION_VISIBILITY_CONTENT_LABELLED": ("Labelled", PINK),
+    "DECISION_VISIBILITY_OTHER": ("Other", BLUE),
+    None: ("—none—", GRAY),
+})
 
 
-DecisionMonetary = (
-   "DECISION_MONETARY_SUSPENSION",
-   "DECISION_MONETARY_TERMINATION",
-   "DECISION_MONETARY_OTHER",
-)
-
-
-DecisionProvision = (
-    "DECISION_PROVISION_PARTIAL_SUSPENSION",
-    "DECISION_PROVISION_TOTAL_SUSPENSION",
-    "DECISION_PROVISION_PARTIAL_TERMINATION",
-    "DECISION_PROVISION_TOTAL_TERMINATION",
-)
-
-
-DecisionVisibility = (
-    "DECISION_VISIBILITY_CONTENT_REMOVED",
-    "DECISION_VISIBILITY_CONTENT_DISABLED",
-    "DECISION_VISIBILITY_CONTENT_DEMOTED",
-    "DECISION_VISIBILITY_CONTENT_AGE_RESTRICTED",
-    "DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED",
-    "DECISION_VISIBILITY_CONTENT_LABELLED",
-    "DECISION_VISIBILITY_OTHER",
-)
-
-
-InformationSource = (
-    "SOURCE_ARTICLE_16",
-    "SOURCE_TRUSTED_FLAGGER",
-    "SOURCE_TYPE_OTHER_NOTIFICATION",
-    "SOURCE_VOLUNTARY",
-)
+InformationSource = MetricDeclaration("source_type", "Information Sources", {
+    "SOURCE_ARTICLE_16": ("Article 16", LIGHT_BLUE),
+    "SOURCE_TRUSTED_FLAGGER": ("Trusted Flagger", BLUE),
+    "SOURCE_TYPE_OTHER_NOTIFICATION": ("Other Notification", ORANGE),
+    "SOURCE_VOLUNTARY": ("Voluntary", GREEN),
+    None: ("—none—", GRAY),
+})
 
 
 Keyword = (
@@ -449,6 +558,31 @@ Keyword = (
 )
 
 
+# Cover all keywords that are utilized in practice
+KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords", {
+    "KEYWORD_ADULT_SEXUAL_MATERIAL": ("Adult Sexual Material", GREEN),
+    "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS": ("Age-Restricted", PURPLE),
+    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL": ("CSAM", LIGHT_BLUE),
+    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE": ("Deepfake", PINK),
+    "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS": ("Grooming", RED),
+    "KEYWORD_HATE_SPEECH": ("Hate Speech", CYAN),
+    "KEYWORD_HUMAN_TRAFFICKING": ("Trafficking", ORANGE),
+    "KEYWORD_NUDITY": ("Nudity", GREEN),
+    "KEYWORD_ONLINE_BULLYING_INTIMIDATION": ("Bullying", GRAY),
+    "KEYWORD_OTHER": ("Other", BLUE),
+    "KEYWORD_REGULATED_GOODS_SERVICES": ("Regulated", BROWN),
+    "KEYWORD_UNSAFE_CHALLENGES": ("Unsafe Challenges", BLUE),
+}, quant_label="SoRs with Keyword")
+
+
+PerPlatformKeywords = MetricDeclaration(
+    "platform_name",
+    "Per Platform Keywords",
+    KeywordsMinorProtection.variants | {None: ("—none—", GRAY)},
+    quant_label="SoRs with Keyword"
+)
+
+
 PlatformName = (
     "AliExpress",
     "Badoo",
@@ -507,6 +641,20 @@ CANONICAL_PLATFORM_NAMES = MappingProxyType({
 })
 
 
+ProcessingDelay = MetricDeclaration(
+    ["moderation_delay", "disclosure_delay"],
+    "Delays",
+    {
+        "moderation_delay": ("Moderation", LIGHT_BLUE),
+        "disclosure_delay": ("Disclosure", RED),
+        None: ("—none—", GRAY),
+    },
+    selector="column",
+    quantity="mean",
+    quant_label="Days",
+)
+
+
 # See
 # https://transparency.dsa.ec.europa.eu/page/additional-explanation-for-statement-attributes
 # for two-level classification for types of violative activity.
@@ -532,6 +680,14 @@ StatementCategory = (
     "STATEMENT_CATEGORY_UNSAFE_AND_ILLEGAL_PRODUCTS",
     "STATEMENT_CATEGORY_UNSAFE_AND_PROHIBITED_PRODUCTS",
     "STATEMENT_CATEGORY_VIOLENCE",
+)
+
+
+StatementCount = MetricDeclaration(
+    "rows",
+    "Statement Counts",
+    {},
+    selector="column",
 )
 
 
@@ -601,7 +757,9 @@ FIELDS = MappingProxyType({
 })
 
 
-def polarize(ptype: GenericAlias | tuple[str, ...] | type) -> Any:
+def polarize(
+    ptype: GenericAlias | MetricDeclaration | tuple[str, ...] | type
+) -> Any:
     """
     Convert a Python type to a Pola.rs type. This function handles int, float,
     str, datetime.date, datetime.datetime, and list[<type>]. It also treats
@@ -619,17 +777,20 @@ def polarize(ptype: GenericAlias | tuple[str, ...] | type) -> Any:
         return pl.String
     if isinstance(ptype, tuple) and all(isinstance(v, str) for v in ptype):
         return pl.Enum(ptype)
+    if isinstance(ptype, MetricDeclaration):
+        return ptype.enum()
 
     origin = get_origin(ptype)
     args = get_args(ptype)
 
     if origin is list:
-        if len(args) == 1 and not isinstance(args[0], str):
+        if 1 == len(args):
             return pl.List(polarize(args[0]))
+        if 1 < len(args):
+            # list[tuple(...)] inlines the explicit tuple into the args tuple.
+            return pl.List(polarize(args))
 
-        return pl.List(polarize(args))
-
-    raise ValueError(f'cannot convert "{ptype}"')
+    raise ValueError(f'cannot convert "{ptype}" with type {type(ptype)}')
 
 
 def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
@@ -685,6 +846,7 @@ STATISTICS_SCHEMA = pl.Schema({
     "column": ColumnValueType,
     "entity": pl.Categorical(),
     "variant": pl.Categorical(),
+    "variant_too": pl.Categorical(),
     "count": pl.Int64,
     "min": pl.Int64,
     "mean": pl.Int64,
@@ -693,28 +855,6 @@ STATISTICS_SCHEMA = pl.Schema({
 
 
 # ======================================================================================
-
-
-KEYWORDS_MINOR_PROTECTION = MappingProxyType({
-    "NO_KEYWORD": "None",
-    "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS": "Age-Restricted",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL": "CSAM",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE": "Deepfake",
-    "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS": "Grooming",
-    "KEYWORD_UNSAFE_CHALLENGES": "Unsafe Challenges",
-    "KEYWORD_OTHER": "Other",
-})
-
-
-# Plus keywords found to overlap in practice
-KEYWORDS_MINOR_PROTECTION_PLUS = MappingProxyType(KEYWORDS_MINOR_PROTECTION | {
-    "KEYWORD_ADULT_SEXUAL_MATERIAL": "Adult Material",
-    "KEYWORD_HATE_SPEECH": "Hate Speech",
-    "KEYWORD_HUMAN_TRAFFICKING": "Trafficking",
-    "KEYWORD_NUDITY": "Nudity",
-    "KEYWORD_ONLINE_BULLYING_INTIMIDATION": "Bullying",
-    "KEYWORD_REGULATED_GOODS_SERVICES": "Regulated",
-})
 
 
 def normalize_category(category: str) -> str:
