@@ -5,6 +5,7 @@ import os
 import signal
 import sys
 import time
+import traceback
 from types import FrameType
 from typing import Any
 
@@ -66,24 +67,34 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="pool.size",            value=%d', self._pool.size)
 
-        # See Processor.run() for an explanation for time.time().
+        # See Processor.run() for an explanation for time.time()
         start_time = time.time()
+
+        # Determine cursor's first and final values as well as increment
         if task == "prepare":
             cover = self._coverage
+            increment = "daily"
         elif task == "analyze":
             date_cover, metadata = collect_release_metadata(self._metadata.records)
             cover = date_cover.to_release_range().to_monthly()
             self._metadata_frame = metadata
+            increment = "monthly"
         else:
             raise ValueError(f"invalid task {task}")
 
         self._cursor = cover.first
         self._last = cover.last
 
+        _logger.info('    key="cursor.first",         value="%s"', self._cursor.id)
+        _logger.info('    key="cursor.last",          value="%s"', self._last.id)
+        _logger.info('    key="cursor.increment",     value="%s"', increment)
+
+        # Seed pool with tasks
         for _ in range(self._pool.size):
             if not self._schedule_task():
                 break
 
+        # Wait until pool finishes
         if wait:
             self._pool.wait()
         self._runtime = time.time() - start_time
@@ -111,11 +122,11 @@ class Multiprocessor[R: Release]:
                 dataset=self._dataset,
                 storage=self._storage,
                 filter=self._metadata.filter,
-                metadata=self._metadata_frame,
+                metadata_frame=self._metadata_frame,
                 release=release,
             )
         except Exception as x:
-            _logger.error('task rejected by pool="%s"', self._pool.id)
+            _logger.error('task rejected by pool="%s"', self._pool.id, exc_info=x)
             return False
 
         def callback(future: Future) -> bool:
@@ -157,10 +168,11 @@ class Multiprocessor[R: Release]:
         try:
             result = future.result()
         except Cancelled as x:
-            _logger.debug('worker=%d, status="cancelled"', x.args[2])
+            _logger.debug('worker=%d, status="cancelled"', x.pid)
             self._pool.stop()
             return False
         except Exception as x:
+            _logger.error('task running in worker pool raised unexpected exception', exc_info=x)
             return self._schedule_task()
 
         if self._task == "prepare":
@@ -232,6 +244,21 @@ def run_on_worker[R: Release](
     release. The result for an analyze task is the statistics data frame for the
     release.
     """
+    try:
+        return _run_on_worker(task, dataset, storage, filter, metadata_frame, release)
+    except Exception as x:
+        traceback.print_exception(x)
+        raise
+
+
+def _run_on_worker[R: Release](
+    task: str,
+    dataset: Dataset[R],
+    storage: Storage,
+    filter: str,
+    metadata_frame: DataFrameType,
+    release: R,
+) -> Any:
     pid = os.getpid()
 
     coverage = Coverage(release, release, filter)
