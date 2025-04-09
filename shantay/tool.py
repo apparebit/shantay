@@ -250,7 +250,8 @@ def run(args: list[str]) -> int:
     try:
         _run(args)
         return 0
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as x:
+        print("".join(traceback.format_exception(x)))
         print('\ninterrupted by user; terminating...')
         return 1
     except (ConfigError, DownloadFailed, MetadataConflict) as x:
