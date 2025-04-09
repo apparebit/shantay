@@ -83,6 +83,11 @@ class Processor[R: Release]:
     def prepare(self) -> None:
         for release in self._coverage:
             self.prepare_batches(release)
+            # If the working root contains a meta.json, then the staging root's
+            # meta.json was created with that file's data. Hence it's perfectly
+            # fine to copy back the JSON after each release. In fact, that
+            # avoids metadata loss if the prepare task is interrupted.
+            Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
 
     def prepare_batches(self, release: R) -> None:
         if (
@@ -287,6 +292,11 @@ class Processor[R: Release]:
             'extracted batch-count=%d, file="%s"', batch_count, self._dataset.archive_name(release)
         )
 
+        # It's safe to copy the batches here because each worker has its own,
+        # isolated releases. So even if several workers are copying batch files
+        # to the working root, they only add subdirectories and files. That does
+        # *not* hold for the metadata, which must be merged and written from a
+        # single process such as the coordinator.
         self._progress.activity(
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
