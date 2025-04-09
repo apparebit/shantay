@@ -584,7 +584,7 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
     "KEYWORD_NUDITY": ("Nudity", GREEN),
     "KEYWORD_ONLINE_BULLYING_INTIMIDATION": ("Bullying", GRAY),
     "KEYWORD_OTHER": ("Other", BLUE),
-    "KEYWORD_REGULATED_GOODS_SERVICES": ("Regulated", BROWN),
+    "KEYWORD_REGULATED_GOODS_SERVICES": ("Regulated Goods/Services", BROWN),
     "KEYWORD_UNSAFE_CHALLENGES": ("Unsafe Challenges", BLUE),
 }, quant_label="SoRs with Keyword")
 
