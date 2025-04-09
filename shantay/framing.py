@@ -477,6 +477,7 @@ def predicate(
     column: str | Sequence[str] | NotNull,
     entity: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
     variant: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
+    variant_too: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
     tag: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
@@ -526,6 +527,13 @@ def predicate(
         predicate = predicate.and_(pl.col("variant").is_null().not_())
     elif variant is not _NO_ARGUMENT_PROVIDED:
         predicate = predicate.and_(pl.col("variant").eq(variant))
+
+    if variant_too is None:
+        predicate = predicate.and_(pl.col("variant_too").is_null())
+    elif isinstance(variant_too, NotNull):
+        predicate = predicate.and_(pl.col("variant_too").is_null().not_())
+    elif variant_too is not _NO_ARGUMENT_PROVIDED:
+        predicate = predicate.and_(pl.col("variant_too").eq(variant_too))
 
     return predicate
 
