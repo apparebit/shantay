@@ -89,15 +89,22 @@ class Multiprocessor[R: Release]:
         self._runtime = time.time() - start_time
 
     def _schedule_task(self) -> bool:
+        assert self._pool is not None
+
         release = self._next_release()
         if release is None:
             # Make sure the pool finishes
-            assert self._pool is not None
             self._pool.finish()
             return False
 
-        assert self._pool is not None
+        task = self._task
+        pool = self._pool.id
+
         try:
+            _logger.info(
+                'submitting task="%s", release="%s", pool="%s"', task, release, pool
+            )
+
             future = self._pool.submit(
                 run_on_worker,
                 task=self._task,
@@ -111,7 +118,13 @@ class Multiprocessor[R: Release]:
             _logger.error('task rejected by pool="%s"', self._pool.id)
             return False
 
-        future.add_done_callback(self._done_with_task)
+        def callback(future: Future) -> bool:
+            _logger.info(
+                'finished task="%s", release="%s", pool="%s"', task, release, pool
+            )
+            return self._done_with_task(future)
+
+        future.add_done_callback(callback)
         return True
 
     def _next_release(self) -> None | Release:
