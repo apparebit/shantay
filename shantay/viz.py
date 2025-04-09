@@ -23,8 +23,8 @@ from .schema import (
     AutomatedDecision, AutomatedDetection,
     ContentType, DecisionAccount, DecisionGroundAndLegality, DecisionMonetary,
     DecisionProvision, DecisionType, DecisionVisibility,
-    KeywordsMinorProtection, PerPlatformKeywords, ProcessingDelay, SCHEMA,
-    StatementCategory, StatementCount, MetricDeclaration
+    KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
+    StatementCategory, StatementCount,
 )
 from .util import scale, to_markdown_table
 
@@ -850,8 +850,11 @@ class Visualizer:
 
     def overall_keyword_usage_by_platform(self, percent: bool) -> alt.Chart:
         frame = self._statistics.lazy().filter(
-            pl.col("column").eq("platform_name")
-            .and_(pl.col("entity").eq("with_category_specification"))
+            predicate(
+                "platform_name",
+                entity="with_category_specification",
+                variant_too=NOT_NULL
+            )
         ).group_by(
             pl.col("variant", "variant_too"),
         ).agg(
@@ -859,7 +862,7 @@ class Visualizer:
         ).with_columns(
             pl.col("variant_too")
             .cast(pl.String)
-            .replace(PerPlatformKeywords.replacements())
+            .replace(KeywordsMinorProtection.replacements())
         ).collect()
 
         title = "Keywords Used by Platforms Reporting CSAM — "
@@ -890,12 +893,12 @@ class Visualizer:
             size=30,
             tooltip=True,
         ).encode(
-            alt.X("variant:N", axis=alt.Axis(labelAngle=-45)),
+            alt.X("variant:N", axis=alt.Axis(labelAngle=-45)).title("Platform"),
             alt.Y(y_data).title(y_title),
             alt.Color("variant_too:N").scale(
-                domain=PerPlatformKeywords.variant_labels(),
-                range=PerPlatformKeywords.variant_colors(),
-            )
+                domain=KeywordsMinorProtection.variant_labels(),
+                range=KeywordsMinorProtection.variant_colors(),
+            ).title("Keyword")
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,

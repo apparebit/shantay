@@ -589,14 +589,6 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
 }, quant_label="SoRs with Keyword")
 
 
-PerPlatformKeywords = MetricDeclaration(
-    "platform_name",
-    "Per Platform Keywords",
-    KeywordsMinorProtection.variants | {None: ("—none—", GRAY)},
-    quant_label="SoRs with Keyword"
-)
-
-
 PlatformName = (
     "AliExpress",
     "Badoo",
