@@ -17,7 +17,6 @@ from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
-import enum
 from importlib import import_module
 from typing import Any, Literal, Self
 
@@ -25,11 +24,13 @@ import polars as pl
 
 from .metadata import FullMetadataEntry
 from .model import ConfigError, DateRange, Period, QueryExpression, Release
-from .schema import ColumnValueType, STATISTICS_SCHEMA
+from .schema import (
+    ColumnValueType, DurationTransform, STATISTICS_SCHEMA, TRANSFORMS, TransformType,
+    ValueCountsPlusTransform
+)
 from .util import scale_time
 
 
-BASELINE_TAG = "Baseline"
 CSAM_TAG = "CSAM"
 
 
@@ -127,84 +128,6 @@ def resolve_query_binding(s: str) -> QueryExpression:
 # --------------------------------------------------------------------------------------
 
 
-class _FieldType(enum.Enum):
-    """The different field types in a snapshot."""
-    SKIPPED_DATE = enum.auto()
-    ROWS = enum.auto()
-    VALUE_COUNTS = enum.auto()
-    LIST_VALUE_COUNTS = enum.auto()
-    DECISION_TYPE = enum.auto()
-
-
-@dataclass(frozen=True, slots=True)
-class _DurationField:
-    """A duration is the difference of two datetimes."""
-    start: str
-    end: str
-
-
-@dataclass(frozen=True, slots=True)
-class _ValueCountsPlusField:
-    """Value counts for a field as well as in combination with another one."""
-    self_is_list: bool
-    other_field: str
-    other_is_list: bool = False
-
-
-# The fields cover all DSA transparency database entries without unconstrained text.
-_FIELDS = {
-    "rows": _FieldType.ROWS,
-    "decision_type": _FieldType.DECISION_TYPE,
-    "decision_visibility": _ValueCountsPlusField(
-        self_is_list=True, other_field="end_date_visibility_restriction"
-    ),
-    "end_date_visibility_restriction": _FieldType.SKIPPED_DATE,
-    "visibility_restriction_duration": _DurationField(
-        "application_date", "end_date_visibility_restriction"
-    ),
-    "decision_monetary": _FieldType.VALUE_COUNTS,
-    "end_date_monetary_restriction": _FieldType.SKIPPED_DATE,
-    "monetary_restriction_duration": _DurationField(
-        "application_date", "end_date_monetary_restriction"
-    ),
-    "decision_provision": _ValueCountsPlusField(
-        self_is_list=False, other_field="end_date_service_restriction"),
-    "end_date_service_restriction": _FieldType.SKIPPED_DATE,
-    "service_restriction_duration": _DurationField(
-        "application_date", "end_date_service_restriction"
-    ),
-    "decision_account": _ValueCountsPlusField(
-        self_is_list=False, other_field="end_date_account_restriction"
-    ),
-    "end_date_account_restriction": _FieldType.SKIPPED_DATE,
-    "account_restriction_duration": _DurationField(
-        "application_date", "end_date_account_restriction"
-    ),
-    "account_type": _FieldType.VALUE_COUNTS,
-    "decision_ground": _FieldType.VALUE_COUNTS,
-    "incompatible_content_illegal": _FieldType.VALUE_COUNTS,
-    "category": _FieldType.VALUE_COUNTS,
-    "category_addition": _FieldType.LIST_VALUE_COUNTS,
-    "category_specification": _FieldType.LIST_VALUE_COUNTS,
-    "content_type": _FieldType.LIST_VALUE_COUNTS,
-    "content_language": _FieldType.VALUE_COUNTS,
-    "moderation_delay": _DurationField("content_date", "application_date"),
-    "disclosure_delay": _DurationField("application_date", "created_at"),
-    "source_type": _FieldType.VALUE_COUNTS,
-    "automated_detection": _FieldType.VALUE_COUNTS,
-    "automated_decision": _FieldType.VALUE_COUNTS,
-    "platform_name": _ValueCountsPlusField(
-        self_is_list=False, other_field="category_specification", other_is_list=True
-    ),
-}
-
-
-_STATISTICS = ("count", "min", "mean", "max")
-
-
-# --------------------------------------------------------------------------------------
-
-
 class Collector:
     """Analyze the data while also collecting the results."""
 
@@ -269,7 +192,7 @@ class Collector:
                 pl.lit(None, dtype=pl.Categorical).alias("variant_too"),
             ])
 
-        for key in _STATISTICS:
+        for key in ("count", "min", "mean", "max"):
             if value_counts is not None and key == "count":
                 continue
 
@@ -319,7 +242,7 @@ class Collector:
         # Value counts for field
         values = pl.col(field).list.explode() if field_is_list else pl.col(field)
         self.add_rows(field, value_counts=values)
-        if self._tag is not None and self._tag != BASELINE_TAG:
+        if self._tag is not None:
             return
 
         if not is_categorical(other_field):
@@ -389,15 +312,15 @@ class Collector:
 
     def collect_body(self) -> None:
         """Collect the standard statistics for the current data frame."""
-        for key, value in _FIELDS.items():
+        for key, value in TRANSFORMS.items():
             match value:
-                case _FieldType.SKIPPED_DATE:
+                case TransformType.SKIPPED_DATE:
                     pass
-                case _FieldType.ROWS:
+                case TransformType.ROWS:
                     self.add_rows(key, count=pl.len())
-                case _FieldType.VALUE_COUNTS:
+                case TransformType.VALUE_COUNTS:
                     self.add_rows(key, value_counts=pl.col(key))
-                case _FieldType.LIST_VALUE_COUNTS:
+                case TransformType.LIST_VALUE_COUNTS:
                     self.add_rows(
                         key, entity="elements",
                         count=pl.col(key).list.len().cast(pl.Int64).sum()
@@ -411,9 +334,9 @@ class Collector:
                         count=pl.col(key).list.len().gt(0).sum()
                     )
                     self.add_rows(key, value_counts=pl.col(key).list.explode())
-                case _FieldType.DECISION_TYPE:
+                case TransformType.DECISION_TYPE:
                     self.collect_decision_type()
-                case _DurationField(start, end):
+                case DurationTransform(start, end):
                     # Convert to millseconds, i.e., an integer
                     duration = (pl.col(end) - pl.col(start)).dt.total_milliseconds()
                     assert self._source is not None
@@ -425,7 +348,7 @@ class Collector:
                         mean=duration.mean(),
                         max=duration.max(),
                     )
-                case _ValueCountsPlusField(self_is_list, other_field, other_is_list):
+                case ValueCountsPlusTransform(self_is_list, other_field, other_is_list):
                     self.collect_value_counts_plus(
                         key, self_is_list, other_field, other_is_list
                     )
@@ -631,16 +554,16 @@ def aggregates() -> list[pl.Expr]:
 
 def is_categorical(column: str) -> bool:
     """Determine whether the named column is categorical."""
-    field = _FIELDS[column]
+    field = TRANSFORMS[column]
     return (
-        field in (_FieldType.VALUE_COUNTS, _FieldType.LIST_VALUE_COUNTS)
-        or isinstance(field, _ValueCountsPlusField)
+        field in (TransformType.VALUE_COUNTS, TransformType.LIST_VALUE_COUNTS)
+        or isinstance(field, ValueCountsPlusTransform)
     )
 
 
 def is_duration(column: str) -> bool:
     """Determine whether the named column is a duration."""
-    return isinstance(_FIELDS[column], _DurationField)
+    return isinstance(TRANSFORMS[column], DurationTransform)
 
 
 # --------------------------------------------------------------------------------------
@@ -790,29 +713,29 @@ class Summarizer:
             self._summary.append((var, count))
 
     def summarize_fields(self) -> None:
-        for field_name, field_type in _FIELDS.items():
+        for field_name, field_type in TRANSFORMS.items():
             match field_type:
-                case _FieldType.SKIPPED_DATE:
+                case TransformType.SKIPPED_DATE:
                     pass
-                case _FieldType.ROWS:
+                case TransformType.ROWS:
                     self.collect1("rows")
                     self.spacer()
-                case _FieldType.VALUE_COUNTS:
+                case TransformType.VALUE_COUNTS:
                     self.spacer()
                     self.collect_value_counts(field_name)
-                case _FieldType.LIST_VALUE_COUNTS:
+                case TransformType.LIST_VALUE_COUNTS:
                     self.spacer()
                     self.collect1(field_name, "elements")
                     self.collect1(field_name, "elements_per_row", "max")
                     self.collect1(field_name, "rows_with_elements")
                     self.collect_value_counts(field_name)
-                case _DurationField(start, end):
+                case DurationTransform(start, end):
                     self.spacer()
                     self.collect1(field_name, statistic="count")
                     self.collect1(field_name, statistic="min")
                     self.collect1(field_name, statistic="mean")
                     self.collect1(field_name, statistic="max")
-                case _ValueCountsPlusField(_, other_field, _):
+                case ValueCountsPlusTransform(_, other_field, _):
                     self.spacer()
                     self.collect_value_counts(field_name)
 
@@ -822,7 +745,7 @@ class Summarizer:
                             else f"with_{other_field}"
                         )
                         self.collect_value_counts(field_name, entity=entity)
-                case _FieldType.DECISION_TYPE:
+                case TransformType.DECISION_TYPE:
                     for count in range(16):
                         suffix = []
 

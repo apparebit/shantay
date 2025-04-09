@@ -255,30 +255,33 @@ specific to the protection of minors, the focus of my own research. However, in
 implementing the two tasks, I made sure that most of the code is entirely
 generic and not tied to a specific category of statements of reasons. In fact,
 much of the analysis and visualization code is driven by declarative schemas
-defined in the `shantay.schema` module and thus by definition resusable and
-configurable. Alas, I have still to expose that configurability through the
-command line interface for *shantay*.
+defined in the
+[`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
+module and thus by definition resusable and configurable. Alas, I have still to
+expose that configurability through the command line interface for *shantay*.
 
 Hence you may have to update some code for your own research purposes. In
 addition to `shantay.schema`, you'll find the following two modules useful:
 
-  - `shantay.framing` contains the code for collecting summary statistics from
-    the working data. Much of it is generic, driven by a single schema. In
-    particular, `Collector` extracts the summary statistics, incrementally
-    building a (non-tidy) long data frame; the `predicate`, `get_count`,
-    `aggregates`, `is_categorical`, and `is_duration` functions help access the
-    summary statistics; and `formatted_summary` produces a table with a summary
-    of the summary statistics.
-  - `shantay.viz` contains the code for visualizing the summary statistics
-    through its `Visualizer`. It renders text to the console or text and graphs
-    to Jupyter notebooks, while also generating a HTML document. As far as
-    graphs are concerned, the `monthly_statistic` method generates the vast
-    majority of timelines based on `MetricDeclaration` instances in
-    `shantay.schema`. Each instance comprises the information necessary for
-    turning the transparency database's internal values
-    ("`KEYWORD_ONLINE_BULLYING_INTIMIDATION`") into human-readable labels
-    ("Bullying") and to assign colors from [Observable's bright and friendly
-    color palette](https://observablehq.com/blog/crafting-data-colors)
+  - [`shantay.framing`](https://github.com/apparebit/shantay/blob/boss/shantay/framing.py)
+    contains the code for collecting summary statistics from the working data.
+    Much of it is generic, driven by a single schema. In particular, `Collector`
+    extracts the summary statistics, incrementally building a (non-tidy) long
+    data frame; the `predicate`, `get_count`, `aggregates`, `is_categorical`,
+    and `is_duration` functions help access the summary statistics; and
+    `formatted_summary` produces a table with a summary of the summary
+    statistics.
+  - [`shantay.viz`](https://github.com/apparebit/shantay/blob/boss/shantay/viz.py)
+    contains the code for visualizing the summary statistics through its
+    `Visualizer`. It renders text to the console or text and graphs to Jupyter
+    notebooks, while also generating a HTML document. As far as graphs are
+    concerned, the `monthly_statistic` method generates the vast majority of
+    timelines based on `MetricDeclaration` instances in `shantay.schema`. Each
+    instance comprises the information necessary for turning the transparency
+    database's internal values ("`KEYWORD_ONLINE_BULLYING_INTIMIDATION`") into
+    human-readable labels ("Bullying") and to assign colors from [Observable's
+    bright and friendly color
+    palette](https://observablehq.com/blog/crafting-data-colors)
 
 
 ----

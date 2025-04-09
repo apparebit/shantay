@@ -1,13 +1,27 @@
 """
 Schemata
 
-Shantay uses `SCHEMA` as its schema for transparency database records. That
-schema is as tight as possible, using specific enumerations where they are
-documented. But to successfully ingest database records, the tool also uses the
-weaker schemas `PARTIAL_SCHEMA` and `BASE_SCHEMA`. Data frames read in with
-either schema are incrementally transformed to the tighter main schema.
-Meanwhile, statistics data needs to combine many different enumerations in the
-same column and hence uses more relaxed type constraints.
+This module provides declarative typed specifications for data frames and also
+graphs. In particular:
+
+  - `PARTIAL_SCHEMA`, `BASE_SCHEMA`, and `SCHEMA` are all schemas for the
+    original transparency database. As the name already implies,
+    `PARTIAL_SCHEMA` covers only some fields. Both `PARTIAL_SCHEMA` and
+    `BASE_SCHEMA` are imprecise and only used temporarily, before fixing a data
+    frame's contents to adhere to `SCHEMA`.
+  - `STATISTICS_SCHEMA` is the comparably simpler schema for summary statistics,
+    which are collected in a non-tidy, mostly long data frame. The reason for
+    the "mostly" qualifier is that the data frame comprises four columns with
+    integer values, `count`, `min`, `mean`, and `max`, instead of a single one
+    because each column aggregates differently.
+  - `TRANSFORMS` provides a declarative specification for deriving the summary
+    statistics from the original database table. It comprises five
+    non-parametric and two parametric transforms. One of the latter two is used
+    for defining virtual fields that were not part of the original schema.
+  - `MetricDeclaration` instances serve dual purposes. They define precise
+    enumeration types for the transparency database schema. They also include
+    enough information for a more humane presentation of enumeration constants
+    in graphs.
 """
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -816,6 +830,86 @@ def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
 
 PARTIAL_SCHEMA, BASE_SCHEMA, SCHEMA = _generate_schemata()
 del _generate_schemata
+
+
+# ======================================================================================
+# Declaration of Statistics Transforms
+
+
+class TransformType(enum.Enum):
+    """Non-parametric transform types."""
+    SKIPPED_DATE = enum.auto()
+    ROWS = enum.auto()
+    VALUE_COUNTS = enum.auto()
+    LIST_VALUE_COUNTS = enum.auto()
+    DECISION_TYPE = enum.auto()
+
+
+@dataclass(frozen=True, slots=True)
+class DurationTransform:
+    """A duration is the difference of two datetimes."""
+    start: str
+    end: str
+
+
+@dataclass(frozen=True, slots=True)
+class ValueCountsPlusTransform:
+    """Value counts for a field as well as in combination with another one."""
+    self_is_list: bool
+    other_field: str
+    other_is_list: bool = False
+
+
+# The transforms cover all DSA transparency database entries without unconstrained text.
+TRANSFORMS = {
+    "rows": TransformType.ROWS,
+    "decision_type": TransformType.DECISION_TYPE,
+    "decision_visibility": ValueCountsPlusTransform(
+        self_is_list=True, other_field="end_date_visibility_restriction"
+    ),
+    "end_date_visibility_restriction": TransformType.SKIPPED_DATE,
+    "visibility_restriction_duration": DurationTransform(
+        "application_date", "end_date_visibility_restriction"
+    ),
+    "decision_monetary": TransformType.VALUE_COUNTS,
+    "end_date_monetary_restriction": TransformType.SKIPPED_DATE,
+    "monetary_restriction_duration": DurationTransform(
+        "application_date", "end_date_monetary_restriction"
+    ),
+    "decision_provision": ValueCountsPlusTransform(
+        self_is_list=False, other_field="end_date_service_restriction"),
+    "end_date_service_restriction": TransformType.SKIPPED_DATE,
+    "service_restriction_duration": DurationTransform(
+        "application_date", "end_date_service_restriction"
+    ),
+    "decision_account": ValueCountsPlusTransform(
+        self_is_list=False, other_field="end_date_account_restriction"
+    ),
+    "end_date_account_restriction": TransformType.SKIPPED_DATE,
+    "account_restriction_duration": DurationTransform(
+        "application_date", "end_date_account_restriction"
+    ),
+    "account_type": TransformType.VALUE_COUNTS,
+    "decision_ground": TransformType.VALUE_COUNTS,
+    "incompatible_content_illegal": TransformType.VALUE_COUNTS,
+    "category": TransformType.VALUE_COUNTS,
+    "category_addition": TransformType.LIST_VALUE_COUNTS,
+    "category_specification": TransformType.LIST_VALUE_COUNTS,
+    "content_type": TransformType.LIST_VALUE_COUNTS,
+    "content_language": TransformType.VALUE_COUNTS,
+    "moderation_delay": DurationTransform("content_date", "application_date"),
+    "disclosure_delay": DurationTransform("application_date", "created_at"),
+    "source_type": TransformType.VALUE_COUNTS,
+    "automated_detection": TransformType.VALUE_COUNTS,
+    "automated_decision": TransformType.VALUE_COUNTS,
+    "platform_name": ValueCountsPlusTransform(
+        self_is_list=False, other_field="category_specification", other_is_list=True
+    ),
+}
+
+
+# ======================================================================================
+# Statistics Schema
 
 
 ColumnValueType = pl.Enum((
