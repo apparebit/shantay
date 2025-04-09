@@ -13,7 +13,7 @@ Currently, there are a few method signatures that require data frames. There
 also are a few places that need to mediate between API surface and data frames.
 This module collects the functions necessary for the latter.
 """
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
@@ -238,6 +238,7 @@ class Collector:
         column: str,
         entity: None | str = None,
         variant: None | pl.Expr = None,
+        variant_too: None | pl.Expr = None,
         value_counts: None | pl.Expr = None,
         frame: None | pl.DataFrame | pl.LazyFrame = None,
         **kwargs: None | int | pl.Expr,
@@ -253,14 +254,20 @@ class Collector:
         effective_values = []
         if value_counts is None and variant is None:
             effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant"))
+            effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant_too"))
         elif value_counts is None:
             assert variant is not None, "impossible value"
             effective_values.append(variant.cast(pl.Categorical).alias("variant"))
+            if variant_too is None:
+                effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant_too"))
+            else:
+                effective_values.append(variant_too.cast(pl.Categorical).alias("variant_too"))
         else:
-            assert kwargs.get("count", None) is None, "count and value_counts not None"
-            effective_values.append(
-                value_counts.value_counts(sort=True).list.explode().struct.unnest()
-            )
+            assert kwargs.get("count", None) is None, "count and value_counts both not None"
+            effective_values.extend([
+                value_counts.value_counts(sort=True).list.explode().struct.unnest(),
+                pl.lit(None, dtype=pl.Categorical).alias("variant_too"),
+            ])
 
         for key in _STATISTICS:
             if value_counts is not None and key == "count":
@@ -290,7 +297,13 @@ class Collector:
                 pl.col("count").cast(pl.Int64)
             )
 
-        self._frames.append(frame)
+        # Enforce a canonical column order. Otherwise, concatenation won't work!
+        self._frames.append(frame.select(
+            pl.col(
+                "start_date", "end_date", "tag", "column", "entity",
+                "variant", "variant_too", "count", "min", "mean", "max"
+            )
+        ))
 
     def collect_value_counts_plus(
         self,
@@ -339,15 +352,13 @@ class Collector:
         ).rename({
             field: "variant",
             other_field: "variant_too",
-        }).with_columns(
-            pl.col("variant").cast(pl.String).fill_null("is_null"),
-            pl.col("variant_too").cast(pl.String).fill_null("is_null"),
-        )
+        })
 
         self.add_rows(
             field,
             entity=f"with_{other_field}",
-            variant=pl.concat_str("variant", "variant_too", separator="‖"),
+            variant=pl.col("variant"),
+            variant_too=pl.col("variant_too"),
             count=pl.col("count"),
             frame=frame,
         )
@@ -407,16 +418,6 @@ class Collector:
                     duration = (pl.col(end) - pl.col(start)).dt.total_milliseconds()
                     assert self._source is not None
 
-                    df = self._source.select(duration.count())
-                    if isinstance(df, pl.LazyFrame):
-                        df = df.collect()
-                    for r in df.rows():
-                        for el in r:
-                            if el is not None and el < 0:
-                                print(f"{el}    {start} {end}")
-                    print(df)
-
-
                     self.add_rows(
                         key,
                         count=duration.count(),
@@ -466,6 +467,7 @@ class Collector:
             "column": column,
             "entity": length * [None],
             "variant": length * [None],
+            "variant_too": length * [None],
             "count": count,
             "min": length * [None],
             "mean": length * [None],
@@ -512,24 +514,28 @@ def validate_row_counts(frame: pl.DataFrame) -> None:
     frame = frame.filter(pl.col("tag").is_null())
     rows = get_count(frame, "rows")
 
-    assert rows == get_count(frame, "decision_type")
-    assert rows == get_count(frame, "decision_visibility", entity=None)
-    assert rows == get_count(frame, "decision_monetary", entity=None)
-    assert rows == get_count(frame, "decision_provision", entity=None)
-    assert rows == get_count(frame, "decision_account", entity=None)
-    assert rows == get_count(frame, "account_type", entity=None)
-    assert rows == get_count(frame, "decision_ground", entity=None)
-    assert rows == get_count(frame, "incompatible_content_illegal", entity=None)
-    assert rows == get_count(frame, "category", entity=None)
-    assert rows == get_count(frame, "content_type", entity=None)
-    assert rows == get_count(frame, "content_language", entity=None)
-    assert rows == get_count(frame, "moderation_delay", entity=None)
-    assert rows == get_count(frame, "disclosure_delay", entity=None)
-    assert rows == get_count(frame, "source_type", entity=None)
-    assert rows == get_count(frame, "automated_detection", entity=None)
-    assert rows == get_count(frame, "automated_decision", entity=None)
-    assert rows == get_count(frame, "platform_name", entity=None)
-    assert rows == get_count(frame, "platform_name", entity="with_category_specification")
+    for column in (
+        "decision_type",
+        "decision_monetary",
+        "decision_provision",
+        "decision_account",
+        "account_type",
+        "decision_ground",
+        "incompatible_content_illegal",
+        "category",
+        "content_language",
+        "moderation_delay",
+        "disclosure_delay",
+        "source_type",
+        "automated_detection",
+        "automated_decision",
+        "platform_name",
+    ):
+        if column == "decision_type":
+            rows_too = get_count(frame, column)
+        else:
+            rows_too = get_count(frame, column, entity=None)
+        assert rows == rows_too, f"rows={rows:,}, {column}={rows_too:,}"
 
 
 class _NoArgumentProvided:
@@ -538,34 +544,63 @@ class _NoArgumentProvided:
 _NO_ARGUMENT_PROVIDED = _NoArgumentProvided()
 
 
+class NotNull:
+    pass
+
+NOT_NULL = NotNull()
+
+
 def predicate(
-    column: str,
-    entity: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
-    variant: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
-    tag: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
+    column: str | Sequence[str] | NotNull,
+    entity: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
+    variant: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
+    tag: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
-    """Create the predicate for the given tag, column, entity, and variant."""
+    """
+    Create the predicate over the "tag", "column", "entity", and "variant"
+    columns. If the argument is a string or list of strings, the predicate tests
+    that column for the literal string value(s). If it is None, the predicate
+    tests for the column being null. If it is `NOT_NULL`, the predicate tests
+    for it being not null.
+    """
     # We always query the tag and column
     if tag is None:
         predicate = pl.col("tag").is_null()
+    elif isinstance(tag, NotNull):
+        predicate = pl.col("tag").is_null().not_()
     elif tag is not _NO_ARGUMENT_PROVIDED:
         predicate = pl.col("tag").eq(tag)
     else:
         predicate = None
 
+    # The column is always required
     if predicate is None:
-        predicate = pl.col("column").eq(column)
+        if isinstance(column, str):
+            predicate = pl.col("column").eq(column)
+        elif isinstance(column, NotNull):
+            predicate = pl.col("column").is_null().not_()
+        else:
+            predicate = pl.col("column").is_in(column)
     else:
-        predicate = predicate.and_(pl.col("column").eq(column))
+        if isinstance(column, str):
+            predicate = predicate.and_(pl.col("column").eq(column))
+        elif isinstance(column, NotNull):
+            predicate = predicate.and_(pl.col("column").is_null().not_())
+        else:
+            predicate = predicate.and_(pl.col("column").is_in(column))
 
     # However, entity and variant are optional
     if entity is None:
         predicate = predicate.and_(pl.col("entity").is_null())
+    elif isinstance(entity, NotNull):
+        predicate = predicate.and_(pl.col("entity").is_null().not_())
     elif entity is not _NO_ARGUMENT_PROVIDED:
         predicate = predicate.and_(pl.col("entity").eq(entity))
 
     if variant is None:
         predicate = predicate.and_(pl.col("variant").is_null())
+    elif isinstance(variant, NotNull):
+        predicate = predicate.and_(pl.col("variant").is_null().not_())
     elif variant is not _NO_ARGUMENT_PROVIDED:
         predicate = predicate.and_(pl.col("variant").eq(variant))
 
@@ -854,7 +889,7 @@ class Summarizer:
                     # Delay formatting of tag for non-markdown output
                     # so that we can center it
                     assert isinstance(val, Tag)
-                    svar = f"## {var} ##" if markdown else var
+                    svar = f"***——— {val} ———***" if markdown else var
                 elif var is SPACER:
                     svar = "\u2800" if markdown else " "
                 else:
@@ -862,7 +897,7 @@ class Summarizer:
 
                 if isinstance(val, Tag):
                     assert isinstance(var, Tag)
-                    sval = f"## {val} ##" if markdown else val
+                    sval = f"***— {val} —***" if markdown else val
                 elif val is SPACER:
                     sval = "\u2800" if markdown else " "
                 elif val is None:
