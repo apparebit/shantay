@@ -91,11 +91,12 @@ def _parse_options(args: list[str]) -> Any:
 
     parser.add_argument(
         "task",
-        choices=["recover", "prepare", "analyze", "visualize"],
+        choices=["recover", "prepare", "analyze-working", "visualize"],
         default="prepare",
         help="select the task to execute: recover validates parquet files and restores "
-        "metadata; prepare downloads distributions and extracts working data; analyze "
-        "processes the working data; visualize graphs the analysis results",
+        "metadata; prepare downloads distributions and extracts working data; "
+        "analyze-working processes the working data; visualize graphs the analysis "
+        "results",
     )
 
     return parser.parse_args(args)
@@ -176,8 +177,8 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     # Handle --multiproc
     if options.multiproc < 1:
         raise ConfigError(f"process number must be positive but is {options.multiproc}")
-    if options.multiproc != 1 and options.task not in ("prepare", "analyze"):
-        raise ConfigError("only prepare and analyze support more than one process")
+    if options.multiproc != 1 and options.task not in ("prepare", "analyze-working"):
+        raise ConfigError("only prepare and analyze-working support more than one process")
 
     # Finish it all up
     assert filter_value is not None
@@ -213,7 +214,7 @@ def _run(args: list[str]) -> None:
 
     storage, coverage, metadata = get_configuration(options)
 
-    if options.task in ("prepare", "analyze") and 1 < options.multiproc:
+    if options.task in ("prepare", "analyze-working") and 1 < options.multiproc:
         processor = Multiprocessor(
             dataset=StatementsOfReasons(),
             storage=storage,
@@ -235,7 +236,7 @@ def _run(args: list[str]) -> None:
 
         if options.task == "prepare":
             Metadata.copy_json(storage.staging_root, storage.working_root)
-        elif options.task == "analyze":
+        elif options.task == "analyze-working":
             assert isinstance(result, pl.DataFrame)
             print("\n")
             print(formatted_summary(result, markdown=False))

@@ -74,7 +74,7 @@ class Multiprocessor[R: Release]:
         if task == "prepare":
             cover = self._coverage
             increment = "daily"
-        elif task == "analyze":
+        elif task == "analyze-working":
             date_cover, metadata = collect_release_metadata(self._metadata.records)
             cover = date_cover.to_release_range().to_monthly()
             self._metadata_frame = metadata
@@ -237,12 +237,12 @@ def run_on_worker[R: Release](
     """
     Run a task in a worker process.
 
-    This function runs a prepare or analyze task in a worker process. All of the
-    function's arguments are used for both tasks, with exception of filter,
-    which is only used by prepare, and metadata_frame, which is only used by
-    analyze. The result for a prepare task is the metadata entry for the
-    release. The result for an analyze task is the statistics data frame for the
-    release.
+    This function runs a prepare or analyze-working task in a worker process.
+    All of the function's arguments are used for both tasks, with exception of
+    filter, which is only used by prepare, and metadata_frame, which is only
+    used by analyze-working. The result for a prepare task is the metadata entry
+    for the release. The result for an analyze-working task is the statistics
+    data frame for the release.
     """
     try:
         return _run_on_worker(task, dataset, storage, filter, metadata_frame, release)
@@ -279,7 +279,7 @@ def _run_on_worker[R: Release](
         processor.prepare_batches(release)
         record = metadata[release]
         result = dict(release=release, **record)
-    elif task == "analyze":
+    elif task == "analyze-working":
         with dataset.analysis_context():
             collector = Collector()
             processor.analyze_release(release, metadata_frame, collector)

@@ -68,8 +68,8 @@ class Processor[R: Release]:
         start_time = time.time()
         if task == "prepare":
             result = self.prepare()
-        elif task == "analyze":
-            result = self.analyze()
+        elif task == "analyze-working":
+            result = self.analyze_working()
         elif task == "visualize":
             result = self.visualize()
         else:
@@ -353,7 +353,7 @@ class Processor[R: Release]:
             shutil.copy(source_dir / batch, target_dir / batch)
             self._progress.step(index)
 
-    def analyze(self) -> DataFrameType:
+    def analyze_working(self) -> DataFrameType:
         """Analyze the data extracted into the working root."""
         # Prepare metadata for analysis
         from .framing import Collector, collect_release_metadata

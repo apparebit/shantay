@@ -35,7 +35,7 @@ results is nearly instantaneous, taking seconds at most.
 Since extraction does not saturate my iMac's CPU or memory bus, I did integrate
 process-based multiprocessing with *shantay*. It is enabled with the
 `--multiproc` command line option. For the prepare task, processing the archives
-for 2024/5/2 and 5/3 either serially or in parallel, the serial version took 4.5
+for 2024/5/2 and 5/3 both serially and in parallel, the serial version took 4.5
 minutes and the parallel one took 2.6 minutes, yielding a speedup of 1.7x.
 
 (I picked the two days because they both yield the same number of batch files
@@ -67,13 +67,13 @@ usage: shantay [-h] [--root ROOT] [--archive ARCHIVE] [--working WORKING]
                [--staging STAGING] [--first FIRST] [--last LAST]
                [--filter FILTER] [--category CATEGORY] [--logfile LOGFILE]
                [--quiet] [--multiproc MULTIPROC]
-               {recover,prepare,analyze,visualize}
+               {recover,prepare,analyze-working,visualize}
 
 positional arguments:
-  {recover,prepare,analyze,visualize}
+  {recover,prepare,analyze-working,visualize}
                         select the task to execute: recover validates parquet
                         files and restores metadata; prepare downloads
-                        distributions and extracts working data; analyze
+                        distributions and extracts working data; analyze-working
                         processes the working data; visualize graphs the
                         analysis results
 
@@ -110,20 +110,34 @@ logging:
 ```
 
 
-### 2.1 Shantay's Four Tasks
+### 2.1 Shantay's Workflows
 
-As the above help message illustrates, *shantay* supports the execution of
-different tasks:
+*Shantay* supports two different workflows for analyzing the transparency
+database.
 
-   - `recover` validates the directory hierarchy with working data and restores
-     missing metadata, including the SHA-256 hashes serving as checksums.
-   - `prepare` downloads daily distributions from the EU, storing them in the
-     *archive* while also extracting a subset based on database category
-     (`STATEMENT_CATEGORY_PROTECTION_OF_MINORS`) as the *working* data.
-   - `analyze` produces breakdowns of value counts and other descriptive
-     statistics from the working data as a (non-tidy) long data frame.
-   - `visualize` illustrates many of these summary statistics as timeline
-     charts.
+ 1. The first and more conservative workflow downloads the full dataset,
+    extracts a working subset based on statement of reasons category, collects
+    statistics for that working subset, and finally visualizes them. It
+    corresponds to the following tasks:
+
+     1. `prepare`
+     2. `analyze-working`
+     3. `visualize-working`
+
+ 2. The second and currently experimental workflow also downloads the full
+    dataset, collects statistics for the full dataset, and finally visualizes
+    them. It corresponds to the following tasks:
+
+     1. `analyze-full`
+     2. `visualize-full`
+
+The advantage of the first workflow is that, once the working subset has been
+extracted, analyzing and visualizing that subset may take only minutes. That is
+fast enough to iterate over collected and visualized statistics. However, by
+design, it also omits most of the data from analysis. The second workflow
+includes all data in the transparency database, but also is considerably slower.
+Because that gets in the way of iteration, the second workflow only became
+feasible after I standardized collected statistics.
 
 Working data and summary statistics are stored as [Apache
 Parquet](https://parquet.apache.org) files on disk, with the working data
@@ -214,6 +228,10 @@ root directory with work data.
         statistics. The are separate summary statistic columns because they
         differ in aggregation semantics.
 
+Since the second workflow does not generate working data, it does not generate a
+`meta.json` file and places the generated `statistics.parquet` into the archive
+root.
+
 
 ## 4. The Workflow and Its Implementation
 
@@ -230,18 +248,19 @@ can also give a more detailed description of its tasks:
     original ZIP files, uncompresses and parses the included CSV files, extracts
     the data of interest, and writes that data to parquet files. This phase may
     require a day or two to run.
- 2. The __analyze__ task processes the parquet files. You probably want to
-    change the code somewhat, so that this phase collects statistics you are
+ 2. The __analyze-working__ task processes the parquet files. You probably want
+    to change the code somewhat, so that this phase collects statistics you are
     interested in and not those reflecting my interests. To maximize code reuse,
     I developed a standard set of metrics that can be easily collected for
     different views. It is supplemented by a summary format that further
     aggregates the data. This phase takes a few minutes to run for records about
     Protection of Minors (0.3% of all records).
- 3. The __visualize__ task produces summary tables and production-quality graphs
-    from the analysis results. In addition to either printing plain text or
-    generating Markdown and HTML output for Jupyter, this task also generates a
-    self-contained HTML document in the staging directory called
-    [overview.html](https://apparebit.github.io/shantay/overview.html)
+ 3. The __visualize-full__ and __visualize-working__ tasks produce summary
+    tables and production-quality graphs from analysis results. In addition to
+    either printing plain text or generating Markdown and HTML output for
+    Jupyter notebooks, the two tasks also generate a self-contained HTML
+    document in the staging directory called
+    [overview.html](https://apparebit.github.io/shantay/overview.html).
 
 The analysis task currently processes records at month granularity and also
 produces statistics at month granularity. This one-to-one correspondence between
@@ -251,12 +270,12 @@ it *is* critical for performance that the batch size be as large as possible.
 
 ### 4.1 Generic vs Bespoke Analysis and Visualization
 
-In the current implementation, `analyze` and `visualize` process data that is
-specific to the protection of minors, the focus of my own research. However, in
-implementing the two tasks, I made sure that most of the code is entirely
-generic and not tied to a specific category of statements of reasons. In fact,
-much of the analysis and visualization code is driven by declarative schemas
-defined in the
+In the current implementation, `analyze-working` and `visualize-working` process
+data that is specific to the protection of minors, the focus of my own research.
+However, in implementing the two tasks, I made sure that most of the code is
+entirely generic and not tied to a specific category of statements of reasons.
+In fact, much of the analysis and visualization code is driven by declarative
+schemas defined in the
 [`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
 module and thus by definition resusable and configurable. Alas, I have still to
 expose that configurability through the command line interface for *shantay*.

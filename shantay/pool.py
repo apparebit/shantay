@@ -496,7 +496,7 @@ def _initialize_worker(
         daemon=True,
     )
     _terminator.start()
-    logger.info('initialized pool worker process pid=%d', _PID)
+    logger.info('initialized worker pool process pid=%d', _PID)
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
