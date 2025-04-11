@@ -7,8 +7,10 @@
 # preferable over the Brewer palettes, which tend towards duller, darker, or
 # lighter extremes.
 #
+# I did make one change, adding more colors, because they were needed for
+# illustrating the use of keywords.
+#
 # https://observablehq.com/blog/crafting-data-colors
-
 
 BLUE = "#4269d0"
 ORANGE = "#efb118"
@@ -21,6 +23,9 @@ LIGHT_BLUE = "#97bbf5"
 BROWN = "#9c6b4e"
 GRAY = "#9498a0"
 
+DARK_PURPLE = "#a03d8e"
+YELLOW_GREEN = "#bad44a"
+
 PALETTE = [
     BLUE,
     ORANGE,
@@ -32,8 +37,24 @@ PALETTE = [
     LIGHT_BLUE,
     BROWN,
     GRAY,
+    YELLOW_GREEN,
+    DARK_PURPLE,
 ]
 
 KEYWORD_PALETTE = [
     LIGHT_BLUE, BLUE, PURPLE, RED, ORANGE, GREEN, PINK, CYAN, BROWN, GRAY
 ]
+
+
+if __name__ == "__main__":
+    from pathlib import Path
+
+    path = Path.cwd() / "palette.txt"
+    tmp = path.with_suffix(".tmp.txt")
+
+    with open(tmp, mode="w", encoding="utf8") as file:
+        for color in PALETTE:
+            file.write(color)
+            file.write("\n")
+
+    tmp.replace(path)
