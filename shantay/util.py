@@ -73,12 +73,15 @@ def to_markdown_table(
     *rows: Sequence[object],
     columns: Sequence[str],
     title: None | str = None,
+    alignments: None | Sequence[bool] = None,
 ) -> str:
     column_data = [[it for it in column] for column in zip(*rows)]
     if len(column_data) == 0:
         raise ValueError("no data columns to format")
     if len(column_data) != len(columns):
         raise ValueError(f"{len(column_data)} columns but {len(columns)} column names")
+    if alignments is not None and len(alignments) != len(columns):
+        raise ValueError(f"{len(columns)} columns but {len(alignments)} alignment values")
 
     types = [_get_type(column) for column in column_data]
     column_data = [
@@ -89,20 +92,22 @@ def to_markdown_table(
         max(len(name) + 2, *(l + 2 for it in column if (l := len(it)) < 50))
         for name, column in zip(columns, column_data)
     ]
+    if alignments is None:
+        alignments = [tp is str for tp in types]
 
     def format_row(data: Iterable[str]) -> str:
         items = (
-            (f"{it:<{w-2}}" if tp is str else f"{it:>{w}}")
-            for it, w, tp in zip(data, widths, types)
+            (f"{it:<{w-2}}" if al else f"{it:>{w}}")
+            for it, w, al in zip(data, widths, alignments)
         )
         return f'| {" | ".join(items)} |'
 
     def format_div() -> str:
         items = []
-        for width, tp in zip(widths, types):
-            before = ":" if tp is str else ""
+        for width, al in zip(widths, alignments):
+            before = ":" if al else ""
             dashes = "-" * (width - 3)
-            after = "" if tp is str else ":"
+            after = "" if al else ":"
             items.append(f"{before}{dashes}{after}")
         return f'| {" | ".join(items)} |'
 
