@@ -37,12 +37,29 @@ class StatementsOfReasons(Dataset[Daily]):
     def digest_name(self, release: Daily) -> str:
         return f"{self.archive_name(release)}.sha1"
 
-    @property
-    def extract_data_step_count(self) -> int:
-        return 12
+    @annotate_error(filename_arg="root")
+    def ingest_file_data(
+        self,
+        *,
+        root: Path,
+        release: Daily,
+        index: int,
+        name: str,
+        progress: Progress = NO_PROGRESS,
+    ) -> pl.DataFrame:
+        path = root / release.temp_directory
+        csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
-    def extract_data_step_number(self, index: int, step: int) -> int:
-        return (self.extract_data_step_count + 1 ) * index + step
+        frame = self._extract_filtered_rows(
+            csv_files=csv_files,
+            release=release,
+            index=index,
+            name=name,
+            filter=None,
+            progress=progress
+        )
+        self._validate_schema(frame)
+        return frame
 
     @annotate_error(filename_arg="root")
     def extract_file_data(
@@ -58,9 +75,11 @@ class StatementsOfReasons(Dataset[Daily]):
         path = root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
+        progress.step(index, extra="count rows")
         total_rows, total_rows_with_keywords = self._extract_row_counts(
-            csv_files, index, name, progress
+            csv_files, index, name
         )
+
         frame = self._extract_filtered_rows(
             csv_files=csv_files,
             release=release,
@@ -84,14 +103,11 @@ class StatementsOfReasons(Dataset[Daily]):
 
         return digest, self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
 
-    def _extract_row_counts(
-        self, csv_files: str, index: int, name: str, progress: Progress = NO_PROGRESS
-    ) -> tuple[int, int]:
+    def _extract_row_counts(self, csv_files: str, index: int, name: str) -> tuple[int, int]:
         """
         Determine number of rows and rows with keywords across all CSV files in
         the batch.
         """
-        progress.step(self.extract_data_step_number(index, 1), extra="count rows")
         rows, rows_with_keywords = (
             pl.scan_csv(csv_files, infer_schema=False)
             .select(
@@ -116,7 +132,7 @@ class StatementsOfReasons(Dataset[Daily]):
         release: Daily,
         index: int,
         name: str,
-        filter: str | pl.Expr,
+        filter: None | str | pl.Expr,
         progress: Progress = NO_PROGRESS
     ) -> pl.DataFrame:
         """
@@ -127,7 +143,7 @@ class StatementsOfReasons(Dataset[Daily]):
         standard library.
         """
         # Fast path: Process several CSV files in one lazy Polars operation
-        progress.step(self.extract_data_step_number(index, 2), extra="extracting working data")
+        progress.step(index, extra="extracting working data")
         try:
             frame = self.finish_frame(
                 release,
@@ -154,10 +170,8 @@ class StatementsOfReasons(Dataset[Daily]):
         assert 0 < len(files), f'glob "{csv_files}" matches no files'
 
         frames = []
-        for file_no, file_path in enumerate(files):
-            progress.step(
-                self.extract_data_step_number(index, 2 + file_no), extra=f"extracting {file_path.name}"
-            )
+        for file_path in files:
+            progress.step(index, extra=f"extracting {file_path.name}")
 
             try:
                 frame = self.finish_frame(
@@ -197,7 +211,9 @@ class StatementsOfReasons(Dataset[Daily]):
 
         return pl.concat(frames, how="vertical", rechunk=True)
 
-    def _scan_csv_with_polars(self, path: str | Path, filter: str | pl.Expr) -> pl.LazyFrame:
+    def _scan_csv_with_polars(
+        self, path: str | Path, filter: None | str | pl.Expr = None
+    ) -> pl.LazyFrame:
         """
         Read one or more CSV files with Polars' CSV reader, while also applying
         the filter.
@@ -205,25 +221,30 @@ class StatementsOfReasons(Dataset[Daily]):
         The path string may include a wildcard to read more than one CSV file at
         the same time. The returned LazyFrame has not been collect()ed.
         """
-        if isinstance(filter, str):
-            filter = (
-                (pl.col("category") == filter)
-                | pl.col("category_addition").str.contains(filter, literal=True)
-            )
-
-        return pl.scan_csv(
+        frame = pl.scan_csv(
             str(path),
             null_values=["", "[]"],
             schema_overrides=PARTIAL_SCHEMA,
             infer_schema=False,
-        ).filter(filter)
+        )
 
-    def _read_csv_row_by_row(self, path: str | Path, filter: str | pl.Expr) -> pl.DataFrame:
+        if isinstance(filter, str):
+            frame = frame.filter(
+                (pl.col("category") == filter)
+                | pl.col("category_addition").str.contains(filter, literal=True)
+            )
+        elif isinstance(filter, pl.Expr):
+            frame = frame.filter(filter)
+
+        return frame
+
+    def _read_csv_row_by_row(
+        self, path: str | Path, filter: None | str | pl.Expr = None
+    ) -> pl.DataFrame:
         """
         Read a CSV file using Python's CSV reader row by row, while also
         applying the filter.
         """
-        has_category = isinstance(filter, str)
         header = None
         rows = []
 
@@ -235,7 +256,7 @@ class StatementsOfReasons(Dataset[Daily]):
             reader = csv.reader(file)
             header = next(reader)
 
-            if has_category:
+            if isinstance(filter, str):
                 category_index = header.index("category")
                 addition_index = header.index("category_addition")
                 if category_index < 0:
@@ -255,7 +276,9 @@ class StatementsOfReasons(Dataset[Daily]):
                     rows.append(row)
 
         frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
-        return frame if has_category else frame.filter(filter)
+        if isinstance(filter, pl.Expr):
+            frame = frame.filter(filter)
+        return frame
 
     def finish_frame(self, release: Daily, frame: pl.LazyFrame) -> pl.LazyFrame:
         """
@@ -315,9 +338,6 @@ class StatementsOfReasons(Dataset[Daily]):
     def _validate_schema(self, frame: pl.DataFrame) -> None:
         """Validate the schema of the given data frame."""
         for name in frame.columns:
-            # FIXME: Remove exemption when production data has been upgraded
-            if name == "released_on":
-                continue
             actual = frame.schema[name]
             expected = SCHEMA[name]
             if actual != expected:
@@ -370,7 +390,14 @@ class StatementsOfReasons(Dataset[Daily]):
         working_data = pl.read_parquet(glob).with_columns(
             pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES)
         )
-        collector.collect(working_data, release, metadata)
+        collector.collect(release, working_data, metadata=metadata)
+
+        csam = working_data.filter(
+            pl.col("category_specification").list.contains(
+                "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
+            )
+        )
+        collector.collect(release, csam, tag="CSAM")
 
     @annotate_error(filename_arg="root")
     def combine_releases(

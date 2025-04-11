@@ -433,14 +433,26 @@ class CollectorProtocol[R: Release](Protocol):
 
     def collect(
         self,
-        frame: DataFrameType | LazyFrameType,
         release: Release,
-        meta_frame: DataFrameType,
+        frame: DataFrameType | LazyFrameType,
+        tag: None | str = None,
+        metadata: None | DataFrameType = None,
     ) -> None:
-        """Collect data."""
+        """
+        Collect summary statistics for the data frame.
+
+        This method should collect the standard statistics for the given data
+        frame. If the tag is none, it should also collect statistics about the
+        relationship between the data frame and the complete data set. In
+        particular, if no metadata is provided, this method should assume that
+        the frame is part of the complete data set. If, however, metadata is
+        provided, the frame contains working data only.
+        """
 
     def to_frame(self, validate: bool = False) -> DataFrameType:
-        """Convert to data frame."""
+        """
+        Combine all summary statistics collected so far into one data frame.
+        """
         ...
 
 
@@ -464,15 +476,22 @@ class Dataset[R: Release](metaclass=ABCMeta):
     def digest_name(self, release: R) -> str:
         """The digest file name for the release."""
 
-    @property
     @abstractmethod
-    def extract_data_step_count(self) -> int:
-        """The number of steps for extracting data."""
+    def ingest_file_data(
+        self,
+        *,
+        root: Path,
+        release: R,
+        index: int,
+        name: str,
+        progress: Progress = NO_PROGRESS,
+    ) -> DataFrameType:
+        """Ingest unfiltered, uncompressed data."""
 
     @abstractmethod
     def extract_file_data(
         self,
-          *,
+        *,
         root: Path,
         release: R,
         index: int,

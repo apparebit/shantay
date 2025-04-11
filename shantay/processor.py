@@ -256,14 +256,13 @@ class Processor[R: Release]:
             f"extracting batches from release {release.id}",
             f"extracting {release.id}", "batch", with_rate=False,
         )
-        steps = self._dataset.extract_data_step_count + 1
-        self._progress.start(steps * batch_count)
+        self._progress.start(batch_count)
 
         # Archived files are archives, too. Unarchive one at a time.
         batch_digests = []
         full_counters = Counter(batch_count=batch_count)
         for index, name in enumerate(filenames):
-            self._progress.step(steps * index, "unarchiving data")
+            self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
             digest, counters = self._dataset.extract_file_data(
                 root=self._storage.staging_root,
@@ -289,7 +288,9 @@ class Processor[R: Release]:
         self._metadata[release] = meta_data_entry
         self._metadata.write_json(self._storage.staging_root)
         _logger.info(
-            'extracted batch-count=%d, file="%s"', batch_count, self._dataset.archive_name(release)
+            'extracted batch-count=%d, file="%s"',
+            batch_count,
+            self._dataset.archive_name(release)
         )
 
         # It's safe to copy the batches here because each worker has its own,

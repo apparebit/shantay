@@ -95,9 +95,6 @@ class TestPrepare(unittest.TestCase):
             self.assertListEqual(filenames, ZIP_FILES)
 
         with self.subTest("unarchive first of two CSV files"):
-            step_count = dataset.extract_data_step_count
-            self.assertEqual(step_count, 12)
-
             workdir = STAGING / release.temp_directory
             self.assertFalse(workdir.exists())
 
@@ -400,6 +397,7 @@ EXPECTED_ANALYSIS = {
         "automated_detection",
         "automated_decision",
         "platform_name",
+        "platform_name",
     ],
     "count": [
         2,
@@ -525,8 +523,10 @@ EXPECTED_ANALYSIS = {
         1,
         1,
         1,
+        1,
     ],
     "end_date": [
+        dt.date(2024, 3, 31),
         dt.date(2024, 3, 31),
         dt.date(2024, 3, 31),
         dt.date(2024, 3, 31),
@@ -775,6 +775,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        "with_category_specification",
     ],
     "max": [
         None,
@@ -896,6 +897,7 @@ EXPECTED_ANALYSIS = {
         None,
         0,
         95000,
+        None,
         None,
         None,
         None,
@@ -1025,6 +1027,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
     ],
     "min": [
         None,
@@ -1150,8 +1153,10 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
     ],
     "start_date": [
+        dt.date(2024, 3, 1),
         dt.date(2024, 3, 1),
         dt.date(2024, 3, 1),
         dt.date(2024, 3, 1),
@@ -1400,6 +1405,7 @@ EXPECTED_ANALYSIS = {
         "CSAM",
         "CSAM",
         "CSAM",
+        "CSAM",
     ],
     "variant": [
         None,
@@ -1524,6 +1530,7 @@ EXPECTED_ANALYSIS = {
         "SOURCE_VOLUNTARY",
         "Yes",
         "AUTOMATED_DECISION_FULLY",
+        "Snapchat",
         "Snapchat",
     ],
     "variant_too": [
@@ -1650,5 +1657,6 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
     ],
 }

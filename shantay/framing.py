@@ -132,7 +132,7 @@ class Collector:
     """Analyze the data while also collecting the results."""
 
     def __init__(self) -> None:
-        self._source = None
+        self._source = pl.DataFrame()
         self._tag = None
         self._release = None
         self._frames = []
@@ -168,7 +168,6 @@ class Collector:
     ) -> None:
         """Add new rows."""
         if frame is None:
-            assert self._source is not None
             frame = self._source
 
         tag = None if self._tag == "" else self._tag
@@ -242,8 +241,6 @@ class Collector:
         # Value counts for field
         values = pl.col(field).list.explode() if field_is_list else pl.col(field)
         self.add_rows(field, value_counts=values)
-        if self._tag is not None:
-            return
 
         if not is_categorical(other_field):
             values = pl.col(field).filter(pl.col(other_field).is_null().not_())
@@ -259,7 +256,6 @@ class Collector:
             )
             return
 
-        assert self._source is not None
         frame = self._source
         if field_is_list:
             frame = frame.explode(field)
@@ -339,7 +335,6 @@ class Collector:
                 case DurationTransform(start, end):
                     # Convert to millseconds, i.e., an integer
                     duration = (pl.col(end) - pl.col(start)).dt.total_milliseconds()
-                    assert self._source is not None
 
                     self.add_rows(
                         key,
@@ -353,72 +348,72 @@ class Collector:
                         key, self_is_list, other_field, other_is_list
                     )
 
-    def collect_header(self, metadata: pl.DataFrame) -> None:
+    def collect_header(self, metadata: None | pl.DataFrame = None) -> None:
         """Create a header frame with the given statistics."""
-        assert self._release is not None
+        pairs = {}
+        if metadata is None:
+            if isinstance(self._source, pl.LazyFrame):
+                self._source = self._source.collect()
 
-        # Pola.rs uses different code paths for pl.concat depending on whether
-        # the first frame is lazy or not. All but the first three fields are
-        # derived from the source frame and hence automatically do the right
-        # thing. Let's ensure the first three fields, which are contained in the
-        # first frame, also do the right thing.
-        column = [
-            "batch_count",
-            "batch_rows",
-            "batch_rows_with_keywords",
-            "batch_memory",
-            "total_rows",
-            "total_rows_with_keywords",
-        ]
-
-        count = [
-            (metadata.select(pl.col(n).sum()).item() if n in metadata.columns else None)
-            for n in (
+            pairs["batch_count"] = 1
+            pairs["batch_rows"] = self._source.height
+            pairs["batch_rows_with_keywords"] = (
+                self._source.select(
+                    pl.col("category_specification").is_null().not_().sum()
+                ).item()
+            )
+            pairs["batch_memory"] = self._source.estimated_size()
+            pairs["total_rows"] = pairs["batch_rows"]
+            pairs["total_rows_with_keywords"] = pairs["batch_rows_with_keywords"]
+        else:
+            for name in (
                 "batch_count", "batch_rows", "batch_rows_with_keywords",
                 "batch_memory", "total_rows", "total_rows_with_keywords",
-            )
-        ]
+            ):
+                if name in metadata.columns:
+                    value = metadata.select(pl.col(name).sum()).item()
+                else:
+                    value = None
 
-        length = len(column)
-        assert length == len(count)
+                pairs[name] = value
 
+        assert self._release is not None
+        height = len(pairs)
+
+        # Pola.rs uses different code paths for pl.concat depending on whether
+        # the first frame is lazy or not. Let's use the right one.
         Frame = pl.LazyFrame if isinstance(self._source, pl.LazyFrame) else pl.DataFrame
         header = Frame({
-            "start_date": length * [self._release.start_date],
-            "end_date": length * [self._release.end_date],
-            "tag": length * [None],
-            "column": column,
-            "entity": length * [None],
-            "variant": length * [None],
-            "variant_too": length * [None],
-            "count": count,
-            "min": length * [None],
-            "mean": length * [None],
-            "max": length * [None],
+            "start_date": height * [self._release.start_date],
+            "end_date": height * [self._release.end_date],
+            "tag": height * [None],
+            "column": [k for k in pairs.keys()],
+            "entity": height * [None],
+            "variant": height * [None],
+            "variant_too": height * [None],
+            "count": [v for v in pairs.values()],
+            "min": height * [None],
+            "mean": height * [None],
+            "max": height * [None],
         }, schema=STATISTICS_SCHEMA)
 
         self._frames.append(header)
 
     def collect(
         self,
-        frame: pl.DataFrame | pl.LazyFrame,
         release: Release,
-        meta_frame: pl.DataFrame,
+        frame: pl.DataFrame | pl.LazyFrame,
+        tag: None | str = None,
+        metadata: None | pl.DataFrame = None,
     ) -> None:
         """Collect all necessary data in partial data frames."""
-        with self.source_data(frame=frame, release=release) as this:
-            this.collect_header(meta_frame)
-            this.collect_body()
-
-        # FIXME: This is not only specific to the DSA SoR DB but also specific
-        # to Protection of Minors. It should be separated out.
-        csam = frame.filter(
-            pl.col("category_specification").list.contains(
-                "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
-            )
-        )
-        with self.source_data(frame=csam, release=release, tag=CSAM_TAG) as this:
-            this.collect_body()
+        if tag is None:
+            with self.source_data(frame=frame, release=release) as this:
+                this.collect_header(metadata)
+                this.collect_body()
+        else:
+            with self.source_data(frame=frame, release=release, tag=tag) as this:
+                this.collect_body()
 
     def to_frame(self, validate: bool = False) -> pl.DataFrame:
         """Combine the collected partial frames into one."""
@@ -435,7 +430,7 @@ class Collector:
 
 def validate_row_counts(frame: pl.DataFrame) -> None:
     frame = frame.filter(pl.col("tag").is_null())
-    rows = get_count(frame, "rows")
+    rows = get_statistic(frame, "rows")
 
     for column in (
         "decision_type",
@@ -455,19 +450,21 @@ def validate_row_counts(frame: pl.DataFrame) -> None:
         "platform_name",
     ):
         if column == "decision_type":
-            rows_too = get_count(frame, column)
+            rows_too = get_statistic(frame, column)
         else:
-            rows_too = get_count(frame, column, entity=None)
+            rows_too = get_statistic(frame, column, entity=None)
         assert rows == rows_too, f"rows={rows:,}, {column}={rows_too:,}"
 
 
-class _NoArgumentProvided:
+class NoArgumentProvided:
+    """See description of `predicate()`"""
     pass
 
-_NO_ARGUMENT_PROVIDED = _NoArgumentProvided()
+NO_ARGUMENT_PROVIDED = NoArgumentProvided()
 
 
 class NotNull:
+    """See description of `predicate()`"""
     pass
 
 NOT_NULL = NotNull()
@@ -475,24 +472,25 @@ NOT_NULL = NotNull()
 
 def predicate(
     column: str | Sequence[str] | NotNull,
-    entity: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
-    variant: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
-    variant_too: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
-    tag: _NoArgumentProvided | NotNull | None | str = _NO_ARGUMENT_PROVIDED,
+    entity: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    variant: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    variant_too: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
-    Create the predicate over the "tag", "column", "entity", and "variant"
-    columns. If the argument is a string or list of strings, the predicate tests
-    that column for the literal string value(s). If it is None, the predicate
-    tests for the column being null. If it is `NOT_NULL`, the predicate tests
-    for it being not null.
+    Create the predicate over the "tag", "column", "entity", "variant", and
+    "variant_too" columns. If the argument is a string or list of strings, the
+    predicate tests that column for the literal string value(s). If it is None,
+    the predicate tests for the column being null. If it is `NOT_NULL`, the
+    predicate tests for it being not null. Finally, if it is
+    `NO_ARGUMENT_PROVIDED`, the predicate does not test that column.
     """
     # We always query the tag and column
     if tag is None:
         predicate = pl.col("tag").is_null()
     elif isinstance(tag, NotNull):
         predicate = pl.col("tag").is_null().not_()
-    elif tag is not _NO_ARGUMENT_PROVIDED:
+    elif tag is not NO_ARGUMENT_PROVIDED:
         predicate = pl.col("tag").eq(tag)
     else:
         predicate = None
@@ -518,37 +516,54 @@ def predicate(
         predicate = predicate.and_(pl.col("entity").is_null())
     elif isinstance(entity, NotNull):
         predicate = predicate.and_(pl.col("entity").is_null().not_())
-    elif entity is not _NO_ARGUMENT_PROVIDED:
+    elif entity is not NO_ARGUMENT_PROVIDED:
         predicate = predicate.and_(pl.col("entity").eq(entity))
 
     if variant is None:
         predicate = predicate.and_(pl.col("variant").is_null())
     elif isinstance(variant, NotNull):
         predicate = predicate.and_(pl.col("variant").is_null().not_())
-    elif variant is not _NO_ARGUMENT_PROVIDED:
+    elif variant is not NO_ARGUMENT_PROVIDED:
         predicate = predicate.and_(pl.col("variant").eq(variant))
 
     if variant_too is None:
         predicate = predicate.and_(pl.col("variant_too").is_null())
     elif isinstance(variant_too, NotNull):
         predicate = predicate.and_(pl.col("variant_too").is_null().not_())
-    elif variant_too is not _NO_ARGUMENT_PROVIDED:
+    elif variant_too is not NO_ARGUMENT_PROVIDED:
         predicate = predicate.and_(pl.col("variant_too").eq(variant_too))
 
     return predicate
 
 
-def get_count(
+type Statistic = Literal["count", "min", "mean", "max"]
+
+
+def get_statistic(
     frame: pl.DataFrame,
     column: str,
-    entity: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
-    variant: _NoArgumentProvided | None | str = _NO_ARGUMENT_PROVIDED,
-) -> int:
-    return frame.filter(
-        predicate(column, entity=entity, variant=variant)
+    entity: NoArgumentProvided | None | str = NO_ARGUMENT_PROVIDED,
+    variant: NoArgumentProvided | None | str = NO_ARGUMENT_PROVIDED,
+    variant_too: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    statistic: Statistic = "count"
+) -> None | int:
+    frame = frame.filter(
+        predicate(
+            column,
+            entity=entity,
+            variant=variant,
+            variant_too=variant_too,
+            tag=tag
+        )
     ).select(
-        pl.col("count").sum()
-    ).item()
+        aggregates()
+    ).select(
+        pl.col(statistic)
+    )
+
+    assert frame.height <= 1
+    return frame.item() if frame.height == 1 else None
 
 
 def aggregates() -> list[pl.Expr]:
@@ -584,10 +599,10 @@ class Tag:
     tag: None | str
 
     def __format__(self, spec) -> str:
-        return str.__format__(self.tag or "no tag", spec)
+        return str.__format__(str(self), spec)
 
     def __len__(self) -> int:
-        return len(self.tag or "no tag") + 2
+        return len(str(self)) + 2
 
     def __str__(self) -> str:
         return self.tag or "no tag"
@@ -602,9 +617,6 @@ class Spacer:
 SPACER = Spacer()
 
 
-type Statistic = Literal["count", "min", "mean", "max"]
-
-
 """
 The type of summary statistics, which is a list of key, value pairs. To aid with
 presentation, some of the pairs may be empty, containing `SPACER` instances (see
@@ -617,7 +629,7 @@ class Summarizer:
     """Summarize analysis results."""
 
     def __init__(self) -> None:
-        self._source = None
+        self._source = pl.DataFrame()
         self._tag = None
         self._summary = []
 
@@ -636,7 +648,7 @@ class Summarizer:
 
         old_source = self._source
         self._source = frame.group_by(
-            pl.col("column", "entity", "variant")
+            pl.col("column", "entity", "variant", "variant_too")
         ).agg(
             *aggregates()
         )
@@ -646,32 +658,6 @@ class Summarizer:
         finally:
             self._source = old_source
             self._tag = old_tag
-
-    def get_value(
-        self,
-        column: str,
-        entity: None | str,
-        statistic: Statistic = "count",
-    ) -> None | int:
-        """Extract a single count for the given column and entity."""
-        assert self._source is not None
-        frame = self._source.filter(
-            predicate(column, entity=entity)
-        ).select(
-            pl.col(statistic)
-        )
-        return frame.item() if frame.height == 1 else None
-
-    def get_value_counts(self, column: str, entity: None | str = None) -> pl.DataFrame:
-        """Extract the value counts for the given column and entity."""
-        assert self._source is not None
-        return self._source.filter(
-            predicate(column, entity=entity)
-        ).select(
-            pl.col("column", "entity", "variant", "count")
-        ).sort(
-            "count", descending=True
-        )
 
     @contextmanager
     def spacer_on_demand(self) -> Iterator[None]:
@@ -701,22 +687,40 @@ class Summarizer:
         if duration or statistic != "count":
             variable = f"{variable}.{statistic}"
 
-        value = self.get_value(column, entity, statistic)
+        value = get_statistic(self._source, column, entity=entity, statistic=statistic)
         if duration and statistic != "count" and value is not None:
             value = dt.timedelta(seconds=value // 1_000, milliseconds=value % 1_000)
 
         self._summary.append((variable, value))
 
     def collect_value_counts(self, column: str, entity: None | str = None) -> None:
-        for row in self.get_value_counts(column, entity).rows():
-            column, entity, variant, count = row
+        for row in self._source.filter(
+            predicate(column, entity=entity)
+        ).select(
+            pl.col("column", "entity", "variant", "variant_too", "count")
+        ).sort(
+            ["count", "variant", "variant_too"], descending=True
+        ).rows():
+            column, entity, variant, variant_too, count = row
             var = column
-            if entity:
+
+            if entity == "with_end_date":
                 var = f"{var}.{entity}"
+
             if variant is None:
                 var = f"{var}.is_null"
             else:
                 var = f"{var}.{variant}"
+
+            if (
+                entity is not None
+                and entity != "with_end_date"
+                and entity.startswith("with_")
+            ):
+                if variant_too is None:
+                    var = f"{var}.is_null"
+                else:
+                    var = f"{var}.{variant_too}"
 
             self._summary.append((var, count))
 
@@ -768,19 +772,52 @@ class Summarizer:
 
     def summarize(self, frame: pl.DataFrame) -> Summary:
         with self.tagged_frame(tag=None, frame=frame) as this:
+            platforms = frame.filter(
+                predicate("platform_name", entity=None, tag=None)
+            ).select(
+                pl.col("variant").n_unique()
+            ).item()
+
+            platforms_with_keywords = frame.filter(
+                predicate("platform_name", entity="with_category_specification", tag=None)
+            ).filter(
+                pl.col("variant_too").is_null().not_()
+            ).select(
+                pl.col("variant").n_unique()
+            ).item()
+
+            platforms_with_csam = frame.filter(
+                predicate("platform_name", entity="with_category_specification", tag=None)
+            ).filter(
+                pl.col("variant_too").eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
+            ).select(
+                pl.col("variant").n_unique()
+            ).item()
+
+            batch_rows = get_statistic(frame, "batch_rows", entity=None)
+            total_rows = get_statistic(frame, "total_rows", entity=None)
+            batch_kw_rows = get_statistic(frame, "batch_rows_with_keywords", entity=None)
+            total_kw_rows = get_statistic(frame, "total_rows_with_keywords", entity=None)
+            assert batch_rows is not None
+            assert batch_kw_rows is not None
+            assert total_rows is not None
+            assert total_kw_rows is not None
+
             this._summary = [
                 ("start_date", frame.select(pl.col("start_date").min()).item()),
                 ("end_date", frame.select(pl.col("end_date").max()).item()),
-                ("batch_count", this.get_value("batch_count", entity=None)),
-                ("batch_rows", this.get_value("batch_rows", entity=None)),
-                ("batch_rows_with_keywords", this.get_value(
-                    "batch_rows_with_keywords", entity=None
-                )),
-                ("batch_memory", this.get_value("batch_memory", entity=None)),
-                ("total_rows", this.get_value("total_rows", entity=None)),
-                ("total_rows_with_keywords", this.get_value(
-                    "total_rows_with_keywords", entity=None
-                )),
+                ("batch_count", get_statistic(frame, "batch_count", entity=None)),
+                ("batch_rows", batch_rows),
+                ("batch_rows_pct", batch_rows / total_rows * 100),
+                ("batch_rows_with_keywords", batch_kw_rows),
+                ("batch_rows_with_keywords_pct", batch_kw_rows / batch_rows * 100),
+                ("batch_memory", get_statistic(frame, "batch_memory", entity=None)),
+                ("total_rows", total_rows),
+                ("total_rows_with_keywords", total_kw_rows),
+                ("total_rows_with_keywords_pct", total_kw_rows / total_rows * 100),
+                ("platforms", platforms),
+                ("platforms_with_keywords", platforms_with_keywords),
+                ("platforms_with_csam", platforms_with_csam)
             ]
 
         # Make sure that baseline comes first
@@ -838,7 +875,7 @@ class Summarizer:
                     and not isinstance(var, Tag)
                     and var.endswith("_pct")
                 ):
-                    sval = f"{val:.3f}"
+                    sval = f"{val:.3f} %"
                 elif isinstance(val, dt.date):
                     sval = val.isoformat()
                 elif isinstance(val, dt.timedelta):

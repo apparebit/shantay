@@ -88,45 +88,52 @@ class TestPool(unittest.TestCase):
                 if 'submit fn=' in line:
                     break
             self.assertNotEqual(offset, -1)
-            self.assertTrue(offset + 7 <= len(lines))
-            lines = lines[offset:offset + 7]
-            self.assertIn(
-                'submit fn="test.test_pool.task1", pool="pool-1", pending-tasks=0',
-                lines[0]
-            )
-            self.assertIn(
-                'submit fn="test.test_pool.task2", pool="pool-1", pending-tasks=1',
-                lines[1]
-            )
 
-            # The order of the next four lines is largely non-deterministic,
-            # except that task1 or task2 must run before task3 can be added and
-            # task3 must be added before it can run. We test for these
-            # invariants.
-            run1 = run2 = add3 = run3 = -1
-            for index in range(2, 6):
-                line = lines[index]
-                if 'task1 processes "1"' in line and run1 == -1:
+            # The order of log lines is mostly non-deterministic, since the log
+            # combines entries written by three different processes, two of
+            # which forward entries to the third. For that reason, we only check
+            # that all the expected lines appear in the log. Annoyingly,
+            # Python's worker pool doesn't always start all its workers. So we
+            # have to account for that, too.
+            self.assertTrue(offset + 9 <= len(lines))
+            if offset + 10 <= len(lines):
+                lines = lines[offset:offset + 10]
+                expected_init = 2
+            else:
+                lines = lines[offset:offset + 9]
+                expected_init = 1
+
+            init = 0
+            submit = 0
+            run1 = run2 = run3 = shutdown = cancel = -1
+            for index, line in enumerate(lines[offset:offset + 10]):
+                if 'initialized worker pool process pid=' in line:
+                    init += 1
+                elif (
+                    'submit fn="test.test_pool.task' in line
+                    and 'pool="pool-1", pending-tasks' in line
+                ):
+                    submit +=1
+                elif 'task1 processes "1"' in line and run1 == -1:
                     run1 = index
                 elif 'task2 processes "2"' in line and run2 == -1:
                     run2 = index
                 elif 'task3 processes "3"' in line and run3 == -1:
                     run3 = index
                 elif (
-                    'submit fn="test.test_pool.task3", pool="pool-1"' in line
-                    and add3 == -1
+                    'shut down pool="pool-1", cause="finish()"' in line
+                    and shutdown == -1
                 ):
-                    add3 = index
+                    shutdown = index
+                elif 'cancelled thread="status_manager"' in line and cancel == -1:
+                    cancel = index
+                else:
+                    raise AssertionError(f"unexpected log line '{line}'")
 
+            self.assertEqual(init, expected_init)
+            self.assertEqual(submit, 3)
             self.assertNotEqual(run1, -1)
             self.assertNotEqual(run2, -1)
             self.assertNotEqual(run3, -1)
-            self.assertNotEqual(add3, -1)
-
-            self.assertTrue(run1 < add3 or run2 < add3)
-            self.assertTrue(add3 < run3)
-            self.assertTrue(run1 == 2 or run2 == 2)
-            self.assertTrue(add3 == 3 or add3 == 4)
-            self.assertTrue(run3 == 4 or run3 == 5)
-
-            self.assertIn('shut down pool="pool-1", cause="finish"', lines[6])
+            self.assertNotEqual(shutdown, -1)
+            self.assertNotEqual(cancel, -1)
