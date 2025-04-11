@@ -33,7 +33,8 @@ from typing import Any, get_args, get_origin, Literal
 import polars as pl
 
 from .color import (
-    BLUE, BROWN, CYAN, GRAY, GREEN, LIGHT_BLUE, ORANGE, PINK, PURPLE, RED
+    BLUE, BROWN, CYAN, DARK_PURPLE, GRAY, GREEN, LIGHT_BLUE, ORANGE, PINK,
+    PURPLE, RED, YELLOW_GREEN,
 )
 
 
@@ -415,20 +416,20 @@ DecisionProvision = MetricDeclaration("decision_provision", "Service Provision D
 
 DecisionType = MetricDeclaration("decision_type", "Decision Types", {
     "vis": ("Visibility", BLUE),
-    "mon": ("Monetary", GREEN),
-    "vis_mon": ("Visibility & Monetary", CYAN),
+    "mon": ("Monetary", YELLOW_GREEN),
+    "vis_mon": ("Visibility & Monetary", DARK_PURPLE),
     "pro": ("Provision", LIGHT_BLUE),
     "vis_pro": ("Visibility & Provision", ORANGE),
     "mon_pro": ("Monetary & Provision", GREEN),
     "vis_mon_pro": ("Visibility, Monetary, Provision", CYAN),
     "acc": ("Account", PURPLE),
-    "vis_acc": ("Visibility & Account", GREEN),
-    "mon_acc": ("Monetary & Account", CYAN),
-    "vis_mon_acc": ("Visibility, Monetary, Account", GREEN),
-    "pro_acc": ("Provision & Account", CYAN),
+    "vis_acc": ("Visibility & Account", PINK),
+    "mon_acc": ("Monetary & Account", GREEN),
+    "vis_mon_acc": ("Visibility, Monetary, Account", CYAN),
+    "pro_acc": ("Provision & Account", GREEN),
     "vis_pro_acc": ("Visibility, Provision, Account", RED),
-    "mon_pro_acc": ("Monetary, Provision, Account", GREEN),
-    "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", CYAN),
+    "mon_pro_acc": ("Monetary, Provision, Account", CYAN),
+    "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", GREEN),
     None: ("—none—", GRAY),
 }, selector="entity")
 
@@ -581,11 +582,11 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
     "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS": ("Grooming", RED),
     "KEYWORD_HATE_SPEECH": ("Hate Speech", CYAN),
     "KEYWORD_HUMAN_TRAFFICKING": ("Trafficking", ORANGE),
-    "KEYWORD_NUDITY": ("Nudity", GREEN),
+    "KEYWORD_NUDITY": ("Nudity", DARK_PURPLE),
     "KEYWORD_ONLINE_BULLYING_INTIMIDATION": ("Bullying", GRAY),
     "KEYWORD_OTHER": ("Other", BLUE),
     "KEYWORD_REGULATED_GOODS_SERVICES": ("Regulated Goods/Services", BROWN),
-    "KEYWORD_UNSAFE_CHALLENGES": ("Unsafe Challenges", BLUE),
+    "KEYWORD_UNSAFE_CHALLENGES": ("Unsafe Challenges", YELLOW_GREEN),
 }, quant_label="SoRs with Keyword")
 
 
@@ -638,7 +639,9 @@ PlatformName = (
 
 
 CANONICAL_PLATFORM_NAMES = MappingProxyType({
+    "Adobe Photoshop Lightroom": "Adobe Lightroom",
     "Discord Netherlands B.V.": "Discord",
+    "Microsoft Teams personal": "Microsoft Teams",
     "OTTO Market": "OTTO",
     "Quora Ireland Limited": "Quora",
     "WhatsApp Channels": "WhatsApp",
@@ -759,7 +762,7 @@ FIELDS = MappingProxyType({
     "platform_uid": str,
 
     "created_at": dt.datetime,
-    #"release_on": dt.date,
+    "released_on": dt.date,
 })
 
 
@@ -808,6 +811,10 @@ def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
         dtype = polarize(ptype)
         is_enum = isinstance(dtype, pl.Enum)
 
+        full[name] = dtype
+        if name == "released_on":
+            continue
+
         if is_enum and name != "content_language":
             partial[name] = dtype
 
@@ -815,8 +822,6 @@ def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
             base[name] = dtype
         else:
             base[name] = pl.String
-
-        full[name] = dtype
 
     return pl.Schema(partial), pl.Schema(base), pl.Schema(full)
 

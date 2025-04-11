@@ -1,10 +1,8 @@
 from abc import ABCMeta, abstractmethod
-from collections.abc import Sequence
-from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
 import re
-from typing import Any, Self
+from typing import Any
 
 import altair as alt
 import mistune
@@ -26,14 +24,11 @@ from .schema import (
     KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
     StatementCategory, StatementCount,
 )
-from .util import scale, to_markdown_table
+from .util import to_markdown_table
 
 
 TIMELINE_WIDTH = 600
 TIMELINE_HEIGHT = 400
-
-QUANT_WIDTH = 500
-QUANT_HEIGHT = 250
 
 HTML_HEADLINE = re.compile(r"<h([1-3])>([^<]*)</h[1-3]>")
 
@@ -43,7 +38,7 @@ FRAME_QUOT = re.compile(r"&quot;")
 FRAME_SHAPE = re.compile(r"<small>shape:[^<]*</small>")
 FRAME_STYLE = re.compile(r"<style>[^<]*</style>")
 
-SVG_ATTRIBUTES = re.compile(r' class="marks" width="[0-9]*" height="[0-9]*"')
+SVG_ATTRIBUTES = re.compile(r' class="marks" width="[0-9]+" height="[0-9]+"')
 
 DOC_HEADER = """\
 <!DOCTYPE html>
@@ -69,6 +64,9 @@ body {
 }
 p, table, svg {
     margin-bottom: 3em;
+}
+svg {
+    width: 100%;
 }
 
 /* ----------------------------------- Table ----------------------------------- */
@@ -104,9 +102,6 @@ thead > tr:first-of-type {
 thead > tr {
     background: #f0f0f0;
 }
-/*thead > tr:first-of-type > :where(th, td) {
-    padding-top: 0.35em;
-}*/
 thead > tr:last-of-type > :where(th, td) {
     padding-bottom: 0.35em;
 }
@@ -324,7 +319,7 @@ class Visualizer:
         with open(path, mode="r", encoding="utf8") as file:
             svg = file.read()
 
-        if "timeline" in name or "breakdown" in name:
+        if name != "keyword-pie":
             svg = SVG_ATTRIBUTES.sub("", svg)
 
         assert self._document is not None
@@ -343,7 +338,7 @@ class Visualizer:
 
                 self.render_heading()
                 self.render_overview()
-                self.render_timelines()
+                self.render_charts()
 
                 document.write(DOC_FOOTER)
             finally:
@@ -368,8 +363,6 @@ class Visualizer:
         self._statistics = statistics.filter(within_range)
         if self._statistics.height == 0:
             raise ConfigError("cannot visualize less than a full month of data")
-
-        self._summary = Summary.of(self._metadata, self._statistics)
 
         # Determine global keyword usage and keywords with at least 1% use.
         self._keyword_usage = self._statistics.filter(
@@ -406,7 +399,6 @@ class Visualizer:
 
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
-        self.markdown(self._summary.to_markdown())
         self.markdown(formatted_summary(self._statistics))
 
         self.html("<h2>Table Schemas</h2>")
@@ -448,66 +440,60 @@ class Visualizer:
 
         self.frame(table, all_text=True)
 
-    def render_timelines(self) -> None:
+    def render_charts(self) -> None:
         self.html("<h2>Timelines</h2>")
 
-        self.chart("timelines", alt.vconcat(
+        self.chart("dailies", alt.vconcat(
             self.daily_statements_of_reasons(),
             self.daily_statements_of_reasons(rolling_mean_days=7),
             self.daily_statements_of_reasons(percentage=True),
             self.daily_statements_of_reasons(rolling_mean_days=7, percentage=True),
             self.daily_sor_fraction_with_keywords(),
             self.daily_sor_fraction_with_keywords(rolling_mean_days=7),
-            self.monthly_statistic(ProcessingDelay),
-            self.monthly_statistic(ContentType),
-            self.monthly_cumulative_platform_counts(),
-            self.monthly_statistic(KeywordsMinorProtection),
         ).resolve_scale(
             x="shared",
             color="independent",
         ))
 
-        self.html("<h3>SoRs by Platform</h3>")
-        self.chart("platform-breakdown", alt.vconcat(
+        self.render_standard_timelines()
+
+        self.html("<h2>Platforms</h2>")
+        self.chart("platform-counts", self.monthly_cumulative_platform_counts())
+
+        self.chart("platform-statements", alt.vconcat(
             self.overall_statements_by_platform(),
             self.overall_statements_by_platform(threshold=50_000),
         ).resolve_scale(
-            x="independent",
+            color="shared",
         ).configure_scale(
             barBandPaddingInner=0.05,
         ))
 
-        self.html("<h3>CSAM SoRs</h3>")
-        self.html(
-            "<p>The following timelines exclusively cover Statements of Reasons "
-            "with CSAM as a keyword. Since even possession of CSAM is illegal "
-            "across the EU (as well as the US), one would expect that platforms "
-            "alway remove the content. Furthermore, given the legal and reputational "
-            "risks, one would also expect that platforms close offending accounts. "
-            "Alas, that is not reflected in the SoRs. However, only 8 out of 44 "
-            "platforms have submitted SoRs with CSAM as keyword. So findings about "
-            "CSAM may <em>not</em> generalize.</p>"
-        )
-
-        self.chart("csam-breakdown", alt.vconcat(
+        self.chart("platform-keywords", alt.vconcat(
             self.overall_keyword_usage_by_platform(percent=True),
             self.overall_keyword_usage_by_platform(percent=False),
-            self.monthly_statistic(ProcessingDelay, "CSAM"),
         ).resolve_scale(color='independent'))
 
-        self.chart("csam-timelines", alt.vconcat(
-            self.monthly_statistic(StatementCount, "CSAM"),
-            self.monthly_statistic(ContentType, "CSAM"),
-            self.monthly_chart(
-                self.decision_ground("CSAM"), DecisionGroundAndLegality, "CSAM"
+        self.html("<h3>CSAM SoRs</h3>")
+        self.render_standard_timelines("CSAM")
+
+    def render_standard_timelines(self, tag: None | str = None) -> None:
+        name = f"{tag.lower()}-monthlies" if tag else "monthlies"
+
+        self.chart(name, alt.vconcat(
+            self.render_timeline(ProcessingDelay, tag),
+            self.render_timeline(StatementCount, tag),
+            self.render_timeline(ContentType, tag),
+            self.timeline_chart(
+                self.decision_ground(tag), DecisionGroundAndLegality, tag
             ),
-            self.monthly_statistic(DecisionType, "CSAM"),
-            self.monthly_statistic(DecisionVisibility, "CSAM"),
-            self.monthly_statistic(DecisionProvision, "CSAM"),
-            self.monthly_statistic(DecisionMonetary, "CSAM"),
-            self.monthly_statistic(DecisionAccount, "CSAM"),
-            self.monthly_statistic(AutomatedDecision, "CSAM"),
-            self.monthly_statistic(AutomatedDetection, "CSAM"),
+            self.render_timeline(DecisionType, tag),
+            self.render_timeline(DecisionVisibility, tag),
+            self.render_timeline(DecisionProvision, tag),
+            self.render_timeline(DecisionMonetary, tag),
+            self.render_timeline(DecisionAccount, tag),
+            self.render_timeline(AutomatedDetection, tag),
+            self.render_timeline(AutomatedDecision, tag),
         ).resolve_scale(
             x="shared",
             color="independent",
@@ -627,15 +613,15 @@ class Visualizer:
 
         return chart
 
-    def monthly_statistic(
+    def render_timeline(
         self,
         spec: MetricDeclaration,
         tag: None | str = None,
     ) -> alt.Chart:
-        table = self.monthly_data(spec, tag)
-        return self.monthly_chart(table, spec, tag)
+        table = self.timeline_data(spec, tag)
+        return self.timeline_chart(table, spec, tag)
 
-    def monthly_data(
+    def timeline_data(
         self,
         spec: MetricDeclaration,
         tag: None | str = None,
@@ -672,7 +658,7 @@ class Visualizer:
 
         return table
 
-    def monthly_chart(
+    def timeline_chart(
         self,
         table: pl.DataFrame,
         spec: MetricDeclaration,
@@ -716,7 +702,7 @@ class Visualizer:
         ).interactive()
 
     def decision_ground(self, tag: None | str = None) -> pl.DataFrame:
-        return self.monthly_data(
+        return self.timeline_data(
             DecisionGroundAndLegality, tag
         ).pivot(
             on="variant",
@@ -832,8 +818,8 @@ class Visualizer:
             tooltip=True,
             color=f"{PURPLE}90" if threshold else PURPLE,
         ).properties(
-            width=QUANT_WIDTH,
-            height=QUANT_HEIGHT,
+            width=TIMELINE_WIDTH,
+            height=TIMELINE_HEIGHT,
         )
 
         if threshold is None or threshold < 50_000:
@@ -865,7 +851,7 @@ class Visualizer:
             .replace(KeywordsMinorProtection.replacements())
         ).collect()
 
-        title = "Keywords Used by Platforms Reporting CSAM — "
+        title = "Platforms' Overall Keyword Usage — "
         if percent:
             title += "Percentage Fractions"
 
@@ -925,131 +911,6 @@ class Visualizer:
             ).interactive()
         )
 
-
-# --------------------------------------------------------------------------------------
-# Data Summary
-
-
-@dataclass(frozen=True, slots=True)
-class Summary:
-    """A concise, one-dimensional summary of the metadata."""
-
-    start_date: dt.date
-    end_date: dt.date
-    batch_rows: int
-    batch_memory: int
-    mean_minor_prot_pct: float
-    total_rows: int
-    mean_batch_keywords_pct: float
-    mean_total_keywords_pct: float
-    max_platforms: int
-    max_platforms_keywords: int
-    max_platforms_csam: int
-
-    @classmethod
-    def of(cls, metadata: pl.DataFrame, statistics: pl.DataFrame) -> Self:
-        """Create the summary."""
-        start_date, end_date, batch_rows, batch_memory, mean_minor_prot_pct = (
-            metadata.select(
-                pl.col("start_date").min(),
-                pl.col("end_date").max(),
-                pl.col("batch_rows").sum(),
-                pl.col("batch_memory").sum(),
-                (
-                    pl.col("batch_rows") / pl.col("total_rows") * 100
-                )
-                .mean()
-                .alias("mean_minor_prot_pct"),
-            ).row(0)
-        )
-
-        mean_batch_keywords_pct, mean_total_keywords_pct, total_rows = (
-            metadata.select(
-                (pl.col("batch_rows_with_keywords") / pl.col("batch_rows") * 100)
-                .mean()
-                .alias("mean_batch_keywords_pct"),
-                (pl.col("total_rows_with_keywords") / pl.col("total_rows") * 100)
-                .mean()
-                .alias("mean_total_keywords_pct"),
-                pl.col("total_rows").sum(),
-            ).row(0)
-        )
-
-        max_platforms = statistics.filter(
-            predicate("platform_name", entity=None, tag=None)
-        ).select(
-            pl.col("variant").n_unique()
-        ).item()
-
-        frame = statistics.filter(
-            predicate("platform_name", entity="with_category_specification", tag=None)
-        ).with_columns(
-            pl.col("variant").cast(pl.String).str.split(by="‖")
-        )
-
-        max_platforms_with_keywords = frame.filter(
-            pl.col("variant").list.last().ne("is_null")
-        ).select(
-            pl.col("variant").list.first().n_unique()
-        ).item()
-
-        max_platforms_with_csam = frame.filter(
-            pl.col("variant").list.last().eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
-        ).select(
-            pl.col("variant").list.first().n_unique()
-        ).item()
-
-        return cls(
-            start_date=start_date,
-            end_date=end_date,
-            batch_rows=batch_rows,
-            batch_memory=batch_memory,
-            mean_minor_prot_pct=mean_minor_prot_pct,
-            total_rows=total_rows,
-            mean_batch_keywords_pct=mean_batch_keywords_pct,
-            mean_total_keywords_pct=mean_total_keywords_pct,
-            max_platforms=max_platforms,
-            max_platforms_keywords=max_platforms_with_keywords,
-            max_platforms_csam=max_platforms_with_csam,
-        )
-
-    def to_frame(self) -> pl.DataFrame:
-        return pl.DataFrame(self._rows(), orient="row", schema=["Attribute", "Value"])
-
-    def to_markdown(self) -> str:
-        return to_markdown_table(*self._rows(), columns=["Attribute", "Value"])
-
-    def _rows(self) -> list[list[str]]:
-        row_size, row_unit = scale(self.batch_rows)
-        total_rows, total_unit = scale(self.total_rows)
-        mem_size, mem_unit = scale(self.batch_memory)
-
-        return [
-            [
-                "Dates",
-                f"{self.start_date} to {self.end_date} (inclusive)"
-            ],
-            [
-                "Platforms reporting Protection of Minors SoRs",
-                f"{self.max_platforms_keywords} out of {self.max_platforms} "
-                f"include keywords, {self.max_platforms_csam} include CSAM"
-            ],
-            [
-                "Protection of Minors SoRs",
-                f"{row_size:,.1f} {row_unit}rows "
-                f"out of {total_rows:,.1f} {total_unit}rows or "
-                f"{self.batch_rows / self.total_rows * 100:.1f}%"
-            ],
-            [
-                "Protection of Minors SoRs with keywords",
-                f"{self.mean_batch_keywords_pct:.1f}% of category vs "
-                f"{self.mean_total_keywords_pct:.1f}% of all SoRs"
-            ],
-            [
-                "Size of in-memory frames",
-                f"{mem_size:,.1f} {mem_unit}byte"
-            ],
-        ]
 
 # --------------------------------------------------------------------------------------
 # Schema Rendering
