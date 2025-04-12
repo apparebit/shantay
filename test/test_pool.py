@@ -89,12 +89,11 @@ class TestPool(unittest.TestCase):
                     break
             self.assertNotEqual(offset, -1)
 
-            # The order of log lines is mostly non-deterministic, since the log
-            # combines entries written by three different processes, two of
-            # which forward entries to the third. For that reason, we only check
-            # that all the expected lines appear in the log. Annoyingly,
-            # Python's worker pool doesn't always start all its workers. So we
-            # have to account for that, too.
+            # Since the log combines entries written by three processes, their
+            # order is mostly non-deterministic. For that reason, we only check
+            # that all expected lines are present—after lexically sorting the
+            # lines. We also account for Python's worker pool not starting all
+            # of its workers.
             self.assertTrue(offset + 9 <= len(lines))
             if offset + 10 <= len(lines):
                 lines = lines[offset:offset + 10]
@@ -103,37 +102,14 @@ class TestPool(unittest.TestCase):
                 lines = lines[offset:offset + 9]
                 expected_init = 1
 
-            init = 0
-            submit = 0
-            run1 = run2 = run3 = shutdown = cancel = -1
-            for index, line in enumerate(lines[offset:offset + 10]):
-                if 'initialized worker pool process pid=' in line:
-                    init += 1
-                elif (
-                    'submit fn="test.test_pool.task' in line
-                    and 'pool="pool-1", pending-tasks' in line
-                ):
-                    submit +=1
-                elif 'task1 processes "1"' in line and run1 == -1:
-                    run1 = index
-                elif 'task2 processes "2"' in line and run2 == -1:
-                    run2 = index
-                elif 'task3 processes "3"' in line and run3 == -1:
-                    run3 = index
-                elif (
-                    'shut down pool="pool-1", cause="finish()"' in line
-                    and shutdown == -1
-                ):
-                    shutdown = index
-                elif 'cancelled thread="status_manager"' in line and cancel == -1:
-                    cancel = index
-                else:
-                    raise AssertionError(f"unexpected log line '{line}'")
-
-            self.assertEqual(init, expected_init)
-            self.assertEqual(submit, 3)
-            self.assertNotEqual(run1, -1)
-            self.assertNotEqual(run2, -1)
-            self.assertNotEqual(run3, -1)
-            self.assertNotEqual(shutdown, -1)
-            self.assertNotEqual(cancel, -1)
+            lines = sorted(l[l.index("︙", 24) + 1:] for l in lines)
+            for index in range(expected_init):
+                self.assertIn("root︙INFO︙initialized worker pool process pid", lines[index])
+            self.assertIn('shantay︙DEBUG︙cancelled thread="status_manager"', lines[expected_init])
+            self.assertIn('shantay︙DEBUG︙shut down pool="pool-1", cause="finish()"', lines[expected_init + 1])
+            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task1", pool="pool-1"', lines[expected_init + 2])
+            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task2", pool="pool-1"', lines[expected_init + 3])
+            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task3", pool="pool-1"', lines[expected_init + 4])
+            self.assertIn('test.test_pool︙INFO︙task1 processes "1"', lines[expected_init + 5])
+            self.assertIn('test.test_pool︙INFO︙task2 processes "2"', lines[expected_init + 6])
+            self.assertIn('test.test_pool︙INFO︙task3 processes "3"', lines[expected_init + 7])
