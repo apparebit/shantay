@@ -68,6 +68,8 @@ class Processor[R: Release]:
         start_time = time.time()
         if task == "prepare":
             result = self.prepare()
+        elif task == "analyze-archive":
+            result = self.analyze_archive()
         elif task == "analyze-working":
             result = self.analyze_working()
         elif task == "visualize":
@@ -452,6 +454,7 @@ class Processor[R: Release]:
                 name=name,
                 progress=self._progress
             )
+
             collector.collect(release, frame)
 
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
