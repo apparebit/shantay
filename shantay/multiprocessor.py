@@ -9,10 +9,10 @@ import traceback
 from types import FrameType
 from typing import Any
 
-from .framing import collect_release_metadata, Collector
+from .framing import collect_release_metadata, Collector, concat, write_parquet
 from .metadata import Metadata
 from .model import (
-    Coverage, DataFrameType, Dataset, Release, Storage
+    Coverage, DataFrameType, Dataset, Release, STATISTICS_FILE, Storage
 )
 from .pool import Cancelled, Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
@@ -36,6 +36,7 @@ class Multiprocessor[R: Release]:
         self._coverage = coverage
         self._metadata = metadata
         self._metadata_frame = None
+        self._stat_frame = None
 
         # Prepare processes daily releases, whereas analyze processes monthly ones
         self._task = None
@@ -71,7 +72,7 @@ class Multiprocessor[R: Release]:
         start_time = time.time()
 
         # Determine cursor's first and final values as well as increment
-        if task == "prepare":
+        if task in ("prepare", "analyze-archive"):
             cover = self._coverage
             increment = "daily"
         elif task == "analyze-working":
@@ -97,6 +98,16 @@ class Multiprocessor[R: Release]:
         # Wait until pool finishes
         if wait:
             self._pool.wait()
+
+            if (
+                task in ("analyze-archive", "analyze-working")
+                and self._stat_frame is not None
+            ):
+                write_parquet(
+                    self._stat_frame.rechunk(),
+                    self._storage.staging_root / STATISTICS_FILE
+                )
+
         self._runtime = time.time() - start_time
 
     def _schedule_task(self) -> bool:
@@ -186,10 +197,17 @@ class Multiprocessor[R: Release]:
             # original, it's ok to update that file here. In fact, it's more
             # than ok because we just updated the metadata with a new release.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
+        elif self._task in ("analyze-archive", "analyze-working"):
+            if self._stat_frame is None:
+                self._stat_frame = result
+            else:
+                self._stat_frame = concat([self._stat_frame, result])
 
-            return self._schedule_task()
+            write_parquet(self._stat_frame, self._storage.staging_root / STATISTICS_FILE)
         else:
             raise AssertionError(f"invalid task {self._task}")
+
+        return self._schedule_task()
 
     def stop(self) -> bool:
         assert self._pool is not None
@@ -264,8 +282,13 @@ def _run_on_worker[R: Release](
     coverage = Coverage(release, release, filter)
     if task == "prepare":
         metadata = Metadata(filter)
-    else:
+    elif task == "analyze-archive":
+        metadata = Metadata()
+    elif task == "analyze-working":
         metadata = Metadata.read_json(storage.working_root)
+    else:
+        raise AssertionError(f"invalid task {task}")
+
     processor = Processor(
         dataset=dataset,
         storage=storage.isolate(pid),
@@ -279,10 +302,13 @@ def _run_on_worker[R: Release](
         processor.prepare_batches(release)
         record = metadata[release]
         result = dict(release=release, **record)
+    elif task == "analyze-archive":
+        with dataset.analysis_context():
+            result = processor.analyze_archived_release(release)
     elif task == "analyze-working":
         with dataset.analysis_context():
             collector = Collector()
-            processor.analyze_release(release, metadata_frame, collector)
+            processor.analyze_working_release(release, metadata_frame, collector)
             result = collector.to_frame()
     else:
         raise AssertionError(f"invalid task {task}")

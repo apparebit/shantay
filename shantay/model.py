@@ -404,8 +404,7 @@ class Coverage[R: Release]:
 
     first: R
     last: R
-    # Really: str | pl.Expr
-    filter: str | QueryExpression
+    filter: None | str | QueryExpression
 
     def __post_init__(self) -> None:
         assert self.first <= self.last
@@ -449,7 +448,9 @@ class CollectorProtocol[R: Release](Protocol):
         provided, the frame contains working data only.
         """
 
-    def to_frame(self, validate: bool = False) -> DataFrameType:
+    def to_frame(
+        self, validate: bool = False, group_by_day: bool = False
+    ) -> DataFrameType:
         """
         Combine all summary statistics collected so far into one data frame.
         """

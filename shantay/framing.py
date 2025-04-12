@@ -18,6 +18,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
 from importlib import import_module
+from pathlib import Path
 from typing import Any, Literal, Self
 
 import polars as pl
@@ -123,6 +124,18 @@ def resolve_query_binding(s: str) -> QueryExpression:
     if not isinstance(v, pl.Expr):
         raise ConfigError(f'value of module binding "{s}" is not a Pola.rs expression')
     return v
+
+
+def concat(frames: list[pl.DataFrame], rechunk: bool = False) -> pl.DataFrame:
+    """Concatenate the data frames."""
+    return pl.concat(frames, how="vertical", rechunk=rechunk)
+
+
+def write_parquet(frame: pl.DataFrame, path: Path) -> None:
+    """Write the data frame to a Parquet file."""
+    tmp = path.with_suffix(".tmp.parquet")
+    frame.write_parquet(tmp)
+    tmp.replace(path)
 
 
 # --------------------------------------------------------------------------------------
@@ -415,13 +428,17 @@ class Collector:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
                 this.collect_body()
 
-    def to_frame(self, validate: bool = False) -> pl.DataFrame:
+    def to_frame(
+        self, validate: bool = False, group_by_day: bool = False
+    ) -> pl.DataFrame:
         """Combine the collected partial frames into one."""
         frame = pl.concat(self._frames, how="vertical")
         if isinstance(frame, pl.LazyFrame):
             frame = frame.collect()
         if validate:
             validate_row_counts(frame)
+        if group_by_day:
+            frame = frame.group_by(*groupies()).agg(*aggregates())
         return frame
 
 
@@ -429,6 +446,7 @@ class Collector:
 
 
 def validate_row_counts(frame: pl.DataFrame) -> None:
+    """Perform consistency checks on statistics data frame."""
     frame = frame.filter(pl.col("tag").is_null())
     rows = get_statistic(frame, "rows")
 
@@ -548,6 +566,7 @@ def get_statistic(
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     statistic: Statistic = "count"
 ) -> None | int:
+    """Retrieve a statistic from the data frame."""
     frame = frame.filter(
         predicate(
             column,
@@ -564,6 +583,19 @@ def get_statistic(
 
     assert frame.height <= 1
     return frame.item() if frame.height == 1 else None
+
+
+def groupies() -> list[pl.Expr]:
+    """The expressions to `group_by` to preserve daily statistics."""
+    return [
+        pl.col("start_date"),
+        pl.col("end_date"),
+        pl.col("tag"),
+        pl.col("column"),
+        pl.col("entity"),
+        pl.col("variant"),
+        pl.col("variant_too"),
+    ]
 
 
 def aggregates() -> list[pl.Expr]:

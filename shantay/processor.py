@@ -15,7 +15,7 @@ from .__init__ import __version__
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
-    MetadataEntry, Release, Storage
+    MetadataEntry, Release, STATISTICS_FILE, Storage
 )
 from .progress import NO_PROGRESS, Progress
 from .util import annotate_error, scale_time
@@ -249,6 +249,7 @@ class Processor[R: Release]:
     def extract_batches(self, release: R) -> None:
         """Extract the batches for the given release."""
         assert self.is_archive_staged(release)
+        assert self._coverage.filter is not None
 
         filenames = self.list_archived_files(self._storage.staging_root, release)
         batch_count = len(filenames)
@@ -372,14 +373,14 @@ class Processor[R: Release]:
         with self._dataset.analysis_context():
             collector = Collector()
             for index, release in enumerate(range):
-                self.analyze_release(release, metadata, collector)
+                self.analyze_working_release(release, metadata, collector)
                 self._progress.step(index + 1, extra=release.id)
 
             return self._dataset.combine_releases(
                 self._storage.working_root, self._coverage, collector
             )
 
-    def analyze_release(
+    def analyze_working_release(
         self,
         release: Release,
         metadata: DataFrameType,
@@ -392,6 +393,69 @@ class Processor[R: Release]:
         self._dataset.analyze_release(
             self._storage.working_root, release, release_metadata, collector
         )
+
+    def analyze_archive(self) -> None:
+        """Analyze the full data set."""
+        from .framing import concat, write_parquet
+
+        with self._dataset.analysis_context():
+            full_frame = None
+            for release in self._coverage:
+                frame = self.analyze_archived_release(release)
+
+                if full_frame is None:
+                    full_frame = frame
+                else:
+                    full_frame = concat([full_frame, frame])
+
+                # Be sure to save collected statistics after processing each release
+                write_parquet(full_frame, self._storage.staging_root / STATISTICS_FILE)
+
+            if full_frame is not None:
+                # Rewrite the saved statistics after rechunking
+                write_parquet(
+                    full_frame.rechunk(),
+                    self._storage.staging_root / STATISTICS_FILE
+                )
+
+    def analyze_archived_release(
+        self,
+        release: R,
+    ) -> pl.DataFrame:
+        """Analyze the full data for the given release."""
+        _logger.debug('analyzing release="%s"', release.id)
+        if not self.is_archive_downloaded(release):
+            self.download_archive(release)
+
+        self.stage_archive(release)
+
+        filenames = self.list_archived_files(self._storage.staging_root, release)
+        batch_count = len(filenames)
+        self._progress.activity(
+            f"analyzing batches from release {release.id}",
+            f"analyzing {release.id}", "batch", with_rate=False,
+        )
+        self._progress.start(batch_count)
+
+        # Archived files are archives, too. Unarchive one at a time.
+        from .framing import Collector
+
+        collector = Collector()
+
+        for index, name in enumerate(filenames):
+            self._progress.step(index, "unarchiving data")
+            self.unarchive_file(self._storage.staging_root, release, index, name)
+            frame = self._dataset.ingest_file_data(
+                root=self._storage.staging_root,
+                release=release,
+                index=index,
+                name=name,
+                progress=self._progress
+            )
+            collector.collect(release, frame)
+
+        shutil.rmtree(self._storage.staging_root / release.parent_directory)
+        return collector.to_frame(group_by_day=True)
 
     def visualize(self) -> None:
         """Visualize the analysis results."""

@@ -91,11 +91,12 @@ def _parse_options(args: list[str]) -> Any:
 
     parser.add_argument(
         "task",
-        choices=["recover", "prepare", "analyze-working", "visualize"],
+        choices=["recover", "prepare", "analyze-archive", "analyze-working", "visualize"],
         default="prepare",
         help="select the task to execute: recover validates parquet files and restores "
         "metadata; prepare downloads distributions and extracts working data; "
-        "analyze-working processes the working data; visualize graphs the analysis "
+        "analyze-working processes the working data; analyze-archive downloads "
+        "distributions and analyzes the data; visualize graphs the analysis "
         "results",
     )
 
@@ -135,7 +136,9 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
 
     # Prepare metadata
     metadata = Metadata.merge(storage.staging_root, storage.working_root, not_exist_ok=True)
-    if metadata.filter is None:
+    if options.task == "analyze-archive":
+        pass
+    elif metadata.filter is None:
         if filter_name is None:
             raise ConfigError(
                 "no metadata from previous run is available; please specify --category or --filter"
@@ -156,7 +159,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     metadata.write_json(storage.staging_root)
 
     # Handle --first and --last
-    if options.task == "prepare":
+    if options.task in ("prepare", "analyze-archive"):
         first = dt.date(2023, 9, 25)
         last = dt.date.today() - dt.timedelta(days=2)
     elif 0 < len(metadata):
@@ -181,7 +184,6 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
         raise ConfigError("only prepare and analyze-working support more than one process")
 
     # Finish it all up
-    assert filter_value is not None
     coverage = Coverage(Release.of(first), Release.of(last), filter_value)
     return storage, coverage, metadata
 
@@ -214,7 +216,10 @@ def _run(args: list[str]) -> None:
 
     storage, coverage, metadata = get_configuration(options)
 
-    if options.task in ("prepare", "analyze-working") and 1 < options.multiproc:
+    if (
+        options.task in ("prepare", "analyze-archive", "analyze-working")
+        and 1 < options.multiproc
+    ):
         processor = Multiprocessor(
             dataset=StatementsOfReasons(),
             storage=storage,
