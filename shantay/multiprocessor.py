@@ -72,10 +72,10 @@ class Multiprocessor[R: Release]:
         start_time = time.time()
 
         # Determine cursor's first and final values as well as increment
-        if task in ("prepare", "analyze-archive"):
+        if task in ("prepare", "summarize"):
             cover = self._coverage
             increment = "daily"
-        elif task == "analyze-working":
+        elif task == "analyze":
             date_cover, metadata = collect_release_metadata(self._metadata.records)
             cover = date_cover.to_release_range().to_monthly()
             self._metadata_frame = metadata
@@ -99,10 +99,7 @@ class Multiprocessor[R: Release]:
         if wait:
             self._pool.wait()
 
-            if (
-                task in ("analyze-archive", "analyze-working")
-                and self._stat_frame is not None
-            ):
+            if task in ("analyze", "summarize") and self._stat_frame is not None:
                 write_parquet(
                     self._stat_frame.rechunk(),
                     self._storage.staging_root / STATISTICS_FILE
@@ -197,7 +194,7 @@ class Multiprocessor[R: Release]:
             # original, it's ok to update that file here. In fact, it's more
             # than ok because we just updated the metadata with a new release.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
-        elif self._task in ("analyze-archive", "analyze-working"):
+        elif self._task in ("analyze", "summarize"):
             if self._stat_frame is None:
                 self._stat_frame = result
             else:
@@ -282,9 +279,9 @@ def _run_on_worker[R: Release](
     coverage = Coverage(release, release, filter)
     if task == "prepare":
         metadata = Metadata(filter)
-    elif task == "analyze-archive":
+    elif task == "summarize":
         metadata = Metadata()
-    elif task == "analyze-working":
+    elif task == "analyze":
         metadata = Metadata.read_json(storage.working_root)
     else:
         raise AssertionError(f"invalid task {task}")
@@ -302,10 +299,10 @@ def _run_on_worker[R: Release](
         processor.prepare_batches(release)
         record = metadata[release]
         result = dict(release=release, **record)
-    elif task == "analyze-archive":
+    elif task == "summarize":
         with dataset.analysis_context():
-            result = processor.analyze_archived_release(release)
-    elif task == "analyze-working":
+            result = processor.summarize_archived_release(release)
+    elif task == "analyze":
         with dataset.analysis_context():
             collector = Collector()
             processor.analyze_working_release(release, metadata_frame, collector)

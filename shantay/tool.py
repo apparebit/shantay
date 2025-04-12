@@ -1,4 +1,4 @@
-from argparse import ArgumentParser
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
 import datetime as dt
 import logging
 from pathlib import Path
@@ -24,7 +24,32 @@ _logger = logging.getLogger()
 
 
 def _parse_options(args: list[str]) -> Any:
-    parser = ArgumentParser(prog="shantay")
+    parser = ArgumentParser(
+        prog="shantay",
+        formatter_class=RawDescriptionHelpFormatter,
+        description="""
+        `recover` scans the working directory to validate contents and
+        restore metadata.
+
+        `prepare` downloads daily distributions that haven't been
+        downloaded yet and extracts the working subset.
+
+        `analyze` computes summary statistics about the working
+        subset.
+
+        `summarize` downloads daily distributions that haven't been
+        downloaded yet and computes summary statistics about the
+        entire dataset.
+
+        `visualize` visualizes summary statistics derived from
+        working subset or full dataset.
+
+        Since prepare and summarize may download distributions and process
+        the complete dataset, they are slow, taking at least half a day.
+        By contrast, analyze-working is much faster, taking a few minutes
+        only.
+        """
+    )
 
     group = parser.add_argument_group("data storage")
     group.add_argument(
@@ -91,13 +116,9 @@ def _parse_options(args: list[str]) -> Any:
 
     parser.add_argument(
         "task",
-        choices=["recover", "prepare", "analyze-archive", "analyze-working", "visualize"],
+        choices=["recover", "prepare", "analyze", "summarize", "visualize"],
         default="prepare",
-        help="select the task to execute: recover validates parquet files and restores "
-        "metadata; prepare downloads distributions and extracts working data; "
-        "analyze-working processes the working data; analyze-archive downloads "
-        "distributions and analyzes the data; visualize graphs the analysis "
-        "results",
+        help="select the task to execute",
     )
 
     return parser.parse_args(args)
@@ -136,7 +157,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
 
     # Prepare metadata
     metadata = Metadata.merge(storage.staging_root, storage.working_root, not_exist_ok=True)
-    if options.task == "analyze-archive":
+    if options.task == "summarize":
         pass
     elif metadata.filter is None:
         if filter_name is None:
@@ -159,7 +180,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     metadata.write_json(storage.staging_root)
 
     # Handle --first and --last
-    if options.task in ("prepare", "analyze-archive"):
+    if options.task in ("prepare", "summarize"):
         first = dt.date(2023, 9, 25)
         last = dt.date.today() - dt.timedelta(days=2)
     elif 0 < len(metadata):
@@ -180,8 +201,13 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     # Handle --multiproc
     if options.multiproc < 1:
         raise ConfigError(f"process number must be positive but is {options.multiproc}")
-    if options.multiproc != 1 and options.task not in ("prepare", "analyze-working"):
-        raise ConfigError("only prepare and analyze-working support more than one process")
+    if (
+        options.multiproc != 1
+        and options.task not in ("prepare", "analyze", "summarize")
+    ):
+        raise ConfigError(
+            "only prepare, analyze, and summarize support more than one process"
+        )
 
     # Finish it all up
     coverage = Coverage(Release.of(first), Release.of(last), filter_value)
@@ -229,18 +255,21 @@ def _run(args: list[str]) -> None:
     storage, coverage, metadata = get_configuration(options)
 
     if (
-        options.task in ("prepare", "analyze-archive", "analyze-working")
+        options.task in ("prepare", "analyze", "summarize")
         and 1 < options.multiproc
     ):
-        processor = Multiprocessor(
-            dataset=StatementsOfReasons(),
-            storage=storage,
-            coverage=coverage,
-            metadata=metadata,
-            size=options.multiproc,
-        )
-        processor.run(options.task)
+        dataset = StatementsOfReasons()
+        with dataset.analysis_context():
+            processor = Multiprocessor(
+                dataset=dataset,
+                storage=storage,
+                coverage=coverage,
+                metadata=metadata,
+                size=options.multiproc,
+            )
+            processor.run(options.task)
     else:
+        # Processor uses an analysis context as necessary internally.
         processor = Processor(
             dataset=StatementsOfReasons(),
             storage=storage,
@@ -253,7 +282,7 @@ def _run(args: list[str]) -> None:
 
         if options.task == "prepare":
             Metadata.copy_json(storage.staging_root, storage.working_root)
-        elif options.task == "analyze-working":
+        elif options.task == "analyze":
             assert isinstance(result, pl.DataFrame)
             print("\n")
             print(formatted_summary(result, markdown=False))

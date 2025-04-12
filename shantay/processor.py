@@ -68,9 +68,9 @@ class Processor[R: Release]:
         start_time = time.time()
         if task == "prepare":
             result = self.prepare()
-        elif task == "analyze-archive":
-            result = self.analyze_archive()
-        elif task == "analyze-working":
+        elif task == "summarize":
+            result = self.summarize_archive()
+        elif task == "analyze":
             result = self.analyze_working()
         elif task == "visualize":
             result = self.visualize()
@@ -396,14 +396,14 @@ class Processor[R: Release]:
             self._storage.working_root, release, release_metadata, collector
         )
 
-    def analyze_archive(self) -> None:
+    def summarize_archive(self) -> None:
         """Analyze the full data set."""
         from .framing import concat, write_parquet
 
         with self._dataset.analysis_context():
             full_frame = None
             for release in self._coverage:
-                frame = self.analyze_archived_release(release)
+                frame = self.summarize_archived_release(release)
 
                 if full_frame is None:
                     full_frame = frame
@@ -420,7 +420,7 @@ class Processor[R: Release]:
                     self._storage.staging_root / STATISTICS_FILE
                 )
 
-    def analyze_archived_release(
+    def summarize_archived_release(
         self,
         release: R,
     ) -> pl.DataFrame:
