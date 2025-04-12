@@ -930,14 +930,45 @@ ColumnValueType = pl.Enum((
 ))
 
 
+EntityValueType = pl.Enum((
+    "is_null",
+    "vis",
+    "mon",
+    "vis_mon",
+    "pro",
+    "vis_pro",
+    "mon_pro",
+    "vis_mon_pro",
+    "acc",
+    "vis_acc",
+    "mon_acc",
+    "vis_mon_acc",
+    "pro_acc",
+    "vis_pro_acc",
+    "mon_pro_acc",
+    "vis_mon_pro_acc",
+    "with_end_date",
+    "elements",
+    "elements_per_row",
+    "rows_with_elements",
+    "with_category_specification",
+))
+
+
+VariantTooValueType = pl.Enum(Keyword)
+
+
+CATEGORICAL = pl.Categorical()
+
+
 STATISTICS_SCHEMA = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
-    "tag": pl.Categorical(),
+    "tag": CATEGORICAL,
     "column": ColumnValueType,
-    "entity": pl.Categorical(),
-    "variant": pl.Categorical(),
-    "variant_too": pl.Categorical(),
+    "entity": EntityValueType,
+    "variant": CATEGORICAL,
+    "variant_too": VariantTooValueType,
     "count": pl.Int64,
     "min": pl.Int64,
     "mean": pl.Int64,

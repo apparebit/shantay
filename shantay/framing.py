@@ -26,8 +26,8 @@ import polars as pl
 from .metadata import FullMetadataEntry
 from .model import ConfigError, DateRange, Period, QueryExpression, Release
 from .schema import (
-    ColumnValueType, DurationTransform, STATISTICS_SCHEMA, TRANSFORMS, TransformType,
-    ValueCountsPlusTransform
+    CATEGORICAL, DurationTransform, STATISTICS_SCHEMA, TRANSFORMS, TransformType,
+    ValueCountsPlusTransform, VariantTooValueType
 )
 from .util import scale_time
 
@@ -187,22 +187,40 @@ class Collector:
         entity = None if entity == "" else entity
 
         effective_values = []
-        if value_counts is None and variant is None:
-            effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant"))
-            effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant_too"))
-        elif value_counts is None:
-            assert variant is not None, "impossible value"
-            effective_values.append(variant.cast(pl.Categorical).alias("variant"))
-            if variant_too is None:
-                effective_values.append(pl.lit(None, dtype=pl.Categorical).alias("variant_too"))
+        if value_counts is None:
+            if variant is None:
+                effective_values.append(
+                    pl.lit(None, dtype=CATEGORICAL).alias("variant")
+                )
             else:
-                effective_values.append(variant_too.cast(pl.Categorical).alias("variant_too"))
+                effective_values.append(
+                    variant
+                        .cast(pl.String)
+                        .cast(CATEGORICAL)
+                        .alias("variant")
+                )
         else:
-            assert kwargs.get("count", None) is None, "count and value_counts both not None"
-            effective_values.extend([
-                value_counts.value_counts(sort=True).list.explode().struct.unnest(),
-                pl.lit(None, dtype=pl.Categorical).alias("variant_too"),
-            ])
+            # Without the cast before value_counts(), Pola.rs fails analyze
+            # archive with a "can not cast to enum with global mapping" error.
+            effective_values.append(
+                value_counts
+                    .cast(pl.String)
+                    .value_counts(sort=True)
+                    .list.explode()
+                    .struct.unnest()
+            )
+
+        if variant_too is None:
+            effective_values.append(
+                pl.lit(None, dtype=VariantTooValueType).alias("variant_too")
+            )
+        else:
+            effective_values.append(
+                variant_too
+                    .cast(pl.String)
+                    .cast(VariantTooValueType)
+                    .alias("variant_too")
+            )
 
         for key in ("count", "min", "mean", "max"):
             if value_counts is not None and key == "count":
@@ -216,23 +234,22 @@ class Collector:
 
         assert self._release is not None
         frame = frame.select(
-            pl.lit(self._release.start_date, dtype=pl.Date).alias("start_date"),
-            pl.lit(self._release.end_date, dtype=pl.Date).alias("end_date"),
-            pl.lit(tag, dtype=pl.Categorical).alias("tag"),
-            pl.lit(column, dtype=ColumnValueType).alias("column"),
-            pl.lit(entity, dtype=pl.Categorical).alias("entity"),
+            pl.lit(self._release.start_date).alias("start_date"),
+            pl.lit(self._release.end_date).alias("end_date"),
+            pl.lit(tag).alias("tag"),
+            pl.lit(column).alias("column"),
+            pl.lit(entity).alias("entity"),
             *effective_values,
         )
 
         if value_counts is not None:
             frame = frame.rename({
                 column: "variant",
-            }).with_columns(
-                pl.col("variant").cast(pl.String).cast(pl.Categorical),
-                pl.col("count").cast(pl.Int64)
-            )
+            })
 
-        # Enforce a canonical column order. Otherwise, concatenation won't work!
+        frame = frame.cast(STATISTICS_SCHEMA) # pyright: ignore[reportArgumentType]
+
+        # Enforce canonical column order, so that frames can be concatenated!
         self._frames.append(frame.select(
             pl.col(
                 "start_date", "end_date", "tag", "column", "entity",
@@ -256,16 +273,16 @@ class Collector:
         self.add_rows(field, value_counts=values)
 
         if not is_categorical(other_field):
-            values = pl.col(field).filter(pl.col(other_field).is_null().not_())
-            if field_is_list:
-                values = values.list.explode()
             self.add_rows(
                 field,
                 entity=(
                     "with_end_date" if other_field.startswith("end_date")
                     else f"with_{other_field}"
                 ),
-                value_counts=values,
+                value_counts=values.cast(pl.String),
+                frame=self._source.filter(
+                    pl.col(other_field).is_null().not_()
+                ),
             )
             return
 
@@ -438,7 +455,7 @@ class Collector:
         if validate:
             validate_row_counts(frame)
         if group_by_day:
-            frame = frame.group_by(*groupies()).agg(*aggregates())
+            frame = frame.group_by(*groupies(), maintain_order=True).agg(*aggregates())
         return frame
 
 
