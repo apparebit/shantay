@@ -153,7 +153,7 @@ class TestPrepare(unittest.TestCase):
 
             self.assertEqual(
                 digest,
-                "ef0f18cf26fcfe1658dd1f6f1bb1dcd394b5b6b2564b1e864c41a912ca149b9f",
+                "941a8be34ef1c5124b85182377d673b1fe7a9bf7c260fcb8995d9e620fa6a271",
             )
 
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
@@ -210,7 +210,7 @@ class TestPrepare(unittest.TestCase):
                     break
 
             self.assertNotEqual(offset, -1)
-            self.assertTrue(offset + 33 <= len(lines))
+            self.assertTrue(offset + 35 <= len(lines))
             self.assertIn("staged file", lines[offset + 0])
             self.assertIn("validated file", lines[offset + 1])
             self.assertIn('unarchived type="nested archive"', lines[offset + 2])
@@ -230,44 +230,52 @@ class TestPrepare(unittest.TestCase):
             self.assertTrue(lines[offset + 12].startswith("    ).collect()"))
             self.assertTrue(lines[offset + 13].startswith("      ^^^^^^^"))
             self.assertTrue(lines[offset + 14].startswith("  File"))
-            self.assertTrue(lines[offset + 15].startswith("    return wrap_df(ldf"))
-            self.assertTrue(lines[offset + 16].startswith("                   ^^^"))
+            self.assertTrue(lines[offset + 15].startswith("    return function(*args, **kwargs)"))
+            self.assertTrue(lines[offset + 16].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 17].startswith("  File"))
+            self.assertTrue(lines[offset + 18].startswith("    return wrap_df(ldf.collect(engine, callback))"))
+            self.assertTrue(lines[offset + 19].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+
+            # Since the particulars of the traceback have changed over time,
+            # make offsets relative to the next log line.
+            offset = offset + 20
+
             self.assertTrue(
-                lines[offset + 17].startswith(
+                lines[offset].startswith(
                     "polars.exceptions.ComputeError: could not parse"
                 )
             )
-            self.assertTrue(lines[offset + 18].startswith(""))
+            self.assertTrue(lines[offset + 1].startswith(""))
             self.assertTrue(
-                lines[offset + 19].startswith(
+                lines[offset + 2].startswith(
                     "The current offset in the file is 131 bytes"
                 )
             )
-            self.assertTrue(lines[offset + 20].startswith(""))
-            self.assertTrue(lines[offset + 21].startswith("You might want to try"))
-            self.assertTrue(lines[offset + 22].startswith("- increasing"))
-            self.assertTrue(lines[offset + 23].startswith("- specifying"))
-            self.assertTrue(lines[offset + 24].startswith("- setting"))
-            self.assertTrue(lines[offset + 25].startswith("- adding"))
-            self.assertTrue(lines[offset + 26].startswith(""))
+            self.assertTrue(lines[offset + 3].startswith(""))
+            self.assertTrue(lines[offset + 4].startswith("You might want to try"))
+            self.assertTrue(lines[offset + 5].startswith("- increasing"))
+            self.assertTrue(lines[offset + 6].startswith("- specifying"))
+            self.assertTrue(lines[offset + 7].startswith("- setting"))
+            self.assertTrue(lines[offset + 8].startswith("- adding"))
+            self.assertTrue(lines[offset + 9].startswith(""))
             self.assertTrue(
-                lines[offset + 27].startswith("Original error: ```invalid csv file")
+                lines[offset + 10].startswith("Original error: ```invalid csv file")
             )
-            self.assertTrue(lines[offset + 28].startswith(""))
-            self.assertTrue(lines[offset + 29].startswith('Field `"Napodobňovanie'))
+            self.assertTrue(lines[offset + 11].startswith(""))
+            self.assertTrue(lines[offset + 12].startswith('Field `"Napodobňovanie'))
             # Parsing the first CSV file by itself with Pola.rs works:
             self.assertIn(
-                'extracted rows=8, strategy=2, using="Pola.rs"', lines[offset + 30]
+                'extracted rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
             )
             # Parsing the second CSV file by itself with Pola.rs fails:
             self.assertIn(
                 'failed to read CSV with strategy=2, using="Pola.rs"',
-                lines[offset + 31],
+                lines[offset + 14],
             )
             # Parsing the second CSV fail by itself with Python's csv works:
             self.assertIn(
                 'extracted rows=1, strategy=3, using="Python\'s CSV module"',
-                lines[offset + 32],
+                lines[offset + 15],
             )
 
 

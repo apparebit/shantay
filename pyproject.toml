@@ -24,7 +24,7 @@ classifiers = [
 dependencies = [
     "altair", # chart creation
     "vl-convert-python", # chart rendering
-    "polars", # data frames
+    "polars >= 1.27.1", # data frames
     "pyarrow", # underlying memory representation
     "great_tables", # table formatting
     "ipython", # interactive use
