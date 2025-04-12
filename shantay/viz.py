@@ -22,7 +22,7 @@ from .schema import (
     ContentType, DecisionAccount, DecisionGroundAndLegality, DecisionMonetary,
     DecisionProvision, DecisionType, DecisionVisibility,
     KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
-    StatementCategory, StatementCount,
+    StatementCount,
 )
 from .util import to_markdown_table
 
@@ -255,14 +255,8 @@ class Visualizer:
     def configure_display() -> None:
         alt.theme.enable("default")
 
-        pl.Config.set_tbl_rows(100)
-        pl.Config.set_float_precision(3)
-        pl.Config.set_thousands_separator(",")
-        pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
-        pl.Config.set_fmt_str_lengths(
-            (max(len(s) for s in StatementCategory) // 10 + 2) * 10
-        )
-        pl.Config.set_tbl_cols(20)
+        from .tool import configure_printing
+        configure_printing()
 
     def html(self, markup: str) -> None:
         if self._renderer.plain and (hn := HTML_HEADLINE.fullmatch(markup)) is not None:

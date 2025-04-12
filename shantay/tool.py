@@ -16,7 +16,7 @@ from .model import (
 from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
-from .schema import normalize_category
+from .schema import normalize_category, StatementCategory
 from .util import scale_time
 
 
@@ -188,6 +188,17 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     return storage, coverage, metadata
 
 
+def configure_printing() -> None:
+    pl.Config.set_tbl_rows(100)
+    pl.Config.set_float_precision(3)
+    pl.Config.set_thousands_separator(",")
+    pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
+    pl.Config.set_fmt_str_lengths(
+        (max(len(s) for s in StatementCategory) // 10 + 2) * 10
+    )
+    pl.Config.set_tbl_cols(20)
+
+
 def configure_logging(logfile: str, *, verbose: bool) -> None:
     logging.Formatter.default_msec_format = "%s.%03d"
     logging.basicConfig(
@@ -200,6 +211,7 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
 
 def _run(args: list[str]) -> None:
     options = _parse_options(args)
+    configure_printing()
     configure_logging(options.logfile, verbose=options.verbose)
     # A very visible horizontal bar to mark a new tool run
     _logger.info(
