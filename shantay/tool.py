@@ -11,7 +11,8 @@ from .dsa_sor import StatementsOfReasons
 from .framing import formatted_summary, resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
+    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, STATISTICS_FILE,
+    Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -180,13 +181,16 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     metadata.write_json(storage.staging_root)
 
     # Handle --first and --last
+    stats = storage.archive_root / STATISTICS_FILE
+    first = last = None
+
     if options.task in ("prepare", "summarize"):
-        first = dt.date(2023, 9, 25)
-        last = dt.date.today() - dt.timedelta(days=2)
+        if first is None:
+            first = dt.date(2023, 9, 25)
+        if last is None:
+            last = dt.date.today() - dt.timedelta(days=2)
     elif 0 < len(metadata):
         first, last = metadata.range
-    else:
-        first = last = None
 
     if options.first is not None:
         first = dt.date.fromisoformat(options.first)

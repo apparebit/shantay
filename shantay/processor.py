@@ -1,4 +1,5 @@
 from collections import Counter
+import datetime as dt
 import hashlib
 import logging
 import os
@@ -400,10 +401,33 @@ class Processor[R: Release]:
         """Analyze the full data set."""
         from .framing import concat, write_parquet
 
+        staged = self._storage.staging_root / STATISTICS_FILE
+        archive = self._storage.archive_root / STATISTICS_FILE
+        next_archive = archive.with_suffix(".tmp.parquet")
+
         with self._dataset.analysis_context():
-            full_frame = None
-            for release in self._coverage:
-                frame = self.summarize_archived_release(release)
+            full_frame = pl.read_parquet(archive) if archive.exists() else None
+
+            if full_frame is not None:
+                start_date, end_date = full_frame.select(
+                    pl.col("start_date").min(),
+                    pl.col("end_date").max(),
+                ).row(0)
+                _logger.info(
+                    'existing archive summary covers start_date="%s", end_date="%s"',
+                    start_date.isoformat(), end_date.isoformat()
+                )
+
+                coverage = Coverage(
+                    Release.of(start_date + dt.timedelta(days=1)),
+                    self._coverage.last,
+                    self._coverage.filter
+                )
+            else:
+                coverage = self._coverage
+
+            for release in coverage:
+                frame = self.summarize_archived_release(cast(R, release))
 
                 if full_frame is None:
                     full_frame = frame
@@ -411,14 +435,24 @@ class Processor[R: Release]:
                     full_frame = concat([full_frame, frame])
 
                 # Be sure to save collected statistics after processing each release
-                write_parquet(full_frame, self._storage.staging_root / STATISTICS_FILE)
+                _logger.debug('writing summary statistics to file="%s"', staged)
+                write_parquet(full_frame, staged)
 
             if full_frame is not None:
                 # Rewrite the saved statistics after rechunking
-                write_parquet(
-                    full_frame.rechunk(),
-                    self._storage.staging_root / STATISTICS_FILE
+
+                # Write to local file system
+                _logger.debug('writing rechunked summary statistics to file="%s"', staged)
+                write_parquet(full_frame.rechunk(), staged)
+                # Copy onto archive file system
+                _logger.debug('copying source="%s", target="%s"', staged, next_archive)
+                shutil.copy(staged, next_archive)
+                # Atomically become new well-known file
+                _logger.debug(
+                    'replacing well-known target="%s", source="%s"',
+                    archive, next_archive
                 )
+                next_archive.replace(archive)
 
     def summarize_archived_release(
         self,

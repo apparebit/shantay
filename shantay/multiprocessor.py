@@ -180,8 +180,11 @@ class Multiprocessor[R: Release]:
             self._pool.stop()
             return False
         except Exception as x:
+            # An unexpected exception is a good reason to stop and investigate,
+            # not to keep trying with later releases. Hence, we stop here, too.
             _logger.error('task running in worker pool raised unexpected exception', exc_info=x)
-            return self._schedule_task()
+            self._pool.stop()
+            return False
 
         if self._task == "prepare":
             release = result["release"]

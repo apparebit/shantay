@@ -125,26 +125,23 @@ batch file's name.
 ### 2.3 Summary Statistics: `meta.json` and `statistics.parquet`
 
 In addition to yearly directories, *shantay* also stores th following two files
-inside the root directories.
+inside root directories.
 
   - `meta.json` contains an object with the `filter` used for selecting the
     working data and some statistics about `releases`. `batch_count` must be the
     number of batch files and `sha256` must be the (recursive) digest of the
     digests in the `sha256.txt` file.
 
-    The `batch_count` and `sha256` properties can be automatically recovered
-    from the directory hierarchy with *shantay*'s __recover__ task. Not only
-    does it perform a good number of consistency checks, it collects as many
-    errors as it can find before wrapping up.
-
   - `statistics.parquet` contains daily or monthly summary statistics about
-    (part of) the dataset. It basically is a non-tidy, long data frame but uses
+    (part of) the dataset. It basically is a non-tidy, long data frame that uses
     up to four columns for identifying variables and as many columns for
     identifying values. While an encoding with fewer columns is eminently
-    feasible, the current schema ensures that selecting and aggregating
-    quantities couldn't be simpler. In more detail, the columns are:
+    feasible, the current scheme is optimized for selecting and aggregating
+    quantities.
 
-      - `start_date` and `end_date` denote the date coverage of every row.
+    The individual columns are:
+
+      - `start_date` and `end_date` denote the date coverage of a row.
       - `tag` is a symbolic tag for filtered source data.
       - `column` is the original transparency database column, with a few
         virtual column names added.
@@ -152,7 +149,7 @@ inside the root directories.
       - `variant` and `variant_too` capture database column values, which usually
         are enumeration constants.
       - `count`, `min`, `mean`, and `max` contain the eponymous descriptive
-        statistics. Each of them has a different formula for aggregation.
+        statistics, which all aggregate differently.
 
 
 ## 3. Running Tasks
@@ -175,35 +172,37 @@ Including the *summarize* and *visualize* tasks used in the above examples,
     statistical data collected for the analyze and summarize tasks.
     [overview.html](https://apparebit.github.io/shantay/overview.html)
 
-By definition, summarize produces more complete statistics than prepare &
-analyze. But summarize also requires considerably more time to compute them and
-quite a bit of more memory as well. Furthermore, when I started implementing
-*shantay*, it wasn't clear whether summarize was feasible. It took the
-experience of implementing prepare & analyze to convince me that summarize was a
-realistic possibility.
+By definition, summarize produces more comprehensive statistics than prepare &
+analyze. But summarize is also much slower and requires more memory. In fact, it
+is so slow that iterating over questions and metrics is impractical. For just
+that reason, I implemented prepare & analyze well before summarize, after I had
+introduced a standard set of metrics. In other words, it took the experience of
+implementing prepare & analyze to convince me that summarize was a realistic
+possibility.
 
-
-By using a fast data frame, [Pola.rs](https://pola.rs), and supporting parallel
-execution, *shantay* makes good use of available hardware resources. Alas, since
-visualize is so far already,  it is not eligible for parallel execution. When
-parallel execution is available, I have seen speedups of around 1.7x for two
-worker processes.
+Unlike most commercial solutions for Big Data, *shantay* purposefully limits
+itself to running on consumer hardware. But that doesn't mean that it should be
+gratuitously slow. On the contrary, *shantay* relies on the fast
+[Pola.rs](https://pola.rs) data frame and also supports parallel execution for
+prepare, analyze, and summarize. In basic testing, that yielded a speedup of
+1.7x for two worker processes, i.e., not perfect but still noticeable.
 
 
 ### 3.1 Generic vs Bespoke Analysis and Visualization
 
-In the current implementation, `analyze` and `summarize` process data that is
-specific to the protection of minors, the focus of my own research. However, in
-implementing the two tasks, I made sure that most of the code is entirely
-generic and not tied to a specific category of statements of reasons. In fact,
-much of the analysis and visualization code is driven by declarative schemas
-defined in the
+In the current implementation, the summarize task yields information about the
+entire transparency database, but `prepare` and `analyze` produce information
+specific to the protection of minors, the focus of my own research. Still, most
+of the code doing the preparing and analyzing is entirely generic and not tied
+to a specific category of statements of reasons. Furthermore, even visualization
+is driven by declarative schemas defined in the
 [`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
-module and thus by definition resusable and configurable. Alas, I have still to
-expose that configurability through the command line interface for *shantay*.
+module, which ensures that they are easily reconfigurable and reusable.
 
-Hence you may have to update some code for your own research purposes. In
-addition to `shantay.schema`, you'll find the following two modules useful:
+Since *shantay* does not yet expose configuration options for directing its
+analysis/summarization, you may need to update some code for your own research
+purposes. In addition to `shantay.schema`, you'll find the following two modules
+useful:
 
   - [`shantay.framing`](https://github.com/apparebit/shantay/blob/boss/shantay/framing.py)
     contains the code for collecting summary statistics from the working data.
