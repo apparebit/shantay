@@ -10,15 +10,14 @@ from typing import cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
-import polars as pl
-
 from .__init__ import __version__
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
-    MetadataEntry, Release, STATISTICS_FILE, Storage
+    MetadataEntry, Release, Storage
 )
 from .progress import NO_PROGRESS, Progress
+from .stats import Statistics
 from .util import annotate_error, scale_time
 from .viz import visualize
 
@@ -51,7 +50,7 @@ class Processor[R: Release]:
         """The latency of the most recent invocation of run()."""
         return self._runtime
 
-    def run(self, task: str) -> None | pl.DataFrame:
+    def run(self, task: str) -> None:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
@@ -68,20 +67,19 @@ class Processor[R: Release]:
         # time.
         start_time = time.time()
         if task == "prepare":
-            result = self.prepare()
+            self.prepare()
         elif task == "summarize":
-            result = self.summarize_archive()
+            self.summarize_archive()
         elif task == "analyze":
-            result = self.analyze_working()
+            self.analyze_working()
         elif task == "visualize":
-            result = self.visualize()
+            self.visualize()
         else:
             raise ValueError(f'invalid task "{task}"')
 
         self._runtime = time.time() - start_time
         value, unit = scale_time(self._runtime)
         _logger.info('processing took time=%.3f, unit="%s"', value, unit)
-        return result
 
     def prepare(self) -> None:
         for release in self._coverage:
@@ -363,9 +361,9 @@ class Processor[R: Release]:
         from .framing import Collector, collect_release_metadata
 
         range, metadata = collect_release_metadata(self._metadata.records)
-        range = range.intersect(
-            self._coverage.to_date_range()
-        ).to_release_range().to_monthly()
+        range = range.intersection(
+            self._coverage.to_date_range(), empty_ok=False
+        ).monthlies()
 
         # Prepare progress tracker
         self._progress.activity(
@@ -375,6 +373,7 @@ class Processor[R: Release]:
 
         with self._dataset.analysis_context():
             collector = Collector()
+
             for index, release in enumerate(range):
                 self.analyze_working_release(release, metadata, collector)
                 self._progress.step(index + 1, extra=release.id)
@@ -399,65 +398,43 @@ class Processor[R: Release]:
 
     def summarize_archive(self) -> None:
         """Analyze the full data set."""
-        from .framing import concat, write_parquet
-
-        staged = self._storage.staging_root / STATISTICS_FILE
-        archive = self._storage.archive_root / STATISTICS_FILE
-        next_archive = archive.with_suffix(".tmp.parquet")
+        staged = self._storage.staging_root / Statistics.FILE
+        archive = self._storage.archive_root / Statistics.FILE
 
         with self._dataset.analysis_context():
-            full_frame = pl.read_parquet(archive) if archive.exists() else None
+            stats = Statistics.from_storage(
+                self._storage.staging_root, self._storage.archive_root
+            )
 
-            if full_frame is not None:
-                start_date, end_date = full_frame.select(
-                    pl.col("start_date").min(),
-                    pl.col("end_date").max(),
-                ).row(0)
+            if not stats.is_empty():
+                range = stats.range()
                 _logger.info(
-                    'existing archive summary covers start_date="%s", end_date="%s"',
-                    start_date.isoformat(), end_date.isoformat()
+                    'existing statistics cover start_date="%s", end_date="%s"',
+                    range.first, range.last
                 )
 
-                coverage = Coverage(
-                    Release.of(start_date + dt.timedelta(days=1)),
-                    self._coverage.last,
-                    self._coverage.filter
-                )
-            else:
-                coverage = self._coverage
+            missing = stats.missing_range()
+            if missing is None:
+                return
 
-            for release in coverage:
-                frame = self.summarize_archived_release(cast(R, release))
+            for release in missing.dailies():
+                self.summarize_archived_release(cast(R, release), stats)
 
-                if full_frame is None:
-                    full_frame = frame
-                else:
-                    full_frame = concat([full_frame, frame])
-
-                # Be sure to save collected statistics after processing each release
                 _logger.debug('writing summary statistics to file="%s"', staged)
-                write_parquet(full_frame, staged)
+                stats.write(self._storage.staging_root)
 
-            if full_frame is not None:
-                # Rewrite the saved statistics after rechunking
+            # Rewrite the saved statistics after rechunking
+            _logger.debug('writing rechunked summary statistics to file="%s"', staged)
+            stats.write(self._storage.staging_root, rechunk=True)
 
-                # Write to local file system
-                _logger.debug('writing rechunked summary statistics to file="%s"', staged)
-                write_parquet(full_frame.rechunk(), staged)
-                # Copy onto archive file system
-                _logger.debug('copying source="%s", target="%s"', staged, next_archive)
-                shutil.copy(staged, next_archive)
-                # Atomically become new well-known file
-                _logger.debug(
-                    'replacing well-known target="%s", source="%s"',
-                    archive, next_archive
-                )
-                next_archive.replace(archive)
+            _logger.debug('copying summary statistics to archive file="%s"', archive)
+            Statistics.copy(self._storage.staging_root, self._storage.archive_root)
 
     def summarize_archived_release(
         self,
         release: R,
-    ) -> pl.DataFrame:
+        collector: CollectorProtocol,
+    ) -> None:
         """Analyze the full data for the given release."""
         _logger.debug('analyzing release="%s"', release.id)
         if not self.is_archive_downloaded(release):
@@ -474,10 +451,6 @@ class Processor[R: Release]:
         self._progress.start(batch_count)
 
         # Archived files are archives, too. Unarchive one at a time.
-        from .framing import Collector
-
-        collector = Collector()
-
         for index, name in enumerate(filenames):
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
@@ -491,8 +464,19 @@ class Processor[R: Release]:
 
             collector.collect(release, frame)
 
+            # A daily release may comprise over 100 GB of uncompressed CSV data.
+            # With three concurrent processes, that would be over 300 GB of disk
+            # space for staging alone. Hence, we must aggressively clean up
+            # temporary files again. This same operation is the last one of the
+            # loop in extract_batches(), too.
+            shutil.rmtree(self._storage.staging_root / release.temp_directory)
+
+        # The data frame generated by this method is a small one indeed. Hence,
+        # there is no need to save it to disk first. We must, however, continue
+        # cleaning up aggressively. While not as huge as uncompressed CSV data,
+        # the actual release for a 100 GB of CSV data still weighs in at over 8
+        # GB. This same operation is the last one of prepare_batches(), too.
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
-        return collector.to_frame(group_by_day=True)
 
     def visualize(self) -> None:
         """Visualize the analysis results."""

@@ -1,4 +1,5 @@
 from concurrent.futures import Future
+import datetime as dt
 import logging
 import multiprocessing as mp
 import os
@@ -9,13 +10,14 @@ import traceback
 from types import FrameType
 from typing import Any
 
-from .framing import collect_release_metadata, Collector, concat, write_parquet
+from .framing import collect_release_metadata, Collector
 from .metadata import Metadata
 from .model import (
-    Coverage, DataFrameType, Dataset, Release, STATISTICS_FILE, Storage
+    Coverage, DataFrameType, Dataset, Release, Storage
 )
 from .pool import Cancelled, Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
+from .stats import Statistics
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -36,12 +38,11 @@ class Multiprocessor[R: Release]:
         self._coverage = coverage
         self._metadata = metadata
         self._metadata_frame = None
-        self._stat_frame = None
+        self._stats = None
 
         # Prepare processes daily releases, whereas analyze processes monthly ones
         self._task = None
-        self._cursor = None
-        self._last = None
+        self._iter = None
 
         self._pool = None
         self._register_handlers()
@@ -72,23 +73,39 @@ class Multiprocessor[R: Release]:
         start_time = time.time()
 
         # Determine cursor's first and final values as well as increment
-        if task in ("prepare", "summarize"):
+        if task == "prepare":
             cover = self._coverage
             increment = "daily"
         elif task == "analyze":
             date_cover, metadata = collect_release_metadata(self._metadata.records)
-            cover = date_cover.to_release_range().to_monthly()
             self._metadata_frame = metadata
+            self._stats = Statistics()
+            cover = date_cover.monthlies()
             increment = "monthly"
+        elif task == "summarize":
+            self._stats = Statistics.from_storage(
+                self._storage.staging_root, self._storage.archive_root
+            )
+
+            if not self._stats.is_empty():
+                date_range = self._stats.range()
+                _logger.info(
+                    'existing statistics cover start_date="%s", end_date="%s"',
+                    date_range.first, date_range.last
+                )
+
+            missing = self._stats.missing_range()
+            if missing is None:
+                return
+            cover = missing.dailies()
+            increment = "daily"
         else:
             raise ValueError(f"invalid task {task}")
 
-        self._cursor = cover.first
-        self._last = cover.last
-
-        _logger.info('    key="cursor.first",         value="%s"', self._cursor.id)
-        _logger.info('    key="cursor.last",          value="%s"', self._last.id)
-        _logger.info('    key="cursor.increment",     value="%s"', increment)
+        self._iter = iter(cover)
+        _logger.info('    key="iter.first",           value="%s"', cover.first.id)
+        _logger.info('    key="iter.last",            value="%s"', cover.last.id)
+        _logger.info('    key="iter.increment",       value="%s"', increment)
 
         # Seed pool with tasks
         for _ in range(self._pool.size):
@@ -99,11 +116,24 @@ class Multiprocessor[R: Release]:
         if wait:
             self._pool.wait()
 
-            if task in ("analyze", "summarize") and self._stat_frame is not None:
-                write_parquet(
-                    self._stat_frame.rechunk(),
-                    self._storage.staging_root / STATISTICS_FILE
+            if task in ("analyze", "summarize"):
+                assert self._stats is not None
+
+                _logger.debug(
+                    'writing rechunked summary statistics to file="%s"',
+                    self._storage.staging_root / Statistics.FILE
                 )
+                self._stats.write(self._storage.staging_root, rechunk=True)
+
+                if task == "analyze":
+                    persistent = self._storage.working_root
+                else:
+                    persistent = self._storage.archive_root
+                _logger.debug(
+                    'copying summary statistics to persistent file="%s"',
+                    persistent / Statistics.FILE
+                )
+                Statistics.copy(self._storage.staging_root, persistent)
 
         self._runtime = time.time() - start_time
 
@@ -147,28 +177,24 @@ class Multiprocessor[R: Release]:
         return True
 
     def _next_release(self) -> None | Release:
-        assert self._cursor is not None
-        assert self._last is not None
+        # The next release
+        assert self._iter is not None
+        result = next(self._iter, None)
 
         # For prepare, skip release if we already extracted the working data
         if self._task == "prepare":
             while (
-                self._cursor <= self._last
-                and self._cursor in self._metadata
+                result is not None
+                and result in self._metadata
                 and extracted_data_exists(
                     self._storage.working_root,
-                    self._cursor,
+                    result,
                     self._metadata
                 )
             ):
-                self._cursor = self._cursor.next()
+                result = next(self._iter, None)
 
-        if self._last < self._cursor:
-            return None
-
-        release = self._cursor
-        self._cursor = release.next()
-        return release
+        return result
 
     def _done_with_task(self, future: Future) -> bool:
         assert self._pool is not None
@@ -198,12 +224,8 @@ class Multiprocessor[R: Release]:
             # than ok because we just updated the metadata with a new release.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
         elif self._task in ("analyze", "summarize"):
-            if self._stat_frame is None:
-                self._stat_frame = result
-            else:
-                self._stat_frame = concat([self._stat_frame, result])
-
-            write_parquet(self._stat_frame, self._storage.staging_root / STATISTICS_FILE)
+            assert self._stats is not None
+            self._stats.write(self._storage.staging_root)
         else:
             raise AssertionError(f"invalid task {self._task}")
 
@@ -304,12 +326,14 @@ def _run_on_worker[R: Release](
         result = dict(release=release, **record)
     elif task == "summarize":
         with dataset.analysis_context():
-            result = processor.summarize_archived_release(release)
+            collector = Collector()
+            processor.summarize_archived_release(release, collector)
+            result = collector.frame()
     elif task == "analyze":
         with dataset.analysis_context():
             collector = Collector()
             processor.analyze_working_release(release, metadata_frame, collector)
-            result = collector.to_frame()
+            result = collector.frame()
     else:
         raise AssertionError(f"invalid task {task}")
 

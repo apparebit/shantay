@@ -9,8 +9,9 @@ import polars as pl
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import Collector
 from shantay.metadata import Metadata
-from shantay.model import Coverage, Daily, STATISTICS_FILE, Storage
+from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
+from shantay.stats import Statistics
 from shantay.tool import configure_logging
 
 ROOT = Path(__file__).parent
@@ -188,7 +189,7 @@ class TestPrepare(unittest.TestCase):
                     STAGING, release.to_monthly(), release_metadata, collector
                 )
 
-                frame = collector.to_frame()
+                frame = collector.frame()
                 frame_data = frame.to_dict(as_series=False)
 
                 # import pprint
@@ -199,7 +200,7 @@ class TestPrepare(unittest.TestCase):
                 self.assertEqual(frame_data, EXPECTED_ANALYSIS)
 
                 # Write to parquet
-                frame.write_parquet(STAGING / STATISTICS_FILE)
+                frame.write_parquet(STAGING / Statistics.FILE)
 
         with self.subTest("check log file"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)

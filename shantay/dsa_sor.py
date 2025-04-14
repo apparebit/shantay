@@ -10,12 +10,13 @@ from typing import Self
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, Release, STATISTICS_FILE
+    CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, Release
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, PARTIAL_SCHEMA, CANONICAL_PLATFORM_NAMES, SCHEMA, TerritorialAlias
 )
+from .stats import Statistics
 from .util import annotate_error
 
 
@@ -403,8 +404,8 @@ class StatementsOfReasons(Dataset[Daily]):
     def combine_releases(
         self, root: Path, coverage: Coverage, collector: CollectorProtocol
     ) -> pl.DataFrame:
-        frame = collector.to_frame(validate=True)
-        self.write_parquet(frame, root / STATISTICS_FILE)
+        frame = collector.frame(validate=True)
+        self.write_parquet(frame, root / Statistics.FILE)
         return frame
 
     def write_parquet(self, frame: pl.DataFrame, path: Path) -> None:

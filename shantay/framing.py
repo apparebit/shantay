@@ -126,18 +126,6 @@ def resolve_query_binding(s: str) -> QueryExpression:
     return v
 
 
-def concat(frames: list[pl.DataFrame], rechunk: bool = False) -> pl.DataFrame:
-    """Concatenate the data frames."""
-    return pl.concat(frames, how="vertical", rechunk=rechunk)
-
-
-def write_parquet(frame: pl.DataFrame, path: Path) -> None:
-    """Write the data frame to a Parquet file."""
-    tmp = path.with_suffix(".tmp.parquet")
-    frame.write_parquet(tmp)
-    tmp.replace(path)
-
-
 # --------------------------------------------------------------------------------------
 
 
@@ -445,7 +433,7 @@ class Collector:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
                 this.collect_body()
 
-    def to_frame(
+    def frame(
         self, validate: bool = False, group_by_day: bool = False
     ) -> pl.DataFrame:
         """Combine the collected partial frames into one."""

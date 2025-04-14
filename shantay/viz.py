@@ -12,11 +12,10 @@ from .color import (
     BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
-    aggregates, collect_release_metadata, formatted_summary, is_row_within_period,
-    NOT_NULL, predicate
+    aggregates, collect_release_metadata, is_row_within_period, NOT_NULL, predicate
 )
 from .metadata import Metadata
-from .model import ConfigError, Coverage, ReleaseRange, STATISTICS_FILE, Storage
+from .model import ConfigError, Coverage, Storage
 from .schema import (
     AutomatedDecision, AutomatedDetection,
     ContentType, DecisionAccount, DecisionGroundAndLegality, DecisionMonetary,
@@ -24,6 +23,7 @@ from .schema import (
     KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
     StatementCount,
 )
+from .stats import Statistics
 from .util import to_markdown_table
 
 
@@ -238,14 +238,14 @@ class Visualizer:
 
     def __init__(
         self,
-        working_root: Path,
         staging_root: Path,
+        persistent_root: Path,
         coverage: Coverage,
         renderer: Renderer,
         with_extras: bool = False
     ) -> None:
-        self._working_root = working_root
         self._staging_root = staging_root
+        self._persistent_root = persistent_root
         self._coverage = coverage
         self._with_extras = with_extras
         self._renderer = renderer
@@ -340,26 +340,21 @@ class Visualizer:
 
     def ingest(self) -> None:
         range, metadata = collect_release_metadata(
-            Metadata.read_json(self._working_root).records
+            Metadata.read_json(self._persistent_root).records
         )
-        statistics = pl.read_parquet(self._working_root / STATISTICS_FILE)
+        statistics = Statistics.read(self._persistent_root)
+        date_range = statistics.range().intersection(
+            self._coverage.to_date_range(), empty_ok=False
+        ).monthlies().date_range() # Restrict to full months
 
-        # Restrict rendered data to *full* months. That essentially drops the
-        # first week of data from the DSA SoR DB.
-        range = range.intersect(self._coverage.to_date_range()).to_release_range()
-        self._range = ReleaseRange(
-            range.first.to_first_full_month(),
-            range.last.to_last_full_month()
-        )
-
-        within_range = is_row_within_period(range)
+        within_range = is_row_within_period(date_range)
         self._metadata = metadata.filter(within_range)
-        self._statistics = statistics.filter(within_range)
-        if self._statistics.height == 0:
+        self._statistics = Statistics(statistics.frame().filter(within_range))
+        if self._statistics.frame().height == 0:
             raise ConfigError("cannot visualize less than a full month of data")
 
         # Determine global keyword usage and keywords with at least 1% use.
-        self._keyword_usage = self._statistics.filter(
+        self._keyword_usage = self._statistics.frame().filter(
             predicate("category_specification", entity=None)
         ).group_by(
             "variant"
@@ -393,7 +388,7 @@ class Visualizer:
 
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
-        self.markdown(formatted_summary(self._statistics))
+        self.markdown(self._statistics.summary(markdown=True))
 
         self.html("<h2>Table Schemas</h2>")
         remark = (
@@ -410,7 +405,7 @@ class Visualizer:
             disclosure=True,
         )
         self.markdown(
-            format_schema(self._statistics, title=STATISTICS_FILE),
+            format_schema(self._statistics.frame(), title=Statistics.FILE),
             disclosure=True,
         )
 
@@ -420,7 +415,7 @@ class Visualizer:
         self.chart("keyword-pie", pie)
 
         self.html("<h2>Platforms</h2>")
-        table = self._statistics.filter(
+        table = self._statistics.frame().filter(
             predicate("platform_name", entity=None)
         ).group_by(
             "variant"
@@ -629,7 +624,7 @@ class Visualizer:
         if not spec.has_null_variant():
             filters[spec.selector] = NOT_NULL
 
-        table = self._statistics.filter(
+        table = self._statistics.frame().filter(
             predicate(**filters)
         ).group_by(
             pl.col("start_date").dt.year().alias("year"),
@@ -716,7 +711,7 @@ class Visualizer:
         KEY = "Platforms w/ Keywords"
         CSAM = "Platforms w/ CSAM"
 
-        table = self._statistics.lazy().with_columns(
+        table = self._statistics.frame().lazy().with_columns(
             (pl.col("start_date") + dt.timedelta(days=15)).alias("mid_date"),
         ).group_by(
             pl.col("mid_date").dt.year().alias("year"),
@@ -770,7 +765,7 @@ class Visualizer:
     def overall_statements_by_platform(
         self, threshold: None | int = None
     ) -> alt.Chart | alt.LayerChart:
-        table = self._statistics.lazy().filter(
+        table = self._statistics.frame().lazy().filter(
             pl.col("column").eq("platform_name").and_(pl.col("entity").is_null())
         ).group_by(
             "variant"
@@ -829,7 +824,7 @@ class Visualizer:
             return chart + text
 
     def overall_keyword_usage_by_platform(self, percent: bool) -> alt.Chart:
-        frame = self._statistics.lazy().filter(
+        frame = self._statistics.frame().lazy().filter(
             predicate(
                 "platform_name",
                 entity="with_category_specification",

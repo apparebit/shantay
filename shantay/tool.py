@@ -8,16 +8,16 @@ from typing import Any
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
-from .framing import formatted_summary, resolve_query_binding
+from .framing import resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, STATISTICS_FILE,
-    Storage
+    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
 from .schema import normalize_category, StatementCategory
+from .stats import Statistics
 from .util import scale_time
 
 
@@ -181,7 +181,6 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
     metadata.write_json(storage.staging_root)
 
     # Handle --first and --last
-    stats = storage.archive_root / STATISTICS_FILE
     first = last = None
 
     if options.task in ("prepare", "summarize"):
@@ -281,15 +280,14 @@ def _run(args: list[str]) -> None:
             metadata=metadata,
             progress=Progress()
         )
-
-        result = processor.run(options.task)
+        processor.run(options.task)
 
         if options.task == "prepare":
             Metadata.copy_json(storage.staging_root, storage.working_root)
-        elif options.task == "analyze":
-            assert isinstance(result, pl.DataFrame)
+        elif options.task in ("analyze", "summarize"):
+            stats = Statistics.read(storage.staging_root)
             print("\n")
-            print(formatted_summary(result, markdown=False))
+            print(stats.summary())
 
     v, u = scale_time(processor.runtime)
     print(f"\nCompleted task {options.task} in {v:,.1f} {u}")

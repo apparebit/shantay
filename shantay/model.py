@@ -6,11 +6,16 @@ from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
 import re
-from typing import cast, Optional, overload, Protocol, Required, Self, TypedDict
+from typing import (
+    cast, Literal, Optional, overload, Protocol, Required, Self, TypedDict
+)
 
 from .progress import NO_PROGRESS, Progress
 
 
+# The model does touch upon Pola.rs data frames. Define the necessary types
+# here, but also delete the package reference thereafter. We want data wrangling
+# logic to be contained.
 import polars
 type DataFrameType = polars.DataFrame
 type LazyFrameType = polars.LazyFrame
@@ -311,6 +316,9 @@ class ReleaseRange[R: Release](Period):
     def end_date(self) -> dt.date:
         return self.last.end_date
 
+    def date_range(self) -> 'DateRange':
+        return DateRange(self.start_date, self.end_date)
+
     def to_monthly(self) -> "ReleaseRange[Monthly]":
         if isinstance(self.first, Monthly):
             return cast(ReleaseRange[Monthly], self)
@@ -349,19 +357,64 @@ class DateRange(Period):
         """
         return self.last
 
-    def intersect(self, other: Self) -> Self:
-        return type(self)(max(self.first, other.first), min(self.last, other.last))
+    # Explicitly passing empty_ok=False buys us a tighter return type
+    @overload
+    def intersection(self, other: Self, *, empty_ok: Literal[False]) -> Self:
+        ...
+    @overload
+    def intersection(self, other: Self, *, empty_ok: bool = ...) -> None | Self:
+        ...
+    def intersection(self, other: Self, *, empty_ok: bool = True) -> None | Self:
+        """
+        Compute the intersection between two date ranges. The result is `None`,
+        if the two ranges do not overlap,
+        """
+        result = type(self)(max(self.first, other.first), min(self.last, other.last))
+        if result.first <= result.last:
+            return result
+        elif empty_ok:
+            return None
+        else:
+            raise ValueError(
+                f"intersection of date ranges {self} and {other} is empty"
+            )
 
-    def to_release_range(self) -> ReleaseRange[Daily]:
+    def union(self, other: Self) -> Self:
+        """Compute the union between two date ranges."""
+        return type(self)(min(self.first, other.first), max(self.last, other.last))
+
+    def __and__(self, other: object) -> None | Self:
+        if isinstance(other, type(self)):
+            return self.intersection(other)
+        return NotImplemented
+
+    def __or__(self, other: object) -> Self:
+        if isinstance(other, type(self)):
+            return self.union(other)
+        return NotImplemented
+
+    def uncovered_near_past(self) -> None | Self:
+        """
+        Compute the date range following this date range up to two days before
+        today.
+        """
+        first = self.last + dt.timedelta(days=1)
+        last = dt.date.today() - dt.timedelta(days=2)
+        return type(self)(first, last) if first <= last else None
+
+    def dailies(self) -> ReleaseRange[Daily]:
         """Convert to the corresponding daily release range."""
         return ReleaseRange(Daily.of(self.first), Daily.of(self.last))
 
-    def to_full_monthly_range(self) -> ReleaseRange[Monthly]:
+    def monthlies(self) -> ReleaseRange[Monthly]:
         """Convert to a monthly release range with fully covered months."""
         return ReleaseRange(
             Daily.of(self.first).to_first_full_month(),
             Daily.of(self.last).to_last_full_month(),
         )
+
+    def __str__(self) -> str:
+        return f"{self.first.isoformat()}-{self.last.isoformat()}"
 
 
 def _days_in_month(year: int, month: int) -> int:
@@ -378,7 +431,6 @@ def _days_in_month(year: int, month: int) -> int:
 
 
 META_FILE = "meta.json"
-STATISTICS_FILE = "statistics.parquet"
 DIGEST_FILE = "sha256.txt"
 
 
@@ -448,7 +500,7 @@ class CollectorProtocol[R: Release](Protocol):
         provided, the frame contains working data only.
         """
 
-    def to_frame(
+    def frame(
         self, validate: bool = False, group_by_day: bool = False
     ) -> DataFrameType:
         """
