@@ -904,6 +904,11 @@ TRANSFORMS = {
     ),
 }
 
+TRANSFORM_COUNT = sum(
+    (0 if v is TransformType.SKIPPED_DATE else 1)
+    for v in TRANSFORMS.values()
+)
+
 
 # ======================================================================================
 # Statistics Schema

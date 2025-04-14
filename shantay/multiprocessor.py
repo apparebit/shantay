@@ -1,5 +1,4 @@
 from concurrent.futures import Future
-import datetime as dt
 import logging
 import multiprocessing as mp
 import os
@@ -10,14 +9,14 @@ import traceback
 from types import FrameType
 from typing import Any
 
-from .framing import collect_release_metadata, Collector
+from .framing import collect_release_metadata
 from .metadata import Metadata
 from .model import (
     Coverage, DataFrameType, Dataset, Release, Storage
 )
 from .pool import Cancelled, Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
-from .stats import Statistics
+from .stats import Collector, Statistics
 
 
 _logger = logging.getLogger(__spec__.parent)

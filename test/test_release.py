@@ -2,10 +2,8 @@ import datetime as dt
 from typing import cast
 import unittest
 
-import polars as pl
-
-from shantay.framing import Collector
 from shantay.model import Daily, Monthly, Release
+
 
 class TestRelease(unittest.TestCase):
 

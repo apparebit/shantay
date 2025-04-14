@@ -501,10 +501,13 @@ class CollectorProtocol[R: Release](Protocol):
         """
 
     def frame(
-        self, validate: bool = False, group_by_day: bool = False
+        self, validate: bool = False, group_by: None | Literal["day", "month"] = None
     ) -> DataFrameType:
         """
         Combine all summary statistics collected so far into one data frame.
+        Optionally validate the summary statistics. Also, optionally group by
+        day or month. It is an error to try grouping-by-day summary statistics
+        collected at monthly granularity.
         """
         ...
 

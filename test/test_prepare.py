@@ -7,11 +7,10 @@ import unittest
 import polars as pl
 
 from shantay.dsa_sor import StatementsOfReasons
-from shantay.framing import Collector
 from shantay.metadata import Metadata
 from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
-from shantay.stats import Statistics
+from shantay.stats import Collector, Statistics
 from shantay.tool import configure_logging
 
 ROOT = Path(__file__).parent

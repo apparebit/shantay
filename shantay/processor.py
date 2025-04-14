@@ -11,13 +11,14 @@ from urllib.request import Request, urlopen
 import zipfile
 
 from .__init__ import __version__
+from .framing import collect_release_metadata, filter_period
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
     MetadataEntry, Release, Storage
 )
 from .progress import NO_PROGRESS, Progress
-from .stats import Statistics
+from .stats import Collector, Statistics
 from .util import annotate_error, scale_time
 from .viz import visualize
 
@@ -358,8 +359,6 @@ class Processor[R: Release]:
     def analyze_working(self) -> DataFrameType:
         """Analyze the data extracted into the working root."""
         # Prepare metadata for analysis
-        from .framing import Collector, collect_release_metadata
-
         range, metadata = collect_release_metadata(self._metadata.records)
         range = range.intersection(
             self._coverage.to_date_range(), empty_ok=False
@@ -389,8 +388,6 @@ class Processor[R: Release]:
         collector: CollectorProtocol,
     ) -> None:
         """Analyze the working data for the given release."""
-        from .framing import filter_period
-
         release_metadata = filter_period(metadata, release)
         self._dataset.analyze_release(
             self._storage.working_root, release, release_metadata, collector
