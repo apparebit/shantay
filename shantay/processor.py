@@ -370,16 +370,14 @@ class Processor[R: Release]:
         )
         self._progress.start(range.last - range.first + 1)
 
-        with self._dataset.analysis_context():
-            collector = Collector()
+        collector = Collector()
 
-            for index, release in enumerate(range):
-                self.analyze_working_release(release, metadata, collector)
-                self._progress.step(index + 1, extra=release.id)
-
-            return self._dataset.combine_releases(
-                self._storage.working_root, self._coverage, collector
-            )
+        for index, release in enumerate(range):
+            self.analyze_working_release(release, metadata, collector)
+            self._progress.step(index + 1, extra=release.id)
+        return self._dataset.combine_releases(
+            self._storage.working_root, self._coverage, collector
+        )
 
     def analyze_working_release(
         self,
@@ -398,34 +396,37 @@ class Processor[R: Release]:
         staged = self._storage.staging_root / Statistics.FILE
         archive = self._storage.archive_root / Statistics.FILE
 
-        with self._dataset.analysis_context():
-            stats = Statistics.from_storage(
-                self._storage.staging_root, self._storage.archive_root
+        stats = Statistics.from_storage(
+            self._storage.staging_root, self._storage.archive_root
+        )
+
+        if not stats.is_empty():
+            range = stats.range()
+            _logger.info(
+                'existing statistics cover start_date="%s", end_date="%s"',
+                range.first, range.last
             )
 
-            if not stats.is_empty():
-                range = stats.range()
-                _logger.info(
-                    'existing statistics cover start_date="%s", end_date="%s"',
-                    range.first, range.last
-                )
+        # Due to variability of daily record numbers and worker process timing,
+        # the multiprocessing version of summarize may add daily statistics out
+        # of calendar order. By always processing all possible release dates in
+        # order, this loop ensures that any holes are filled, making this a
+        # robust, self-healing implementation strategy.
+        for release in Statistics.DEFAULT_RANGE.dailies():
+            if release in stats:
+                _logger.debug('summary statistics already cover release="%s"', release)
+                continue
 
-            missing = stats.missing_range()
-            if missing is None:
-                return
+            self.summarize_archived_release(cast(R, release), stats)
+            _logger.debug('writing summary statistics to file="%s"', staged)
+            stats.write(self._storage.staging_root)
 
-            for release in missing.dailies():
-                self.summarize_archived_release(cast(R, release), stats)
+        # Rewrite saved statistics after rechunking and copy to persistent root
+        _logger.debug('writing rechunked summary statistics to file="%s"', staged)
+        stats.write(self._storage.staging_root, rechunk=True)
 
-                _logger.debug('writing summary statistics to file="%s"', staged)
-                stats.write(self._storage.staging_root)
-
-            # Rewrite the saved statistics after rechunking
-            _logger.debug('writing rechunked summary statistics to file="%s"', staged)
-            stats.write(self._storage.staging_root, rechunk=True)
-
-            _logger.debug('copying summary statistics to archive file="%s"', archive)
-            Statistics.copy(self._storage.staging_root, self._storage.archive_root)
+        _logger.debug('copying summary statistics to archive file="%s"', archive)
+        Statistics.copy(self._storage.staging_root, self._storage.archive_root)
 
     def summarize_archived_release(
         self,
@@ -451,6 +452,8 @@ class Processor[R: Release]:
         for index, name in enumerate(filenames):
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
+
+            # TODO intercept exception indicating unknown platform_name
             frame = self._dataset.ingest_file_data(
                 root=self._storage.staging_root,
                 release=release,

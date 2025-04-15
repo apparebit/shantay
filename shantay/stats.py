@@ -21,10 +21,10 @@ import polars as pl
 from .framing import (
     aggregates, daily_groupies, get_quantity, monthly_groupies, predicate, Quantity
 )
-from .model import DateRange, Release
+from .model import Daily, DateRange, Release
 from .schema import (
-    CATEGORICAL, DurationTransform, STATISTICS_SCHEMA, TRANSFORM_COUNT, TRANSFORMS,
-    TransformType, ValueCountsPlusTransform, VariantTooValueType
+    DurationTransform, STATISTICS_SCHEMA, TRANSFORM_COUNT, TRANSFORMS, TransformType,
+    ValueCountsPlusTransform, VariantValueType, VariantTooValueType
 )
 from .util import scale_time
 
@@ -141,13 +141,13 @@ class Collector:
         if value_counts is None:
             if variant is None:
                 effective_values.append(
-                    pl.lit(None, dtype=CATEGORICAL).alias("variant")
+                    pl.lit(None, dtype=VariantValueType).alias("variant")
                 )
             else:
                 effective_values.append(
                     variant
                         .cast(pl.String)
-                        .cast(CATEGORICAL)
+                        .cast(VariantValueType)
                         .alias("variant")
                 )
         else:
@@ -786,7 +786,7 @@ class Statistics:
     The default date range for summary statistics, which start with
     2023-09-25 and end two days before today.
     """
-    DATE_RANGE: ClassVar[DateRange] = DateRange(
+    DEFAULT_RANGE: ClassVar[DateRange] = DateRange(
         dt.date(2023, 9, 25), dt.date.today() + dt.timedelta(days=1)
     )
 
@@ -824,7 +824,10 @@ class Statistics:
         Instantiate a new statistics frame from the given directory. This method
         assumes that the file exists and throws an exception otherwise.
         """
-        return cls(pl.read_parquet(directory / cls.FILE))
+        frame = pl.read_parquet(
+            directory / cls.FILE
+        ).cast(STATISTICS_SCHEMA) # pyright: ignore[reportArgumentType]
+        return cls(frame)
 
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
@@ -880,13 +883,16 @@ class Statistics:
         frame = self.frame()
         return frame.height == 0
 
-    def __contains__(self, date: dt.date) -> bool:
+    def __contains__(self, date: dt.date | Daily) -> bool:
         """
         Determine whether the summary statistics contain data for the given
         date. This method recognizes summary statistics with either daily or
         monthly granularity, as collected by the summarize and analyze tasks,
         respectively.
         """
+        if isinstance(date, Daily):
+            date = date.start_date
+
         # The threshold TRANSFORM_COUNT is the number of transforms that aren't
         # skipped. Since each such transform results in at least a row,
         # typically many more, that count also is a loose lower bound on the

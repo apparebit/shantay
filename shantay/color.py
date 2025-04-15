@@ -1,17 +1,12 @@
-# In my experience, all color palettes are problematic in some way, with colors
-# being too bright, too dull, too similar, and so on. Observable's color palette
-# is no exception. It tends towards bright, clean hues that are fairly
-# saturated, which makes for charts that "pop." But by the same token, its
-# colors can be overwhelming, too aggressive. As a result, manual curation
-# matters. Nonetheless, in my subjective judgement, the palette is clearly
-# preferable over the Brewer palettes, which tend towards duller, darker, or
-# lighter extremes.
-#
-# I did make one change, adding more colors, because they were needed for
-# illustrating the use of keywords.
-#
-# https://observablehq.com/blog/crafting-data-colors
+"""
+Shantay's color palette for charting categorical data.
 
+It is the same as [Observable's 2024 color
+palette](https://observablehq.com/blog/crafting-data-colors) with two more
+colors (dark purple and yellow green) added. The palette features fairly
+saturated and bright colors, hence facilitating charts that "pop." However, that
+can be a bit much at times, so manual curation still matters.
+"""
 BLUE = "#4269d0"
 ORANGE = "#efb118"
 RED = "#ff725c"

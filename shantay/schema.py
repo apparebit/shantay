@@ -590,31 +590,39 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
 }, quant_label="SoRs with Keyword")
 
 
-PlatformName = (
+PlatformNames = (
+    "Adobe Lightroom",
     "AliExpress",
+    "Amazon",
+    "App Store",
     "Badoo",
+    "bolha.com",
     "Booking.com",
     "Bumble",
     "Campfire",
     "Canva",
     "Chrome Web Store",
     "Dailymotion",
-    "Discord Netherlands B.V.",
+    "Discord",
     "Facebook",
     "Google Maps",
     "Google Play",
     "Google Shopping",
+    "gutefrage.net",
     "Habbo",
     "Hinge",
     "Hotel Hideaway",
     "Idealo",
     "Instagram",
     "Kleinanzeigen",
-    "Meetic SAS",
-    "OTTO Market",
+    "leboncoin",
+    "LinkedIn",
+    "Meetic",
+    "Microsoft Teams",
+    "OTTO",
     "Pinterest",
     "Pornhub",
-    "Quora Ireland Limited",
+    "Quora",
     "Rajče",
     "Reddit",
     "Roblox",
@@ -625,25 +633,24 @@ PlatformName = (
     "TikTok",
     "Tinder",
     "VSCO",
-    "Vinted UAB",
+    "Vinted",
     "Wallapop",
-    "WhatsApp Channels",
+    "WhatsApp",
+    "willhaben",
     "X",
     "YouTube",
     "Zalando",
-    "bolha.com",
-    "leboncoin",
-    "willhaben internet service GmbH & Co KG",
-    "www.gutefrage.net",
 )
 
 
 CANONICAL_PLATFORM_NAMES = MappingProxyType({
     "Adobe Photoshop Lightroom": "Adobe Lightroom",
     "Discord Netherlands B.V.": "Discord",
+    "Meetic SAS": "Meetic",
     "Microsoft Teams personal": "Microsoft Teams",
     "OTTO Market": "OTTO",
     "Quora Ireland Limited": "Quora",
+    "Vinted UAB": "Vinted",
     "WhatsApp Channels": "WhatsApp",
     "willhaben internet service GmbH & Co KG": "willhaben",
     "www.gutefrage.net": "gutefrage.net"
@@ -960,6 +967,44 @@ EntityValueType = pl.Enum((
 ))
 
 
+def all_variants() -> list[str]:
+    variants = []
+
+    for decl in (
+        AccountType,
+        AutomatedDecision,
+        ContentType,
+        DecisionAccount,
+        DecisionGround,
+        DecisionMonetary,
+        DecisionProvision,
+        DecisionVisibility,
+        InformationSource,
+    ):
+        variants.extend(decl.variant_names())
+
+    from ._platform import PlatformNamesToo
+    for names in (
+        Keyword,
+        PlatformNames,
+        PlatformNamesToo,
+        StatementCategory,
+        YesNo,
+    ):
+        variants.extend(names)
+
+    variants.extend(
+        set(ContentLanguage.__members__.keys()).union(
+            TerritorialScope.__members__.keys()
+        )
+    )
+
+    return variants
+
+
+VariantValueType = pl.Enum(all_variants())
+
+
 VariantTooValueType = pl.Enum(Keyword)
 
 
@@ -969,10 +1014,10 @@ CATEGORICAL = pl.Categorical()
 STATISTICS_SCHEMA = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
-    "tag": CATEGORICAL,
+    "tag": pl.String,
     "column": ColumnValueType,
     "entity": EntityValueType,
-    "variant": CATEGORICAL,
+    "variant": VariantValueType,
     "variant_too": VariantTooValueType,
     "count": pl.Int64,
     "min": pl.Int64,

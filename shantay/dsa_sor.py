@@ -361,15 +361,6 @@ class StatementsOfReasons(Dataset[Daily]):
             batch_memory=int(batch_memory),
         )
 
-    @contextmanager
-    def analysis_context(self) -> Iterator[Self]:
-        """Create a new analysis context (manager)."""
-        pl.enable_string_cache()
-        try:
-            yield self
-        finally:
-            pl.disable_string_cache()
-
     @annotate_error(filename_arg="root")
     def analyze_release(
         self,

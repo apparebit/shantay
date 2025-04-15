@@ -11,9 +11,7 @@ from typing import Any
 
 from .framing import collect_release_metadata
 from .metadata import Metadata
-from .model import (
-    Coverage, DataFrameType, Dataset, Release, Storage
-)
+from .model import Coverage, Daily, DataFrameType, Dataset, Release, Storage
 from .pool import Cancelled, Pool, WorkerProgress
 from .processor import extracted_data_exists, Processor
 from .stats import Collector, Statistics
@@ -93,10 +91,7 @@ class Multiprocessor[R: Release]:
                     date_range.first, date_range.last
                 )
 
-            missing = self._stats.missing_range()
-            if missing is None:
-                return
-            cover = missing.dailies()
+            cover = Statistics.DEFAULT_RANGE.dailies()
             increment = "daily"
         else:
             raise ValueError(f"invalid task {task}")
@@ -178,22 +173,28 @@ class Multiprocessor[R: Release]:
     def _next_release(self) -> None | Release:
         # The next release
         assert self._iter is not None
-        result = next(self._iter, None)
+        release = next(self._iter, None)
 
-        # For prepare, skip release if we already extracted the working data
+        # Skip release, if included in working data for prepare and in summary
+        # statistics for summarize.
         if self._task == "prepare":
             while (
-                result is not None
-                and result in self._metadata
+                release is not None
+                and release in self._metadata
                 and extracted_data_exists(
                     self._storage.working_root,
-                    result,
+                    release,
                     self._metadata
                 )
             ):
-                result = next(self._iter, None)
+                release = next(self._iter, None)
+        elif self._task == "summarize":
+            assert self._stats is not None
+            while release is not None and release.start_date in self._stats:
+                _logger.debug('summary statistics already cover release="%s"', release)
+                release = next(self._iter, None)
 
-        return result
+        return release
 
     def _done_with_task(self, future: Future) -> bool:
         assert self._pool is not None
@@ -216,6 +217,7 @@ class Multiprocessor[R: Release]:
             del result["release"]
             self._metadata[release] = result
             self._metadata.write_json(self._storage.staging_root, sort_keys=True)
+
             # If the working root contains a meta.json, then the tool module
             # instantiates _metadata with that file's data. Since copy_json()
             # first writes to a temporary file and then atomically replaces the
@@ -224,6 +226,12 @@ class Multiprocessor[R: Release]:
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
         elif self._task in ("analyze", "summarize"):
             assert self._stats is not None
+            self._stats.append(result)
+
+            # By the same logic as for copying the metadata for prepare, we
+            # could also copy the summary statistics to the persistent root.
+            # However, that file should be optimized (rechunked), so we only
+            # copy upon completion.
             self._stats.write(self._storage.staging_root)
         else:
             raise AssertionError(f"invalid task {self._task}")
@@ -324,15 +332,13 @@ def _run_on_worker[R: Release](
         record = metadata[release]
         result = dict(release=release, **record)
     elif task == "summarize":
-        with dataset.analysis_context():
-            collector = Collector()
-            processor.summarize_archived_release(release, collector)
-            result = collector.frame()
+        collector = Collector()
+        processor.summarize_archived_release(release, collector)
+        result = collector.frame()
     elif task == "analyze":
-        with dataset.analysis_context():
-            collector = Collector()
-            processor.analyze_working_release(release, metadata_frame, collector)
-            result = collector.frame()
+        collector = Collector()
+        processor.analyze_working_release(release, metadata_frame, collector)
+        result = collector.frame()
     else:
         raise AssertionError(f"invalid task {task}")
 

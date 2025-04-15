@@ -413,6 +413,12 @@ class DateRange(Period):
             Daily.of(self.last).to_last_full_month(),
         )
 
+    def __iter__(self) -> Iterator[dt.date]:
+        cursor = self.first
+        while cursor <= self.last:
+            yield cursor
+            cursor += dt.timedelta(days=1)
+
     def __str__(self) -> str:
         return f"{self.first.isoformat()}-{self.last.isoformat()}"
 
@@ -556,10 +562,6 @@ class Dataset[R: Release](metaclass=ABCMeta):
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
-
-    @abstractmethod
-    def analysis_context(self) -> AbstractContextManager:
-        """Create a new analysis context to cover calls to analyze_release."""
 
     @abstractmethod
     def analyze_release(
