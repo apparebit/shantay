@@ -46,6 +46,10 @@ DOC_HEADER = """\
 <head>
 <meta charset="utf-8">
 <title>The DSA Transparency Database</title>
+<meta property="og:article:published_time" content="{0}">
+"""
+
+DOC_HEADER_TOO = """\
 <style>
 /* ----------------------------------- General ----------------------------------- */
 *::before, *, *::after {
@@ -250,6 +254,7 @@ class Visualizer:
         self._with_extras = with_extras
         self._renderer = renderer
         self._timelines = False
+        self._timestamp = dt.datetime.now()
 
     @staticmethod
     def configure_display() -> None:
@@ -328,7 +333,8 @@ class Visualizer:
         with open(path, mode="w", encoding="utf8") as document:
             try:
                 self._document = document
-                document.write(DOC_HEADER)
+                document.write(DOC_HEADER.format(self._timestamp.isoformat()))
+                document.write(DOC_HEADER_TOO)
 
                 self.render_heading()
                 self.render_overview()
@@ -385,6 +391,7 @@ class Visualizer:
             '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA '
             'Transparency Database</a>: Protection of Minors</h1>'
         )
+        self.html(f'<p>{self._timestamp.isoformat()}</p>')
 
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
