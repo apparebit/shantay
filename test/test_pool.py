@@ -1,10 +1,11 @@
+from collections.abc import Iterator
 import datetime as dt
 import logging
 from pathlib import Path
 import shutil
 import unittest
 
-from shantay.pool import Pool
+from shantay.pool import Future, Pool, Task
 from shantay.tool import configure_logging
 
 
@@ -55,30 +56,27 @@ def task3(value: str) -> str:
     return value
 
 
+def tasks() -> Iterator[Task]:
+    yield Task(task1, (ONE,), dict())
+    yield Task(task2, (TWO,), dict())
+    yield Task(task3, (THREE,), dict())
+
+
 class TestPool(unittest.TestCase):
 
     def test_pool(self) -> None:
         pool = Pool(size=2, log_level=logging.DEBUG)
-        future1 = pool.submit(task1, ONE)
-        future2 = pool.submit(task2, TWO)
 
-        future3 = None
-        def schedule3(_: object) -> None:
-            nonlocal future3
-            if future3 is None:
-                future3 = pool.submit(task3, THREE)
+        def upon_completion(task: Task, fut: Future) -> None:
+            result = fut.result()
+            if task.fn is task1:
+                self.assertEqual(result, ONE)
+            elif task.fn is task2:
+                self.assertEqual(result, TWO)
+            else:
+                self.assertEqual(result, THREE)
 
-        future1.add_done_callback(schedule3)
-        future2.add_done_callback(schedule3)
-
-        # Check task results, which also waits for task completion
-        with self.subTest("check results"):
-            self.assertEqual(future1.result(), ONE)
-            self.assertEqual(future2.result(), TWO)
-            assert future3 is not None
-            self.assertEqual(future3.result(), THREE)
-
-        pool.finish()
+        pool.run(tasks(), upon_completion)
 
         with self.subTest("check log"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)
@@ -106,7 +104,7 @@ class TestPool(unittest.TestCase):
             for index in range(expected_init):
                 self.assertIn("root︙INFO︙initialized worker pool process pid", lines[index])
             self.assertIn('shantay︙DEBUG︙cancelled thread="status_manager"', lines[expected_init])
-            self.assertIn('shantay︙DEBUG︙shut down pool="pool-1", cause="finish()"', lines[expected_init + 1])
+            self.assertIn('shantay︙DEBUG︙done processing tasks in pool="pool-1"', lines[expected_init + 1])
             self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task1", pool="pool-1"', lines[expected_init + 2])
             self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task2", pool="pool-1"', lines[expected_init + 3])
             self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task3", pool="pool-1"', lines[expected_init + 4])

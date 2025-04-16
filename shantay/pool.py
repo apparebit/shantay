@@ -2,43 +2,52 @@
 A pool of worker processes.
 
 Python's standard library includes two different pools of worker processes,
-`multiprocessing.pool.Pool` and `concurrent.futures.ProcessPoolExecutor`. The
-former exposes a map-like interface, which is missing the shuffle and reduce
-parts of Google's seminal map-shuffle-reduce framework. While the latter offers
-a simpler interface based on asynchronous task execution, it too suffers from
-the unnecessary overhead of a queue for pending tasks. Since process-based
-parallelism is rather heavyweight, incurring overhead for interprocess
-communication at a minimum, it is best suited to long-running tasks. However,
-neither pool has support for progress updates or task cancellation.
+`multiprocessing.pool.Pool` and `concurrent.futures.ProcessPoolExecutor`.
+
+The former exposes a map-like interface that is missing support for the shuffle
+and reduce phases from Google's seminal map-shuffle-reduce framework. The latter
+exposes a simpler interface based on asynchronous task execution. However, it
+too suffers from overdesign, incorporating a queue of pending tasks instead of
+just using an iterator to pull tasks on demand.
+
+Since process-based parallelism is rather heavyweight, incurring overhead for
+interprocess communication at a minimum, it is best suited to long-running
+tasks. However, neither pool has any support for progress updates or task
+cancellation.
 
 This module's `Pool` addresses these short-comings. Out of pragmatic
 considerations, its implementation is based on the
 `concurrent.futures.ProcessPoolExecutor`. To provide the extra functionality,
-`Pool` injects its own initialization function into new worker processes,
-intercepts new tasks as they are scheduled, and executes additional logic when a
-future completes.
+`Pool` injects its own initialization function into new worker processes and
+takes full control over the run loop, with code using `Pool` providing an
+iterator over tasks and a callback for task completion.
 
-Notably, if the root logger has no handlers, `Pool` automatically installs a log
-handler that forwards log records from workers to the coordinator, which hands
-them over to its root logger's handlers.
+As long as the root logger has no handlers, `Pool` automatically installs a log
+handler to forward log records from workers to the coordinator, which hands them
+over to its own root logger's handlers.
 
-If the worker uses an instance of `WorkerProgress`, which has the exact same
+If a task uses an instance of `WorkerProgress`, which has the exact same
 interface as `Progress`, invocations are automatically forwarded to the
 coordinator, which display one progress line per worker.
 
-To cooperatively cancel a worker's task, the coordinator uses a multiprocessing
-`SimpleQueue` to signal workers. After receiving the signal, a worker's
-`is_cancelled()` returns `True`. In that case, the worker should wind down its
-task processing by raising a `Cancelled` exception.
+After a call to `finish()`, the pool will not schedule any new tasks, even if
+they are available. After a call to `stop()`, it tries to cooperatively cancel
+workers' tasks by communicating the signal to workers. Thereafter, a worker's
+`is_cancelled()` returns `True` and a task should wind down by raising a
+`Cancelled` exception.
 """
-from concurrent.futures import Future, ProcessPoolExecutor
+from collections.abc import Iterator, Mapping, Sequence
+from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
 import copy
+from dataclasses import dataclass
+import itertools
 import logging
 import multiprocessing as mp
 import os
 import shutil
 import threading
-from typing import Any, Self
+from types import TracebackType
+from typing import Any, Callable, Self
 
 from .progress import Progress
 
@@ -46,6 +55,15 @@ from .progress import Progress
 _PID = os.getpid()
 _PROGRESS = ["activity", "start", "step", "perform"]
 _logger = logging.getLogger(__spec__.parent)
+
+
+@dataclass(frozen=True, slots=True)
+class Task:
+    """A container combining a function with its arguments."""
+
+    fn: Callable[..., Any]
+    args: Sequence[Any]
+    kwargs: Mapping[str, Any]
 
 
 # --------------------------------------------------------------------------------------
@@ -105,7 +123,6 @@ class Pool:
         _, height = shutil.get_terminal_size()
         self._trackers = [Progress(row=height - i) for i in range(size)]
         self._index_table = _IndexTable(size)
-        self._pending_tasks = 0
 
         self._status_manager = threading.Thread(
             target=_manage_status,
@@ -139,72 +156,22 @@ class Pool:
         """Determine whether this pool is stopping."""
         return self._state.is_stopping()
 
-    def submit(self, fn, /, *args, **kwargs) -> Future:
-        """Submit a new task."""
-        assert self._state.is_running(), "pool is not accepting new tasks"
+    def __enter__(self) -> Self:
+        self._executor.__enter__()
+        return self
 
-        _logger.debug(
-            'submit fn="%s.%s", pool="%s", pending-tasks=%d',
-            fn.__module__,
-            fn.__qualname__,
-            self._id,
-            self._pending_tasks,
-        )
-
-        future = self._executor.submit(fn, *args, **kwargs)
-        future.add_done_callback(self._on_task_completion)
-        self._pending_tasks += 1
-        self._index_table.sync()
-        return future
-
-    def _on_task_completion(self, _: Future) -> None:
-        self._pending_tasks -= 1
-        if self._pending_tasks == 0 and not self._state.is_running():
-            _logger.debug('shut down pool="%s", cause="task completion"', self._id)
-            self._shutdown()
-
-    def finish(self) -> None:
-        """
-        Run already accepted tasks but reject new ones, shutting down upon
-        completion.
-        """
-        if self._state.set_finishing() and self._pending_tasks == 0:
-            _logger.debug('shut down pool="%s", cause="finish()"', self._id)
-            self._shutdown()
-
-    def stop(self) -> bool:
-        """
-        Cancel running tasks, shutting down pool upon completion. This method
-        returns `True` if it initiated shut down and `False` if it was already
-        shutting down.
-        """
-        if not self._state.set_stopping():
-            return False
-
-        if self._pending_tasks == 0:
-            _logger.debug('shut down pool="%s", cause="stop()"', self._id)
-            self._shutdown()
-            return True
-
-        _logger.debug('cancel workers of pool="%s"', self._id)
-        for _ in range(self._size):
-            try:
-                self._cancel_queue.put(None)
-            except BaseException as x:
-                _logger.error(
-                    'failed to write to queue="cancel", pool="%s"', self._id, exc_info=x
-                )
-                break
-
-        return True
-
-    def _shutdown(self) -> None:
-        """
-        Complete shutdown of this pool. This method releases the resources
-        consumed by this pool and wakes any threads waiting for completion.
-        """
-        # Shut down executor. Do not wait to avoid exception being thrown.
-        self._executor.shutdown(False)
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_val: BaseException | None,
+        exc_tb: TracebackType | None,
+    ) -> None | bool:
+        # FIXME: it probably is safe to call ProcessPoolExecutor.__exit__, which
+        # calls shutdown(True) because it's not the future callback thread but
+        # main thread executing this method. If it was the future callback
+        # thread, then that would result in an exception due to the
+        # implementation trying to join that same thread.
+        self._executor.shutdown(True)
 
         # With all workers gone, there won't be any status updates anymore.
         try:
@@ -218,6 +185,75 @@ class Pool:
             self._status_manager.join()
 
         self._done.set()
+
+    def run(
+        self,
+        tasks: Iterator[Task],
+        on_completion: Callable[[Task, Future], None],
+    ) -> None:
+        # Loosely based on https://github.com/alexwlchan/concurrently
+        with self:
+            futures = {}
+            for task in itertools.islice(tasks, self._size):
+                _logger.debug('submit fn="%s.%s", pool="%s"',
+                    task.fn.__module__, task.fn.__qualname__, self._id,
+                )
+                fut = self._executor.submit(task.fn, *task.args, **task.kwargs)
+                futures[fut] = task
+
+            while futures:
+                done, _ = wait(futures, return_when=FIRST_COMPLETED)
+
+                for fut in done:
+                    # Fail fast on exceptions!
+                    if fut.exception() is not None:
+                        self.stop()
+
+                    task = futures.pop(fut)
+                    try:
+                        on_completion(task, fut)
+                    except:
+                        self.stop()
+                        raise
+
+                self._index_table.sync()
+
+                if self._state.is_running():
+                    for task in itertools.islice(tasks, len(done)):
+                        _logger.debug('submit fn="%s.%s", pool="%s"',
+                            task.fn.__module__, task.fn.__qualname__, self._id,
+                        )
+                        fut = self._executor.submit(task.fn, *task.args, **task.kwargs)
+                        futures[fut] = task
+
+            _logger.debug('done processing tasks in pool="%s"', self._id)
+
+    def finish(self) -> None:
+        """
+        Run already accepted tasks but reject new ones, shutting down upon
+        completion.
+        """
+        if self._state.set_finishing():
+            _logger.debug('finish pool="%s"', self._id)
+
+    def stop(self) -> None:
+        """
+        Cancel running tasks, shutting down pool upon completion. This method
+        returns `True` if it initiated shut down and `False` if it was already
+        shutting down.
+        """
+        if not self._state.set_stopping():
+            return
+
+        _logger.debug('stop pool="%s"', self._id)
+        for _ in range(self._size):
+            try:
+                self._cancel_queue.put(None)
+            except BaseException as x:
+                _logger.error(
+                    'failed to write to queue="cancel", pool="%s"', self._id, exc_info=x
+                )
+                break
 
     def wait(self, timeout: None | float = None) -> None:
         """Wait for all of this pool's workers to be done."""

@@ -1,3 +1,4 @@
+from collections.abc import Iterator
 from concurrent.futures import Future
 import logging
 import multiprocessing as mp
@@ -11,8 +12,8 @@ from typing import Any
 
 from .framing import collect_release_metadata
 from .metadata import Metadata
-from .model import Coverage, Daily, DataFrameType, Dataset, Release, Storage
-from .pool import Cancelled, Pool, WorkerProgress
+from .model import Coverage, DataFrameType, Dataset, Release, Storage
+from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_data_exists, Processor
 from .stats import Collector, Statistics
 
@@ -52,7 +53,7 @@ class Multiprocessor[R: Release]:
     def runtime(self) -> float:
         return self._runtime
 
-    def run(self, task: str, wait: bool = True) -> None:
+    def run(self, task: str) -> None:
         assert self._pool is not None
         self._task = task
 
@@ -101,74 +102,54 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="iter.last",            value="%s"', cover.last.id)
         _logger.info('    key="iter.increment",       value="%s"', increment)
 
-        # Seed pool with tasks
-        for _ in range(self._pool.size):
-            if not self._schedule_task():
-                break
+        self._pool.run(self._task_iter(), self._done_with_task)
 
-        # Wait until pool finishes
-        if wait:
-            self._pool.wait()
+        if task in ("analyze", "summarize"):
+            assert self._stats is not None
 
-            if task in ("analyze", "summarize"):
-                assert self._stats is not None
+            _logger.debug(
+                'writing rechunked summary statistics to file="%s"',
+                self._storage.staging_root / Statistics.FILE
+            )
+            self._stats.write(self._storage.staging_root, rechunk=True)
 
-                _logger.debug(
-                    'writing rechunked summary statistics to file="%s"',
-                    self._storage.staging_root / Statistics.FILE
-                )
-                self._stats.write(self._storage.staging_root, rechunk=True)
-
-                if task == "analyze":
-                    persistent = self._storage.working_root
-                else:
-                    persistent = self._storage.archive_root
-                _logger.debug(
-                    'copying summary statistics to persistent file="%s"',
-                    persistent / Statistics.FILE
-                )
-                Statistics.copy(self._storage.staging_root, persistent)
+            if task == "analyze":
+                persistent = self._storage.working_root
+            else:
+                persistent = self._storage.archive_root
+            _logger.debug(
+                'copying summary statistics to persistent file="%s"',
+                persistent / Statistics.FILE
+            )
+            Statistics.copy(self._storage.staging_root, persistent)
 
         self._runtime = time.time() - start_time
 
-    def _schedule_task(self) -> bool:
+    def _task_iter(self) -> Iterator[Task]:
         assert self._pool is not None
 
-        release = self._next_release()
-        if release is None:
-            # Make sure the pool finishes
-            self._pool.finish()
-            return False
+        while True:
+            release = self._next_release()
+            if release is None:
+                break
 
-        task = self._task
-        pool = self._pool.id
-
-        try:
             _logger.info(
-                'submitting task="%s", release="%s", pool="%s"', task, release, pool
+                'submitting task="%s", release="%s", pool="%s"',
+                self._task, release, self._pool.id
             )
 
-            future = self._pool.submit(
+            yield Task(
                 run_on_worker,
-                task=self._task,
-                dataset=self._dataset,
-                storage=self._storage,
-                filter=self._metadata.filter,
-                metadata_frame=self._metadata_frame,
-                release=release,
+                (),
+                dict(
+                    task=self._task,
+                    dataset=self._dataset,
+                    storage=self._storage,
+                    filter=self._metadata.filter,
+                    metadata_frame=self._metadata_frame,
+                    release=release,
+                )
             )
-        except Exception as x:
-            _logger.error('task rejected by pool="%s"', self._pool.id, exc_info=x)
-            return False
-
-        def callback(future: Future) -> bool:
-            _logger.info(
-                'finishing task="%s", release="%s", pool="%s"', task, release, pool
-            )
-            return self._done_with_task(future)
-
-        future.add_done_callback(callback)
-        return True
 
     def _next_release(self) -> None | Release:
         # The next release
@@ -196,23 +177,21 @@ class Multiprocessor[R: Release]:
 
         return release
 
-    def _done_with_task(self, future: Future) -> bool:
+    def _done_with_task(self, _task: Task, future: Future) -> None:
         assert self._pool is not None
 
         try:
             result = future.result()
         except Cancelled as x:
             _logger.debug('worker=%d, status="cancelled"', x.pid)
-            self._pool.stop()
-            return False
+            return
         except Exception as x:
             # An unexpected exception is a good reason to stop and investigate,
             # not to keep trying with later releases. Hence, we stop here, too.
             _logger.error(
                 'task running in worker pool raised unexpected exception', exc_info=x
             )
-            self._pool.stop()
-            return False
+            return
 
         if self._task == "prepare":
             release = result["release"]
@@ -238,11 +217,9 @@ class Multiprocessor[R: Release]:
         else:
             raise AssertionError(f"invalid task {self._task}")
 
-        return self._schedule_task()
-
-    def stop(self) -> bool:
+    def stop(self) -> None:
         assert self._pool is not None
-        return self._pool.stop()
+        self._pool.stop()
 
     def _register_handlers(self) -> None:
         assert self._pool is None
