@@ -45,12 +45,15 @@ PlatformNames = (
     "Reddit",
     "Roblox",
     "Snapchat",
+    "SoundCloud",
     "Stripchat",
     "Temu",
     "Threads",
     "TikTok",
     "Tinder",
+    "Twitch",
     "VSCO",
+    "Vimeo",
     "Vinted",
     "Wallapop",
     "WhatsApp",
@@ -58,6 +61,7 @@ PlatformNames = (
     "X",
     "YouTube",
     "Zalando",
+    "Živě.cz",
 )
 
 
