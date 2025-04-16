@@ -7,6 +7,7 @@ from typing import Any
 
 import polars as pl
 
+from ._platform import MissingPlatformError
 from .dsa_sor import StatementsOfReasons
 from .framing import resolve_query_binding
 from .metadata import fsck, Metadata
@@ -303,7 +304,7 @@ def run(args: list[str]) -> int:
         print("".join(traceback.format_exception(x)))
         print('\ninterrupted by user; terminating...')
         return 1
-    except (ConfigError, DownloadFailed, MetadataConflict) as x:
+    except (ConfigError, DownloadFailed, MetadataConflict, MissingPlatformError) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
         print(str(x))

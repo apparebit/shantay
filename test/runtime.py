@@ -10,7 +10,6 @@ mingling of concerns, this module must necessarily access some private
 attributes and mirror some gnarly aspects of the original. All that code is
 hidden in the `testunit` adapter.
 """
-
 import dataclasses
 import inspect
 import json

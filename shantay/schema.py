@@ -590,57 +590,7 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
 }, quant_label="SoRs with Keyword")
 
 
-PlatformNames = (
-    "Adobe Lightroom",
-    "AliExpress",
-    "Amazon",
-    "App Store",
-    "Badoo",
-    "bolha.com",
-    "Booking.com",
-    "Bumble",
-    "Campfire",
-    "Canva",
-    "Chrome Web Store",
-    "Dailymotion",
-    "Discord",
-    "Facebook",
-    "Google Maps",
-    "Google Play",
-    "Google Shopping",
-    "gutefrage.net",
-    "Habbo",
-    "Hinge",
-    "Hotel Hideaway",
-    "Idealo",
-    "Instagram",
-    "Kleinanzeigen",
-    "leboncoin",
-    "LinkedIn",
-    "Meetic",
-    "Microsoft Teams",
-    "OTTO",
-    "Pinterest",
-    "Pornhub",
-    "Quora",
-    "Rajče",
-    "Reddit",
-    "Roblox",
-    "Snapchat",
-    "Stripchat",
-    "Temu",
-    "Threads",
-    "TikTok",
-    "Tinder",
-    "VSCO",
-    "Vinted",
-    "Wallapop",
-    "WhatsApp",
-    "willhaben",
-    "X",
-    "YouTube",
-    "Zalando",
-)
+from ._platform import PlatformNames
 
 
 CANONICAL_PLATFORM_NAMES = MappingProxyType({
@@ -996,11 +946,9 @@ def _all_variants() -> list[str]:
     ):
         variants.extend(decl.variant_names())
 
-    from ._platform import PlatformNamesToo
     for names in (
         Keyword,
         PlatformNames,
-        PlatformNamesToo,
         StatementCategory,
         YesNo,
     ):
@@ -1021,10 +969,6 @@ VariantValueType = pl.Enum(_all_variants())
 VariantTooValueType = pl.Enum(Keyword)
 
 
-"""
-The schema for the summary statistics. Durations are encoded min/mean/max values
-of the corresponding milliseconds.
-"""
 StatisticsSchema = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
@@ -1038,6 +982,10 @@ StatisticsSchema = pl.Schema({
     "mean": pl.Int64,
     "max": pl.Int64,
 })
+"""
+The schema for the summary statistics. Durations are encoded min/mean/max values
+of the corresponding milliseconds.
+"""
 
 
 # ======================================================================================

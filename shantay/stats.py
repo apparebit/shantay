@@ -402,6 +402,7 @@ class Collector:
         frame = pl.concat(self._frames, how="vertical")
         if isinstance(frame, pl.LazyFrame):
             frame = frame.collect()
+        frame = frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         if validate:
             _validate_row_counts(frame)
         if group_by is not None:
@@ -434,15 +435,9 @@ class _Spacer:
     def __str__(self) -> str:
         return ""
 
-"""The canonical spacer object."""
 _SPACER = _Spacer()
 
 
-"""
-The type of summary statistics, which is a list of key, value pairs. To aid with
-presentation, some of the pairs may be empty, containing `SPACER` instances (see
-below).
-"""
 type _Summary = list[tuple[str | _Tag | _Spacer, Any]]
 
 
@@ -769,6 +764,12 @@ class _Summarizer:
 # =================================================================================================
 
 
+def check_platform_names(release: Release, batch: int, frame: pl.DataFrame) -> None:
+    """Check for unknown platform names in the given data frame"""
+    from ._platform import check_platform_names
+    check_platform_names(f"release {release.id}, batch {batch}", frame)
+
+
 class Statistics:
     """
     Wrapper around statistics describing the DSA transparency database.
@@ -933,7 +934,9 @@ class Statistics:
         Append the data frame with summary statistics. Use `collect()` for
         frames with transparency database data.
         """
-        self._frames.append(frame)
+        self._frames.append(
+            frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        )
 
     def summary(self, markdown: bool = False) -> str:
         """Create a summary table formatted as Unicode or Markdown."""

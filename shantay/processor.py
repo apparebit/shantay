@@ -18,7 +18,7 @@ from .model import (
     MetadataEntry, Release, Storage
 )
 from .progress import NO_PROGRESS, Progress
-from .stats import Collector, Statistics
+from .stats import check_platform_names, Collector, Statistics
 from .util import annotate_error, scale_time
 from .viz import visualize
 
@@ -453,7 +453,6 @@ class Processor[R: Release]:
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
 
-            # TODO intercept exception indicating unknown platform_name
             frame = self._dataset.ingest_file_data(
                 root=self._storage.staging_root,
                 release=release,
@@ -462,6 +461,7 @@ class Processor[R: Release]:
                 progress=self._progress
             )
 
+            check_platform_names(release, index, frame)
             collector.collect(release, frame)
 
             # A daily release may comprise over 100 GB of uncompressed CSV data.
