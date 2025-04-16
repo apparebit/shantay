@@ -44,29 +44,41 @@ def annotate_error[**P, R](
 
 def scale(value: float) -> tuple[float, str]:
     """Scale the value to three digits before the decimal and a unit prefix."""
-    if value < 0.001:
-        return value * 1_000_000, "micro"
-    elif value < 1:
-        return value * 1_000, "milli"
-    elif value < 1_000:
-        return value, ""
-    elif value < 1_000_000:
-        return value / 1_000, "kilo"
-    elif value < 1_000_000_000:
-        return value / 1_000_000, "mega"
+    if value < 0:
+        sign = -1
+        value *= -1
     else:
-        return value / 1_000_000_000, "giga"
+        sign = 1
+
+    if value < 0.001:
+        return sign * value * 1_000_000, "micro"
+    elif value < 1:
+        return sign * value * 1_000, "milli"
+    elif value < 1_000:
+        return sign * value, ""
+    elif value < 1_000_000:
+        return sign * value / 1_000, "kilo"
+    elif value < 1_000_000_000:
+        return sign * value / 1_000_000, "mega"
+    else:
+        return sign * value / 1_000_000_000, "giga"
 
 
 def scale_time(value: float) -> tuple[float, str]:
-    if value < 60:
-        return value, "sec"
-    elif value < 60 * 60:
-        return value / 60, "min"
-    elif value < 24 * 60 * 60:
-        return value / (60 * 60), "hour"
+    if value < 0:
+        sign = -1
+        value *= -1
     else:
-        return value / (24* 60 * 60), "day"
+        sign = 1
+
+    if value < 60:
+        return sign * value, "sec"
+    elif value < 60 * 60:
+        return sign * value / 60, "min"
+    elif value < 24 * 60 * 60:
+        return sign * value / (60 * 60), "hour"
+    else:
+        return sign * value / (24* 60 * 60), "day"
 
 
 def to_markdown_table(
