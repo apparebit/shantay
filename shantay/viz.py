@@ -391,7 +391,10 @@ class Visualizer:
             '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA '
             'Transparency Database</a>: Protection of Minors</h1>'
         )
-        self.html(f'<p>{self._timestamp.isoformat()}</p>')
+        self.html(
+            f'<p>Created on {self._timestamp.date().isoformat()} '
+            f'at {self._timestamp.time().isoformat()}</p>'
+        )
 
     def render_overview(self) -> None:
         self.html("<h2>Summary</h2>")
