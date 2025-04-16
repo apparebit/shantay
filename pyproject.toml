@@ -21,6 +21,7 @@ classifiers = [
     "Topic :: System :: Archiving",
     "Topic :: Terminals",
 ]
+dynamic = ["version"]
 dependencies = [
     "altair", # chart creation
     "vl-convert-python", # chart rendering
@@ -32,7 +33,16 @@ dependencies = [
     "mistune", # render Markdown to HTML
 ]
 
-dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = [
+    "sphinx",
+    "sphinxcontrib-autoprogram",
+    "sphinx-copybutton",
+    "sphinx_design",
+    "sphinx-rtd-theme",
+]
+
 
 [project.urls]
 repository = "https://github.com/apparebit/shantay"

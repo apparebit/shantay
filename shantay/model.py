@@ -86,6 +86,11 @@ class Release(Period):
 
     @property
     @abstractmethod
+    def date(self) -> None | dt.date:
+        """The only date if this release is a daily one. Otherwise `None`."""
+
+    @property
+    @abstractmethod
     def parent_directory(self) -> Path:
         """The parent directory"""
 
@@ -155,6 +160,10 @@ class Daily(Release):
 
     @property
     def end_date(self) -> dt.date:
+        return dt.date(self.year, self.month, self.day)
+
+    @property
+    def date(self) -> None | dt.date:
         return dt.date(self.year, self.month, self.day)
 
     @property
@@ -246,6 +255,10 @@ class Monthly(Release):
     @property
     def end_date(self) -> dt.date:
         return dt.date(self.year, self.month, _days_in_month(self.year, self.month))
+
+    @property
+    def date(self) -> None | dt.date:
+        return None
 
     @property
     def parent_directory(self) -> Path:

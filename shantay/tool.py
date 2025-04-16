@@ -189,7 +189,8 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
         if last is None:
             last = dt.date.today() - dt.timedelta(days=2)
     elif 0 < len(metadata):
-        first, last = metadata.range
+        range = metadata.range
+        first, last = range.first, range.last
 
     if options.first is not None:
         first = dt.date.fromisoformat(options.first)
@@ -262,15 +263,14 @@ def _run(args: list[str]) -> None:
         and 1 < options.multiproc
     ):
         dataset = StatementsOfReasons()
-        with dataset.analysis_context():
-            processor = Multiprocessor(
-                dataset=dataset,
-                storage=storage,
-                coverage=coverage,
-                metadata=metadata,
-                size=options.multiproc,
-            )
-            processor.run(options.task)
+        processor = Multiprocessor(
+            dataset=dataset,
+            storage=storage,
+            coverage=coverage,
+            metadata=metadata,
+            size=options.multiproc,
+        )
+        processor.run(options.task)
     else:
         # Processor uses an analysis context as necessary internally.
         processor = Processor(

@@ -967,7 +967,20 @@ EntityValueType = pl.Enum((
 ))
 
 
-def all_variants() -> list[str]:
+def _all_variants() -> list[str]:
+    """
+    Collect *all* known enum variants into a list.
+
+    This function effectively computes the type union of all enum types used by
+    the transparency database (while also accounting for overlap between the
+    two-letter-codes of ContentLanguage and TerritorialScope). It becomes the
+    type of the variant column in the summary statistics.
+
+    The challenge in computing this union is that must include the values of
+    platform_name, which go through some degree of churn. Solely relying on
+    releases to address this churn is not very nimble. Instead, shantay checks
+    transparency database releases and automatically updates its internal list.
+    """
     variants = []
 
     for decl in (
@@ -1002,16 +1015,17 @@ def all_variants() -> list[str]:
     return variants
 
 
-VariantValueType = pl.Enum(all_variants())
+VariantValueType = pl.Enum(_all_variants())
 
 
 VariantTooValueType = pl.Enum(Keyword)
 
 
-CATEGORICAL = pl.Categorical()
-
-
-STATISTICS_SCHEMA = pl.Schema({
+"""
+The schema for the summary statistics. Durations are encoded min/mean/max values
+of the corresponding milliseconds.
+"""
+StatisticsSchema = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
     "tag": pl.String,

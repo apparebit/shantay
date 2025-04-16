@@ -10,7 +10,8 @@ from typing import Callable, cast, Self
 
 # from .framing import below within method
 from .model import (
-    DIGEST_FILE, FullMetadataEntry, META_FILE, MetadataConflict, MetadataEntry, Release
+    Coverage, DateRange, DIGEST_FILE, FullMetadataEntry, META_FILE, MetadataConflict,
+    MetadataEntry, Release
 )
 from .progress import NO_PROGRESS, Progress
 
@@ -42,12 +43,20 @@ class Metadata[R: Release]:
             yield cast(FullMetadataEntry, dict(release=release, **entry))
 
     @property
-    def range(self) -> tuple[dt.date, dt.date]:
+    def range(self) -> DateRange:
         """Get the date for the first and last release."""
         if len(self._releases) == 0:
             raise ValueError("no coverage available")
         releases = sorted(self._releases)
-        return dt.date.fromisoformat(releases[0]), dt.date.fromisoformat(releases[-1])
+        return DateRange(
+            dt.date.fromisoformat(releases[0]),
+            dt.date.fromisoformat(releases[-1])
+        )
+
+    @property
+    def coverage(self) -> Coverage:
+        range = self.range
+        return Coverage(Release.of(range.first), Release.of(range.last), self.filter)
 
     def set_filter(self, filter: str) -> None:
         """Set the not yet configured category."""

@@ -23,7 +23,7 @@ from .framing import (
 )
 from .model import Daily, DateRange, Release
 from .schema import (
-    DurationTransform, STATISTICS_SCHEMA, TRANSFORM_COUNT, TRANSFORMS, TransformType,
+    DurationTransform, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS, TransformType,
     ValueCountsPlusTransform, VariantValueType, VariantTooValueType
 )
 from .util import scale_time
@@ -47,7 +47,6 @@ def _range_of(frame: pl.DataFrame) -> DateRange:
 
 
 def _is_categorical(column: str) -> bool:
-    """Determine whether the named column is categorical."""
     field = TRANSFORMS[column]
     return (
         field in (TransformType.VALUE_COUNTS, TransformType.LIST_VALUE_COUNTS)
@@ -198,7 +197,7 @@ class Collector:
                 column: "variant",
             })
 
-        frame = frame.cast(STATISTICS_SCHEMA) # pyright: ignore[reportArgumentType]
+        frame = frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
 
         # Enforce canonical column order, so that frames can be concatenated!
         self._frames.append(frame.select(
@@ -376,7 +375,7 @@ class Collector:
             "min": height * [None],
             "mean": height * [None],
             "max": height * [None],
-        }, schema=STATISTICS_SCHEMA)
+        }, schema=StatisticsSchema)
 
         self._frames.append(header)
 
@@ -826,7 +825,7 @@ class Statistics:
         """
         frame = pl.read_parquet(
             directory / cls.FILE
-        ).cast(STATISTICS_SCHEMA) # pyright: ignore[reportArgumentType]
+        ).cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         return cls(frame)
 
     def __dataframe__(self) -> Any:
@@ -854,7 +853,7 @@ class Statistics:
         ):
             return self._frames[0]
         elif len(self._frames) == 0:
-            return pl.DataFrame([], schema=STATISTICS_SCHEMA)
+            return pl.DataFrame([], schema=StatisticsSchema)
 
         # Combine frame fragments into one frame
         all_frames = list(self._frames)
@@ -883,13 +882,15 @@ class Statistics:
         frame = self.frame()
         return frame.height == 0
 
-    def __contains__(self, date: dt.date | Daily) -> bool:
+    def __contains__(self, date: None | dt.date | Daily) -> bool:
         """
         Determine whether the summary statistics contain data for the given
         date. This method recognizes summary statistics with either daily or
         monthly granularity, as collected by the summarize and analyze tasks,
         respectively.
         """
+        if date is None:
+            return False
         if isinstance(date, Daily):
             date = date.start_date
 
@@ -910,21 +911,6 @@ class Statistics:
         if frame.height == 0:
             raise ValueError("no statistics available")
         return _range_of(frame)
-
-    def missing_range(self) -> None | DateRange:
-        """
-        Determine the range of dates without statistics between the last day
-        included in the current data 2023-09-25
-        """
-        frame = self.frame()
-        if frame.height == 0:
-            return DateRange(
-                dt.date(2023, 9, 25),
-                dt.date.today() - dt.timedelta(days=2)
-            )
-
-        range = _range_of(frame)
-        return range.uncovered_near_past()
 
     def collect(
         self,

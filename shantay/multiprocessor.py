@@ -163,7 +163,7 @@ class Multiprocessor[R: Release]:
 
         def callback(future: Future) -> bool:
             _logger.info(
-                'finished task="%s", release="%s", pool="%s"', task, release, pool
+                'finishing task="%s", release="%s", pool="%s"', task, release, pool
             )
             return self._done_with_task(future)
 
@@ -190,7 +190,7 @@ class Multiprocessor[R: Release]:
                 release = next(self._iter, None)
         elif self._task == "summarize":
             assert self._stats is not None
-            while release is not None and release.start_date in self._stats:
+            while release is not None and release.date in self._stats:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 release = next(self._iter, None)
 
@@ -208,7 +208,9 @@ class Multiprocessor[R: Release]:
         except Exception as x:
             # An unexpected exception is a good reason to stop and investigate,
             # not to keep trying with later releases. Hence, we stop here, too.
-            _logger.error('task running in worker pool raised unexpected exception', exc_info=x)
+            _logger.error(
+                'task running in worker pool raised unexpected exception', exc_info=x
+            )
             self._pool.stop()
             return False
 
@@ -342,5 +344,8 @@ def _run_on_worker[R: Release](
     else:
         raise AssertionError(f"invalid task {task}")
 
-    _logger.debug('finished task=%s, release=%s, worker=%d', task, release, pid)
+    _logger.debug(
+        'returning result for task="%s", release="%s", worker=%d',
+        task, release, pid
+    )
     return result

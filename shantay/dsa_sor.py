@@ -332,7 +332,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     "application_date",
                     "created_at",
                 ).str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms"),
-                pl.lit(release.start_date, dtype=pl.Date).alias("released_on"),
+                pl.lit(release.date, dtype=pl.Date).alias("released_on"),
             )
         )
 
