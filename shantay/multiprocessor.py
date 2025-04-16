@@ -336,11 +336,11 @@ def _run_on_worker[R: Release](
     elif task == "summarize":
         collector = Collector()
         processor.summarize_archived_release(release, collector)
-        result = collector.frame()
+        result = collector.frame(group_by="day")
     elif task == "analyze":
         collector = Collector()
         processor.analyze_working_release(release, metadata_frame, collector)
-        result = collector.frame()
+        result = collector.frame(group_by="month")
     else:
         raise AssertionError(f"invalid task {task}")
 

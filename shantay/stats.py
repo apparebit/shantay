@@ -846,20 +846,20 @@ class Statistics:
         the exact same data frame.
         """
         # Fast paths for repeated read-access to not yet built or finished frame.
+        if len(self._frames) == 0:
+            return pl.DataFrame([], schema=StatisticsSchema)
         if (
-            self._collector is None
-            and len(self._frames) == 1
+            len(self._frames) == 1
+            and self._collector is None
             and not validate
             and group_by is None
         ):
             return self._frames[0]
-        elif len(self._frames) == 0:
-            return pl.DataFrame([], schema=StatisticsSchema)
 
         # Combine frame fragments into one frame
         all_frames = list(self._frames)
         if self._collector is not None:
-            all_frames.append(self._collector.frame())
+            all_frames.append(self._collector.frame(group_by="day"))
         frame = pl.concat(all_frames, how="vertical")
 
         # Take care of validation and grouping
@@ -948,8 +948,8 @@ class Statistics:
         """Write this statistics frame to the given directory."""
         frame = self.frame()
         if rechunk:
-            self._frames = [frame.rechunk()]
-            frame = self._frames[0]
+            frame = frame.rechunk()
+            self._frames = [frame]
 
         tmp = (directory / self.FILE).with_suffix(".tmp.parquet")
         frame.write_parquet(tmp)
