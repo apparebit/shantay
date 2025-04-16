@@ -175,31 +175,30 @@ class TestPrepare(unittest.TestCase):
             self.assertFileEqual(batch1, FIXTURE / release.batch_file(1))
 
         with self.subTest("analyze release data"):
-            with dataset.analysis_context():
-                collector = Collector()
-                release_metadata = pl.DataFrame(
-                    {
-                        "batch_count": [2],
-                        "total_rows": [665],
-                        "total_rows_with_keywords": [212],
-                    }
-                )
-                dataset.analyze_release(
-                    STAGING, release.to_monthly(), release_metadata, collector
-                )
+            collector = Collector()
+            release_metadata = pl.DataFrame(
+                {
+                    "batch_count": [2],
+                    "total_rows": [665],
+                    "total_rows_with_keywords": [212],
+                }
+            )
+            dataset.analyze_release(
+                STAGING, release.to_monthly(), release_metadata, collector
+            )
 
-                frame = collector.frame()
-                frame_data = frame.to_dict(as_series=False)
+            frame = collector.frame()
+            frame_data = frame.to_dict(as_series=False)
 
-                # import pprint
+            # import pprint
 
-                # with open("data.txt", mode="w", encoding="utf8") as file:
-                #     pprint.pprint(frame_data, stream=file)
+            # with open("data.txt", mode="w", encoding="utf8") as file:
+            #     pprint.pprint(frame_data, stream=file)
 
-                self.assertEqual(frame_data, EXPECTED_ANALYSIS)
+            self.assertEqual(frame_data, EXPECTED_ANALYSIS)
 
-                # Write to parquet
-                frame.write_parquet(STAGING / Statistics.FILE)
+            # Write to parquet
+            frame.write_parquet(STAGING / Statistics.FILE)
 
         with self.subTest("check log file"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)
