@@ -147,9 +147,7 @@ def visualize(storage: Storage, coverage: Coverage, notebook: bool = False) -> N
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(
-        storage.working_root, storage.staging_root, coverage, renderer
-    )
+    visualizer = Visualizer(storage, coverage, renderer)
     visualizer.run()
 
 
@@ -242,19 +240,21 @@ class Visualizer:
 
     def __init__(
         self,
-        staging_root: Path,
-        persistent_root: Path,
+        storage: Storage,
         coverage: Coverage,
         renderer: Renderer,
         with_extras: bool = False
     ) -> None:
-        self._staging_root = staging_root
-        self._persistent_root = persistent_root
+        self._storage = storage
         self._coverage = coverage
         self._with_extras = with_extras
         self._renderer = renderer
         self._timelines = False
         self._timestamp = dt.datetime.now()
+
+    @property
+    def persistent_root(self) -> Path:
+        return self._storage.working_root
 
     @staticmethod
     def configure_display() -> None:
@@ -326,7 +326,7 @@ class Visualizer:
         self._document.write("\n\n")
 
     def run(self) -> None:
-        path = self._staging_root / "overview.html"
+        path = self._storage.staging_root / "overview.html"
         self.configure_display()
         self.ingest()
 
@@ -346,9 +346,9 @@ class Visualizer:
 
     def ingest(self) -> None:
         range, metadata = collect_release_metadata(
-            Metadata.read_json(self._persistent_root).records
+            Metadata.read_json(self.persistent_root).records
         )
-        statistics = Statistics.read(self._persistent_root)
+        statistics = Statistics.read(self.persistent_root)
         date_range = statistics.range().intersection(
             self._coverage.to_date_range(), empty_ok=False
         ).monthlies().date_range() # Restrict to full months
