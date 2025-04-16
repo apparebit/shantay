@@ -286,7 +286,10 @@ def _run(args: list[str]) -> None:
         if options.task == "prepare":
             Metadata.copy_json(storage.staging_root, storage.working_root)
         elif options.task in ("analyze", "summarize"):
-            stats = Statistics.read(storage.staging_root)
+            stats = Statistics.read(
+                storage.staging_root if options.task == "summarize"
+                else storage.working_root
+            )
             print("\n")
             print(stats.summary())
 
