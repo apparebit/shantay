@@ -17,6 +17,7 @@ from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
     MetadataEntry, Release, Storage
 )
+from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
 from .stats import check_platform_names, Collector, Statistics
 from .util import annotate_error, scale_time
@@ -373,6 +374,7 @@ class Processor[R: Release]:
         collector = Collector()
 
         for index, release in enumerate(range):
+            check_not_cancelled()
             self.analyze_working_release(release, metadata, collector)
             self._progress.step(index + 1, extra=release.id)
         return self._dataset.combine_releases(
@@ -450,6 +452,8 @@ class Processor[R: Release]:
 
         # Archived files are archives, too. Unarchive one at a time.
         for index, name in enumerate(filenames):
+            check_not_cancelled()
+
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
 
