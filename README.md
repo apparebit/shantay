@@ -33,12 +33,12 @@ $ uvx shantay -h
 ```
 
 In either case, *shantay* will output its help message, which describes command
-line options and tasks in detail. But to get you acquainted, here are a few
-examples:
+line options and tasks in detail. But to get you acquainted, here are some
+choice examples.
 
 The EU started operating the database on the 25th of September, 2023. To
-download the daily releases for that year and determine summary statistics for
-them, you execute:
+download the daily releases for that year and determine their summary
+statistics, execute:
 
 ```
 $ uvx shantay --archive <directory> --last 2023-12-31 summarize
@@ -47,9 +47,9 @@ $ uvx shantay --archive <directory> --last 2023-12-31 summarize
 Except, you want to replace `<directory>` with the path to a directory suitable
 for storing the complete database.
 
-The previous command will run for a while, downloading and analyzing release
-after release after release. Depending on your hardware, using more than one
-process for downloading and analyzing the data may be faster. The following
+The previous command will run for quite a while, downloading and analyzing
+release after release after release. Depending on your hardware, using more than
+one process for downloading and analyzing the data may be faster. The following
 invocation, for example, uses three worker processes for downloading and
 analyzing data:
 
@@ -63,16 +63,21 @@ When running with parallel worker processes, *shantay*'s original process serves
 as coordinator. Notably, it updates the status display on the console and writes
 log entries to a file, by default `shantay.log` in the current working
 directory. Note that the queue-based forwarding mechanism preserves the ordering
-of messages originating from the same process but no more. Messages from
-different processes may be arbitrarily interleaved.
+of messages originating from the same process but no more. In particular,
+messages from different processes may be arbitrarily interleaved.
 
 Once *shantay* is done downloading and summarizing the daily releases for 2023,
-you'll find a `statistics.parquet` file in the archive's root directory. To
-visualize that same data, execute:
+you'll find a `statistics.parquet` file in the archive's root directory. It
+contains the summary statistics at day-granularity. To visualize that same data,
+execute:
 
 ```
-$ uvx shantay --archive <directory> visualize
+$ uvx shantay --archive <directory> --with-archive visualize
 ```
+
+The `--with-archive` option selects the output of the summarize task for
+visualization. You may use `--with-working` for the alternative dataset, even
+though it already is the default.
 
 Once finished, you'll find an `overview.html` document with all charts in the
 default staging directory `dsa-db-staging`.
@@ -192,10 +197,10 @@ prepare, analyze, and summarize. In basic testing, that yielded a speedup of
 
 In the current implementation, the summarize task yields information about the
 entire transparency database, but `prepare` and `analyze` produce information
-specific to the protection of minors, the focus of my own research. Still, most
-of the code doing the preparing and analyzing is entirely generic and not tied
-to a specific category of statements of reasons. Furthermore, even visualization
-is driven by declarative schemas defined in the
+specific to the protection of minors, the focus of my own research, or any other
+statement category. Still, most of the code doing the preparing and analyzing is
+entirely generic and not tied to a specific category of statements of reasons.
+Furthermore, even visualization is driven by declarative schemas defined in the
 [`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
 module, which ensures that they are easily reconfigurable and reusable.
 
