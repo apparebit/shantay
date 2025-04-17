@@ -12,6 +12,7 @@ PlatformNames = (
     "Adobe Lightroom",
     "AliExpress",
     "Amazon",
+    "Amazon Store",
     "App Store",
     "Badoo",
     "bolha.com",
@@ -52,9 +53,9 @@ PlatformNames = (
     "TikTok",
     "Tinder",
     "Twitch",
-    "VSCO",
     "Vimeo",
     "Vinted",
+    "VSCO",
     "Wallapop",
     "WhatsApp",
     "willhaben",
@@ -72,7 +73,7 @@ class MissingPlatformError(Exception):
     pass
 
 
-def update(names: Sequence[str]) -> None:
+def do_update(names: Sequence[str]) -> None:
     with open(__file__, mode="r", encoding="utf8") as file:
         source_code = file.read()
 
@@ -80,12 +81,12 @@ def update(names: Sequence[str]) -> None:
     header, assign_open, _ = source_code.partition("\nPlatformNames = (\n")
     _, assign_close, footer = source_code.partition("\n)")
 
-    names_too = "\n".join(f'    "{n}",' for n in sorted(names))
+    names_too = "\n".join(f'    "{n}",' for n in sorted(names, key=lambda n: n.lower()))
     with open(__file__, mode="w", encoding="utf8") as file:
         file.write(f"{header}{assign_open}{names_too}{assign_close}{footer}")
 
 
-def check_platform_names(label: str, frame: pl.DataFrame) -> None:
+def do_check_platform_names(label: str, frame: pl.DataFrame) -> None:
     used_names = frame.select(
         pl.col("platform_name").unique()
     ).get_column("platform_name")
@@ -100,23 +101,25 @@ def check_platform_names(label: str, frame: pl.DataFrame) -> None:
 
     all_names = list(PlatformNames)
     all_names.extend(unknown_names)
-    update(all_names)
+    do_update(all_names)
 
-    raise MissingPlatformError(f"""\
+    raise MissingPlatformError(f"""
+
 >> Please rerun shantay with the same command line arguments! <<
 
 The transparency data for {label} includes
-the following platforms for the first time:
-{"\n".join("    * {n}" for n in unknown_names)}
+the following platform(s) for the very first time:
+{"\n".join(f"    * {n}" for n in unknown_names)}
 
-Shantay includes platform names in the schema for its summary
-statistics, which must be updated to include the above platforms.
-In fact, shantay has already updated its internal list of
-known platform names and needs to be restarted.
+Since shantay includes platform names in the `variant` column of
+the summary statistics, the corresponding enumeration type must
+include all platforms. It takes three steps to make that happen:
 
-Please run shantay again with the exact same command line
-arguments as the last run. Shantay will migrate the summary
-statistics to the new schema and then resume processing daily
-database releases, redoing only the work for the release that
-included the new platforms.
+ 1. *Automatic*: Add platform name(s) to the list of platforms.
+    Conveniently, Shantay already did that.
+ 2. *Manual*: Please restart shantay to pick up the modified list.
+    Use the same command line arguments as for the failed run.
+ 3. *Automatic*: Upgrade existing data frames to the new schema.
+    Shantay does so, when processing the failing batch again.
+
 """)
