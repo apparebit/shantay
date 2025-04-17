@@ -766,8 +766,8 @@ class _Summarizer:
 
 def check_platform_names(release: Release, batch: int, frame: pl.DataFrame) -> None:
     """Check for unknown platform names in the given data frame"""
-    from ._platform import check_platform_names
-    check_platform_names(f"release {release.id}, batch {batch}", frame)
+    from ._platform import do_check_platform_names
+    do_check_platform_names(f"release {release.id}, batch {batch}", frame)
 
 
 class Statistics:

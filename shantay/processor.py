@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 import shutil
 import time
-from typing import cast, NoReturn
+from typing import cast, Literal, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
@@ -39,12 +39,14 @@ class Processor[R: Release]:
         coverage: Coverage[R],
         metadata: Metadata,
         progress: Progress = NO_PROGRESS,
+        frequency: Literal["daily", "monthly"] = "monthly",
     ) -> None:
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
         self._metadata = metadata
         self._progress = progress
+        self._frequency: Literal["daily", "monthly"] = frequency
         self._runtime = 0.0
 
     @property
@@ -484,7 +486,9 @@ class Processor[R: Release]:
 
     def visualize(self) -> None:
         """Visualize the analysis results."""
-        visualize(self._storage, self._coverage, notebook=False)
+        visualize(
+            self._storage, self._coverage, notebook=False, frequency=self._frequency
+        )
 
 
 def extracted_data_exists(root: Path, release: Release, metadata: Metadata) -> bool:

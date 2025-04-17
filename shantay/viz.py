@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod
 import datetime as dt
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, Literal
 
 import altair as alt
 import mistune
@@ -12,7 +12,8 @@ from .color import (
     BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
-    aggregates, collect_release_metadata, is_row_within_period, NOT_NULL, predicate
+    aggregates, collect_release_metadata, is_row_within_period, NOT_NULL,
+    predicate
 )
 from .metadata import Metadata
 from .model import ConfigError, Coverage, Storage
@@ -142,12 +143,17 @@ DOC_FOOTER = """\
 # --------------------------------------------------------------------------------------
 
 
-def visualize(storage: Storage, coverage: Coverage, notebook: bool = False) -> None:
+def visualize(
+    storage: Storage,
+    coverage: Coverage,
+    notebook: bool = False,
+    frequency: Literal["daily", "monthly"] = "monthly",
+) -> None:
     charts = storage.staging_root / "charts"
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(storage, coverage, renderer)
+    visualizer = Visualizer(storage, coverage, renderer, frequency=frequency)
     visualizer.run()
 
 
@@ -243,7 +249,8 @@ class Visualizer:
         storage: Storage,
         coverage: Coverage,
         renderer: Renderer,
-        with_extras: bool = False
+        with_extras: bool = False,
+        frequency: Literal["daily", "monthly"] = "monthly"
     ) -> None:
         self._storage = storage
         self._coverage = coverage
@@ -251,10 +258,14 @@ class Visualizer:
         self._renderer = renderer
         self._timelines = False
         self._timestamp = dt.datetime.now()
+        self._frequency = frequency
 
     @property
     def persistent_root(self) -> Path:
-        return self._storage.working_root
+        return (
+            self._storage.archive_root if self._frequency == "daily"
+            else self._storage.working_root
+        )
 
     @staticmethod
     def configure_display() -> None:
@@ -345,7 +356,7 @@ class Visualizer:
                 self._document = None
 
     def ingest(self) -> None:
-        range, metadata = collect_release_metadata(
+        _, metadata = collect_release_metadata(
             Metadata.read_json(self.persistent_root).records
         )
         statistics = Statistics.read(self.persistent_root)
@@ -457,7 +468,7 @@ class Visualizer:
         self.render_standard_timelines()
 
         self.html("<h2>Platforms</h2>")
-        self.chart("platform-counts", self.monthly_cumulative_platform_counts())
+        self.chart("platform-counts", self.cumulative_platform_counts())
 
         self.chart("platform-statements", alt.vconcat(
             self.overall_statements_by_platform(),
@@ -477,7 +488,10 @@ class Visualizer:
         self.render_standard_timelines("CSAM")
 
     def render_standard_timelines(self, tag: None | str = None) -> None:
-        name = f"{tag.lower()}-monthlies" if tag else "monthlies"
+        if self._frequency == "monthly":
+            name = f"{tag.lower()}-monthlies" if tag else "monthlies"
+        else:
+            name = f"{tag.lower()}-dailies" if tag else "more-dailies"
 
         self.chart(name, alt.vconcat(
             self.render_timeline(ProcessingDelay, tag),
@@ -663,6 +677,10 @@ class Visualizer:
         spec: MetricDeclaration,
         tag: None | str = None,
     ) -> alt.Chart:
+        """
+        Generate the standard timeline chart. The data frame may contain daily
+        or monthly summary statistics.
+        """
         quantity = {
             "count": "Counts",
             "min": "Minima",
@@ -670,11 +688,11 @@ class Visualizer:
             "max": "Maxima",
         }[spec.quantity]
 
-        bar_props: dict[str, Any] = dict(
+        bar_area_props: dict[str, Any] = dict(
             tooltip=True,
         )
         if not spec.has_variants():
-            bar_props["color"] = GRAY
+            bar_area_props["color"] = GRAY
 
         color_coding = []
         if spec.has_variants():
@@ -685,13 +703,22 @@ class Visualizer:
                 ).title(spec.label),
             )
 
-        return alt.Chart(
+        chart = alt.Chart(
             table,
-            title=f"{spec.label}{f" for {tag}" if tag else ""} — Monthly {quantity}"
-        ).mark_bar(
-            **bar_props,
-        ).encode(
-            alt.X("start_date:T").title("Month"),
+            title=(
+                f"{spec.label}{f" for {tag}" if tag else ""} "
+                f"— {"Monthly" if self._frequency == "monthly" else "Daily"} {quantity}"
+            )
+        )
+
+        if self._frequency == "monthly":
+            chart = chart.mark_bar(**bar_area_props)
+        else:
+            chart = chart.mark_area(**bar_area_props)
+
+        return chart.encode(
+            alt.X("start_date:T")
+            .title("Month" if self._frequency == "monthly" else "Day"),
             alt.X2("end_date:T").title(""),
             alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label),
             *color_coding,
@@ -716,17 +743,19 @@ class Visualizer:
             index=["start_date", "end_date"]
         )
 
-    def monthly_cumulative_platform_counts(self) -> alt.Chart:
+    def cumulative_platform_counts(self) -> alt.Chart:
         ALL = "All Platforms"
         KEY = "Platforms w/ Keywords"
         CSAM = "Platforms w/ CSAM"
 
         table = self._statistics.frame().lazy().with_columns(
             (pl.col("start_date") + dt.timedelta(days=15)).alias("mid_date"),
-        ).group_by(
+        ).group_by(*[
             pl.col("mid_date").dt.year().alias("year"),
             pl.col("mid_date").dt.month().alias("month"),
-        ).agg(
+        ] + [] if self._frequency == "monthly" else [
+            pl.col("mid_date").dt.day().alias("day")
+        ]).agg(
             pl.col("mid_date").first(),
             pl.col("variant").filter(pl.col("column").eq("platform_name")).alias(ALL),
             pl.col("variant").filter(
@@ -752,15 +781,17 @@ class Visualizer:
             value_name="Count",
         ).collect()
 
+        freq = "Monthly" if self._frequency == "monthly" else "Daily"
         return (
             alt.Chart(
                 table,
                 title="Platforms Submitting Protection of Minors SoRs — "
-                "Cumulative Monthly Counts"
+                f"Cumulative {freq} Counts"
             ).mark_line(
                 tooltip=True
             ).encode(
-                alt.X("mid_date:T").title("Month"),
+                alt.X("mid_date:T")
+                .title("Month" if self._frequency == "monthly" else "Day"),
                 alt.Y("Count:Q").title("Number of Platforms"),
                 alt.Color("Kind:N").scale(
                     domain=[CSAM, KEY, ALL],

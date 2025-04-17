@@ -117,6 +117,12 @@ def _parse_options(args: list[str]) -> Any:
     )
 
     parser.add_argument(
+        "--daily",
+        help="visualize the daily statistics stored in the archive root instead of "
+        "the more limited monthly working set."
+    )
+
+    parser.add_argument(
         "task",
         choices=["recover", "prepare", "analyze", "summarize", "visualize"],
         default="prepare",
@@ -264,6 +270,7 @@ def _run(args: list[str]) -> None:
         and 1 < options.multiproc
     ):
         dataset = StatementsOfReasons()
+        # As long as multiprocessor doesn't process visualize, no need for frequency.
         processor = Multiprocessor(
             dataset=dataset,
             storage=storage,
@@ -279,7 +286,8 @@ def _run(args: list[str]) -> None:
             storage=storage,
             coverage=coverage,
             metadata=metadata,
-            progress=Progress()
+            progress=Progress(),
+            frequency="daily" if options.daily else "monthly",
         )
         processor.run(options.task)
 

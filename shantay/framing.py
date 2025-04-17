@@ -111,6 +111,15 @@ def resolve_query_binding(s: str) -> QueryExpression:
 # --------------------------------------------------------------------------------------
 
 
+def get_frequency(frame: pl.DataFrame) -> Literal["daily", "monthly"]:
+    """
+    Determine the frequency for summary statistics, which can be daily or
+    monthly
+    """
+    start_date, end_date, *_ = frame.row(0)
+    return "daily" if start_date == end_date else "monthly"
+
+
 class NoArgumentProvided:
     """See description of `predicate()`"""
     pass
