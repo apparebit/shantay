@@ -590,21 +590,10 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
 }, quant_label="SoRs with Keyword")
 
 
-from ._platform import PlatformNames
-
-
-CANONICAL_PLATFORM_NAMES = MappingProxyType({
-    "Adobe Photoshop Lightroom": "Adobe Lightroom",
-    "Discord Netherlands B.V.": "Discord",
-    "Meetic SAS": "Meetic",
-    "Microsoft Teams personal": "Microsoft Teams",
-    "OTTO Market": "OTTO",
-    "Quora Ireland Limited": "Quora",
-    "Vinted UAB": "Vinted",
-    "WhatsApp Channels": "WhatsApp",
-    "willhaben internet service GmbH & Co KG": "willhaben",
-    "www.gutefrage.net": "gutefrage.net"
-})
+from ._platform import (
+    CanonicalPlatformNames as CanonicalPlatformNames,
+    PlatformNames as PlatformNames,
+)
 
 
 ProcessingDelay = MetricDeclaration(

@@ -6,7 +6,10 @@
 # ===========================
 
 from collections.abc import Sequence
+import json
+from types import MappingProxyType
 import polars as pl
+
 
 PlatformNames = (
     "Adobe Lightroom",
@@ -33,6 +36,7 @@ PlatformNames = (
     "Hotel Hideaway",
     "Idealo",
     "Instagram",
+    "Joom",
     "Kleinanzeigen",
     "leboncoin",
     "LinkedIn",
@@ -66,7 +70,19 @@ PlatformNames = (
 )
 
 
-PLATFORM_NAMES = frozenset(PlatformNames)
+CanonicalPlatformNames = MappingProxyType({
+    "Adobe Photoshop Lightroom": "Adobe Lightroom",
+    "Discord Netherlands B.V.": "Discord",
+    "Meetic SAS": "Meetic",
+    "Microsoft Teams personal": "Microsoft Teams",
+    "OTTO Market": "OTTO",
+    "Quora Ireland Limited": "Quora",
+    'SIA "JOOM"': "Joom",
+    "Vinted UAB": "Vinted",
+    "WhatsApp Channels": "WhatsApp",
+    "willhaben internet service GmbH & Co KG": "willhaben",
+    "www.gutefrage.net": "gutefrage.net"
+})
 
 
 class MissingPlatformError(Exception):
@@ -81,19 +97,24 @@ def do_update(names: Sequence[str]) -> None:
     header, assign_open, _ = source_code.partition("\nPlatformNames = (\n")
     _, assign_close, footer = source_code.partition("\n)")
 
-    names_too = "\n".join(f'    "{n}",' for n in sorted(names, key=lambda n: n.lower()))
+    names_too = "\n".join(
+        f'    "{json.dumps(n)}",' for n in sorted(names, key=lambda n: n.lower())
+    )
     with open(__file__, mode="w", encoding="utf8") as file:
         file.write(f"{header}{assign_open}{names_too}{assign_close}{footer}")
 
 
-def do_check_platform_names(label: str, frame: pl.DataFrame) -> None:
+_KNOWN_PLATFORM_NAMES = frozenset(PlatformNames)
+
+
+def detect_new_platform_names(label: str, frame: pl.DataFrame) -> None:
     used_names = frame.select(
         pl.col("platform_name").unique()
     ).get_column("platform_name")
 
     unknown_names = []
     for name in used_names:
-        if name not in PLATFORM_NAMES:
+        if name not in _KNOWN_PLATFORM_NAMES:
             unknown_names.append(name)
 
     if len(unknown_names) == 0:

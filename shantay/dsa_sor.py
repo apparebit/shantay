@@ -13,9 +13,8 @@ from .model import (
     CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, Release
 )
 from .progress import NO_PROGRESS, Progress
-from .schema import (
-    BASE_SCHEMA, PARTIAL_SCHEMA, CANONICAL_PLATFORM_NAMES, SCHEMA, TerritorialAlias
-)
+from .schema import BASE_SCHEMA, CanonicalPlatformNames, PARTIAL_SCHEMA, SCHEMA, TerritorialAlias
+
 from .stats import Statistics
 from .util import annotate_error
 
@@ -299,7 +298,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     .then(pl.lit("[\"EU\"]"))
                     .otherwise(pl.col("territorial_scope"))
                     .alias("territorial_scope"),
-                pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES),
+                pl.col("platform_name").replace(CanonicalPlatformNames),
             )
             # Parse list-valued columns (assumes no [] values)
             .with_columns(
@@ -380,7 +379,7 @@ class StatementsOfReasons(Dataset[Daily]):
         # executing collect(). Even if eager processing is a bit slower, it
         # provides a more consistent appearance of progress.
         working_data = pl.read_parquet(glob).with_columns(
-            pl.col("platform_name").replace(CANONICAL_PLATFORM_NAMES)
+            pl.col("platform_name").replace(CanonicalPlatformNames)
         )
         collector.collect(release, working_data, metadata=metadata)
 
