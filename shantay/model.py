@@ -1,7 +1,6 @@
 from abc import abstractmethod, ABCMeta
 from collections import Counter
 from collections.abc import Iterator
-from contextlib import AbstractContextManager
 from dataclasses import dataclass
 import datetime as dt
 from pathlib import Path
@@ -493,6 +492,9 @@ class Coverage[R: Release]:
 
     def to_date_range(self) -> DateRange:
         return DateRange(self.first.start_date, self.last.end_date)
+
+
+type StatSource = Literal[None, "archive", "working"]
 
 
 class CollectorProtocol[R: Release](Protocol):

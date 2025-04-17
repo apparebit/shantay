@@ -12,11 +12,11 @@ from .color import (
     BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
-    aggregates, collect_release_metadata, is_row_within_period, NOT_NULL,
+    aggregates, collect_release_metadata, get_frequency, is_row_within_period, NOT_NULL,
     predicate
 )
 from .metadata import Metadata
-from .model import ConfigError, Coverage, Storage
+from .model import ConfigError, Coverage, StatSource, Storage
 from .schema import (
     AutomatedDecision, AutomatedDetection,
     ContentType, DecisionAccount, DecisionGroundAndLegality, DecisionMonetary,
@@ -147,13 +147,13 @@ def visualize(
     storage: Storage,
     coverage: Coverage,
     notebook: bool = False,
-    frequency: Literal["daily", "monthly"] = "monthly",
+    stat_source: StatSource = None,
 ) -> None:
     charts = storage.staging_root / "charts"
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(storage, coverage, renderer, frequency=frequency)
+    visualizer = Visualizer(storage, coverage, renderer, stat_source)
     visualizer.run()
 
 
@@ -249,8 +249,8 @@ class Visualizer:
         storage: Storage,
         coverage: Coverage,
         renderer: Renderer,
+        stat_source: StatSource,
         with_extras: bool = False,
-        frequency: Literal["daily", "monthly"] = "monthly"
     ) -> None:
         self._storage = storage
         self._coverage = coverage
@@ -258,12 +258,12 @@ class Visualizer:
         self._renderer = renderer
         self._timelines = False
         self._timestamp = dt.datetime.now()
-        self._frequency = frequency
+        self._stat_source = stat_source or "working"
 
     @property
     def persistent_root(self) -> Path:
         return (
-            self._storage.archive_root if self._frequency == "daily"
+            self._storage.archive_root if self._stat_source == "archive"
             else self._storage.working_root
         )
 
@@ -360,6 +360,7 @@ class Visualizer:
             Metadata.read_json(self.persistent_root).records
         )
         statistics = Statistics.read(self.persistent_root)
+        self._frequency = get_frequency(statistics.frame())
         date_range = statistics.range().intersection(
             self._coverage.to_date_range(), empty_ok=False
         ).monthlies().date_range() # Restrict to full months

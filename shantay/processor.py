@@ -15,7 +15,7 @@ from .framing import collect_release_metadata, filter_period
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
-    MetadataEntry, Release, Storage
+    MetadataEntry, Release, StatSource, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -39,14 +39,15 @@ class Processor[R: Release]:
         coverage: Coverage[R],
         metadata: Metadata,
         progress: Progress = NO_PROGRESS,
-        frequency: Literal["daily", "monthly"] = "monthly",
+        stat_source: StatSource = None,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
         self._metadata = metadata
         self._progress = progress
-        self._frequency: Literal["daily", "monthly"] = frequency
+        self._stat_source: StatSource = stat_source
+        self._frequency: Literal["daily", "monthly"]
         self._runtime = 0.0
 
     @property
@@ -487,7 +488,7 @@ class Processor[R: Release]:
     def visualize(self) -> None:
         """Visualize the analysis results."""
         visualize(
-            self._storage, self._coverage, notebook=False, frequency=self._frequency
+            self._storage, self._coverage, notebook=False, stat_source=self._stat_source
         )
 
 

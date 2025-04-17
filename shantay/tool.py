@@ -12,7 +12,8 @@ from .dsa_sor import StatementsOfReasons
 from .framing import resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, Storage
+    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, StatSource,
+    Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -109,17 +110,25 @@ def _parse_options(args: list[str]) -> Any:
         help="disable verbose logging, which is the default"
     )
 
+    group = parser.add_argument_group("source statistics for visualization")
+    group.add_argument(
+        "--with-archive",
+        action="store_true",
+        help="visualize the summary statistics stored in the archive root (not working "
+        "root)"
+    )
+    group.add_argument(
+        "--with-working",
+        action="store_true",
+        help="visualize the summary statistics stored in the working root (not archive "
+        "root)"
+    )
+
     parser.add_argument(
         "--multiproc",
         default=1,
         type=int,
         help="use several processes for downloading archives and extracting working data",
-    )
-
-    parser.add_argument(
-        "--daily",
-        help="visualize the daily statistics stored in the archive root instead of "
-        "the more limited monthly working set."
     )
 
     parser.add_argument(
@@ -148,7 +157,7 @@ def get_storage(options: Any) -> Storage:
     )
 
 
-def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
+def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, StatSource]:
     # Handle --archive, --working, and --staging options
     storage = get_storage(options)
 
@@ -220,9 +229,22 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata]:
             "only prepare, analyze, and summarize support more than one process"
         )
 
+    # Handle --with-archive and --with-working
+    if options.with_archive and options.with_working:
+        raise ConfigError("--with-archive and --with-working are mutually exclusive")
+    if (options.with_archive or options.with_working) and options.task != "visualize":
+        raise ConfigError(
+            "--with-archive and --with-working control `visualize` task only"
+        )
+    stat_source = None
+    if options.with_archive:
+        stat_source = "archive"
+    if options.with_working:
+        stat_source = "working"
+
     # Finish it all up
     coverage = Coverage(Release.of(first), Release.of(last), filter_value)
-    return storage, coverage, metadata
+    return storage, coverage, metadata, stat_source
 
 
 def configure_printing() -> None:
@@ -263,14 +285,15 @@ def _run(args: list[str]) -> None:
         fsck(storage.working_root, progress=Progress())
         return
 
-    storage, coverage, metadata = get_configuration(options)
+    storage, coverage, metadata, stat_source = get_configuration(options)
 
     if (
         options.task in ("prepare", "analyze", "summarize")
         and 1 < options.multiproc
     ):
         dataset = StatementsOfReasons()
-        # As long as multiprocessor doesn't process visualize, no need for frequency.
+        # Since the multiprocessor doesn't do `visualize`, there is no need for
+        # stat_source either
         processor = Multiprocessor(
             dataset=dataset,
             storage=storage,
@@ -287,7 +310,7 @@ def _run(args: list[str]) -> None:
             coverage=coverage,
             metadata=metadata,
             progress=Progress(),
-            frequency="daily" if options.daily else "monthly",
+            stat_source=stat_source,
         )
         processor.run(options.task)
 
