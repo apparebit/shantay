@@ -6,7 +6,6 @@ import os
 import signal
 import sys
 import time
-import traceback
 from types import FrameType
 from typing import Any
 
@@ -16,6 +15,9 @@ from .model import Coverage, DataFrameType, Dataset, Release, Storage
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_data_exists, Processor
 from .stats import Collector, Statistics
+
+
+_PID = os.getpid()
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -57,7 +59,7 @@ class Multiprocessor[R: Release]:
         assert self._pool is not None
         self._task = task
 
-        _logger.info('running multiprocessor with pid=%d, task="%s"', os.getpid(), task)
+        _logger.info('running multiprocessor with pid=%d, task="%s"', _PID, task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
         _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
@@ -181,16 +183,17 @@ class Multiprocessor[R: Release]:
         assert self._pool is not None
 
         try:
-            result = future.result()
-        except Cancelled as x:
-            _logger.debug('worker=%d, status="cancelled"', x.pid)
-            return
+            tag, result = future.result()
         except Exception as x:
             # An unexpected exception is a good reason to stop and investigate,
             # not to keep trying with later releases. Hence, we stop here, too.
             _logger.error(
                 'task running in worker pool raised unexpected exception', exc_info=x
             )
+            return
+
+        if tag == "cancel":
+            _logger.debug('worker=%d, status="cancelled"', result)
             return
 
         if self._task == "prepare":
@@ -271,10 +274,13 @@ def run_on_worker[R: Release](
     data frame for the release.
     """
     try:
-        return _run_on_worker(task, dataset, storage, filter, metadata_frame, release)
-    except Exception as x:
-        traceback.print_exception(x)
-        raise
+        result = _run_on_worker(task, dataset, storage, filter, metadata_frame, release)
+        return "value", result
+    except Cancelled:
+        # Since the process pool executor restores all worker exceptions as
+        # instances of the same type (WTF?), we need to communicate the
+        # cancelled condition as a value.
+        return "cancel", _PID
 
 
 def _run_on_worker[R: Release](
@@ -285,8 +291,6 @@ def _run_on_worker[R: Release](
     metadata_frame: DataFrameType,
     release: R,
 ) -> Any:
-    pid = os.getpid()
-
     coverage = Coverage(release, release, filter)
     if task == "prepare":
         metadata = Metadata(filter)
@@ -299,13 +303,13 @@ def _run_on_worker[R: Release](
 
     processor = Processor(
         dataset=dataset,
-        storage=storage.isolate(pid),
+        storage=storage.isolate(_PID),
         coverage=coverage,
         metadata=metadata,
         progress=WorkerProgress(),
     )
 
-    _logger.debug('running task=%s, release="%s", worker=%d', task, release, pid)
+    _logger.debug('running task=%s, release="%s", worker=%d', task, release, _PID)
     if task == "prepare":
         processor.prepare_batches(release)
         record = metadata[release]
@@ -323,6 +327,6 @@ def _run_on_worker[R: Release](
 
     _logger.debug(
         'returning result for task="%s", release="%s", worker=%d',
-        task, release, pid
+        task, release, _PID
     )
     return result
