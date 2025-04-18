@@ -33,6 +33,7 @@ PlatformNames = (
     "DoneDeal.ie",
     "EMAG.BG",
     "EMAG.HU",
+    "EMAG.RO",
     "Facebook",
     "Flights",
     "Google Maps",

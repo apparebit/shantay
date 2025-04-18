@@ -337,6 +337,11 @@ def run(args: list[str]) -> int:
         print("".join(traceback.format_exception(x)))
         print('\ninterrupted by user; terminating...')
         return 1
+    except MissingPlatformError as x:
+        platform = "platform" if len(x.args[2]) == 1 else "platforms"
+        print(f"\nSource data contains new {platform} {", ".join(*x.args[2])}")
+        print("Please rerun shantay with the same command line arguments!")
+        return 1
     except (ConfigError, DownloadFailed, MetadataConflict, MissingPlatformError) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
