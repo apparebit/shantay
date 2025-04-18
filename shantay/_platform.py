@@ -6,7 +6,6 @@
 # ===========================
 
 from collections.abc import Sequence
-import json
 from types import MappingProxyType
 import polars as pl
 
@@ -26,6 +25,7 @@ PlatformNames = (
     "Chrome Web Store",
     "Dailymotion",
     "Discord",
+    "DoneDeal.ie",
     "Facebook",
     "Google Maps",
     "Google Play",
@@ -98,7 +98,8 @@ def do_update(names: Sequence[str]) -> None:
     _, assign_close, footer = source_code.partition("\n)")
 
     names_too = "\n".join(
-        f'    "{json.dumps(n)}",' for n in sorted(names, key=lambda n: n.lower())
+        f'    "{n.replace('\\', '\\\\').replace('"', '\\"')}",'
+        for n in sorted(names, key=lambda n: n.lower())
     )
     with open(__file__, mode="w", encoding="utf8") as file:
         file.write(f"{header}{assign_open}{names_too}{assign_close}{footer}")
