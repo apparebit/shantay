@@ -19,7 +19,10 @@ from .model import (
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
-from .stats import check_platform_names, Collector, Statistics
+from .stats import (
+    check_new_platform_names, Collector, MissingPlatformError, Statistics,
+    update_new_platform_names
+)
 from .util import annotate_error, scale_time
 from .viz import visualize
 
@@ -421,8 +424,13 @@ class Processor[R: Release]:
             if release in stats:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 continue
-
-            self.summarize_archived_release(cast(R, release), stats)
+            try:
+                self.summarize_archived_release(cast(R, release), stats)
+            except MissingPlatformError as x:
+                # This method is only executed during single-process runs and
+                # hence it is safe-ish to update the Python source code.
+                update_new_platform_names(x.args[2])
+                raise
             _logger.debug('writing summary statistics to file="%s"', staged)
             stats.write(self._storage.staging_root)
 
@@ -468,7 +476,10 @@ class Processor[R: Release]:
                 progress=self._progress
             )
 
-            check_platform_names(release, index, frame)
+            # Proactively check for hereto unknown platform names. Since this
+            # method may be executed concurrently by several process pool
+            # workers, we only extract new names here but make no updates.
+            check_new_platform_names(release.id, index, frame)
             collector.collect(release, frame)
 
             # A daily release may comprise over 100 GB of uncompressed CSV data.

@@ -764,10 +764,11 @@ class _Summarizer:
 # =================================================================================================
 
 
-def check_platform_names(release: Release, batch: int, frame: pl.DataFrame) -> None:
-    """Check for unknown platform names in the given data frame"""
-    from ._platform import detect_new_platform_names
-    detect_new_platform_names(f"release {release.id}, batch {batch}", frame)
+from ._platform import (
+    MissingPlatformError as MissingPlatformError,
+    check_new_platform_names as check_new_platform_names,
+    update_new_platform_names as update_new_platform_names,
+)
 
 
 class Statistics:

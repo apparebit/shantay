@@ -6,6 +6,9 @@
 # ===========================
 
 from collections.abc import Sequence
+import logging
+from pathlib import Path
+import re
 from types import MappingProxyType
 import polars as pl
 
@@ -17,16 +20,21 @@ PlatformNames = (
     "Amazon Store",
     "App Store",
     "Badoo",
+    "BlaBlaCar",
     "bolha.com",
     "Booking.com",
     "Bumble",
     "Campfire",
     "Canva",
     "Chrome Web Store",
+    "daft.ie",
     "Dailymotion",
     "Discord",
     "DoneDeal.ie",
+    "EMAG.BG",
+    "EMAG.HU",
     "Facebook",
+    "Flights",
     "Google Maps",
     "Google Play",
     "Google Shopping",
@@ -34,7 +42,9 @@ PlatformNames = (
     "Habbo",
     "Hinge",
     "Hotel Hideaway",
+    "Hotels",
     "Idealo",
+    "Imovirtual",
     "Instagram",
     "Joom",
     "Kleinanzeigen",
@@ -42,6 +52,7 @@ PlatformNames = (
     "LinkedIn",
     "Meetic",
     "Microsoft Teams",
+    "OLX",
     "OTTO",
     "Pinterest",
     "Pornhub",
@@ -49,10 +60,14 @@ PlatformNames = (
     "Rajče",
     "Reddit",
     "Roblox",
+    "Shein",
     "Snapchat",
     "SoundCloud",
+    "Standvirtual",
     "Stripchat",
+    "TAZZ",
     "Temu",
+    "Tenor",
     "Threads",
     "TikTok",
     "Tinder",
@@ -61,6 +76,7 @@ PlatformNames = (
     "Vinted",
     "VSCO",
     "Wallapop",
+    "Waze",
     "WhatsApp",
     "willhaben",
     "X",
@@ -89,26 +105,13 @@ class MissingPlatformError(Exception):
     pass
 
 
-def do_update(names: Sequence[str]) -> None:
-    with open(__file__, mode="r", encoding="utf8") as file:
-        source_code = file.read()
-
-    # Beware that patterns include the leading and trailing newlines!
-    header, assign_open, _ = source_code.partition("\nPlatformNames = (\n")
-    _, assign_close, footer = source_code.partition("\n)")
-
-    names_too = "\n".join(
-        f'    "{n.replace('\\', '\\\\').replace('"', '\\"')}",'
-        for n in sorted(names, key=lambda n: n.lower())
-    )
-    with open(__file__, mode="w", encoding="utf8") as file:
-        file.write(f"{header}{assign_open}{names_too}{assign_close}{footer}")
-
-
 _KNOWN_PLATFORM_NAMES = frozenset(PlatformNames)
+_logger = logging.getLogger(__spec__.parent)
 
 
-def detect_new_platform_names(label: str, frame: pl.DataFrame) -> None:
+# release is a string to avoid dependency on .model module
+def check_new_platform_names(release: str, batch: int, frame: pl.DataFrame) -> None:
+    """Check for previously unknown platform names."""
     used_names = frame.select(
         pl.col("platform_name").unique()
     ).get_column("platform_name")
@@ -120,28 +123,73 @@ def detect_new_platform_names(label: str, frame: pl.DataFrame) -> None:
 
     if len(unknown_names) == 0:
         return
+    for name in unknown_names:
+        _logger.warning(
+            'new platform in release="%s", batch=%d, name="%s"', release, batch, name
+        )
 
-    all_names = list(PlatformNames)
-    all_names.extend(unknown_names)
-    do_update(all_names)
+    raise MissingPlatformError(release, batch, unknown_names)
 
-    raise MissingPlatformError(f"""
 
->> Please rerun shantay with the same command line arguments! <<
+_MODULE_PARTS = re.compile(
+    r"""
+    ^
+    (?P<prefix>.*?)
+    PlatformNames [ ][=][ ][(][\n]
+        (?P<names>[^)]*)
+    [)]
+    (?P<suffix>.*)
+    $
+    """,
+    re.VERBOSE | re.DOTALL
+)
 
-The transparency data for {label} includes
-the following platform(s) for the very first time:
-{"\n".join(f"    * {n}" for n in unknown_names)}
 
-Since shantay includes platform names in the `variant` column of
-the summary statistics, the corresponding enumeration type must
-include all platforms. It takes three steps to make that happen:
+def update_new_platform_names(names: Sequence[str]) -> None:
+    """
+    Update the source code of this module with the given platform names. To
+    minimize the possibility of conflicting writes, this function should not be
+    called from a worker process. However, concurrent tool runs can still result
+    in conflicting writes. That is acceptable for three reasons:
 
- 1. *Automatic*: Add platform name(s) to the list of platforms.
-    Conveniently, Shantay already did that.
- 2. *Manual*: Please restart shantay to pick up the modified list.
-    Use the same command line arguments as for the failed run.
- 3. *Automatic*: Upgrade existing data frames to the new schema.
-    Shantay does so, when processing the failing batch again.
+     1. The update to the file itself is an atomic file replace operation. Since
+        that implies whole file updates, it also ensures that the source code is
+        always well-formed (barring bugs in this function).
+     2. This function only adds names to the list of platform names. Hence any
+        order and combination of serializable updates for the same names will
+        always converge on the same final result.
+     3. While concurrent updates may make names appear and disappear again, the
+        restarted run of shantay will likely fail upon the disappeared name
+        again. On the off-chance that it disappears after use, the concatenation
+        of summary statistics will fail eventually.
 
-""")
+    If concatenation fails, human intervention becomes necessary. It entails
+    manually adding new platform names to this module. In other words, in the
+    unlikely worst-case, users have to wait for a new tool release. However,
+    without this module updating itself, waiting for a new tool release is the
+    only option. In other words, the use of self-modifying code is justified.
+    """
+    # Shantay probably imported this module a while ago.
+    # Let's get a more recent version.
+    file = Path(__file__)
+    tmp = file.with_suffix(".tmp.py")
+    source_code = file.read_text(encoding="utf8")
+
+    # Break the module into its parts.
+    parts = _MODULE_PARTS.match(source_code)
+    assert parts is not None
+    prefix = parts.group("prefix")
+    suffix = parts.group("suffix")
+
+    # Rebuild the list of unique platform names and format as source code.
+    all_names = list(eval(f"(\n{parts.group('names')})"))
+    all_names.extend(names)
+    unique_names = frozenset(all_names)
+    new_names = "\n".join(
+        f'    "{n.replace('\\', '\\\\').replace('"', '\\"')}",'
+        for n in sorted(unique_names, key=lambda n: n.lower())
+    )
+
+    # Atomically update this module.
+    tmp.write_text(f"{prefix}PlatformNames = (\n{new_names}\n){suffix}", encoding="utf8")
+    tmp.replace(file)
