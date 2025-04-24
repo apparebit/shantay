@@ -335,21 +335,24 @@ def run(args: list[str]) -> int:
         return 0
     except KeyboardInterrupt as x:
         print("".join(traceback.format_exception(x)))
-        print('\ninterrupted by user; terminating...')
+        print('\x1b[999;999H\n\ninterrupted by user; terminating...')
         return 1
     except MissingPlatformError as x:
-        platform = "platform" if len(x.args[2]) == 1 else "platforms"
-        print(f"\nSource data contains new {platform} {", ".join(*x.args[2])}")
+        platforms = "platform" if len(x.args[2]) == 1 else "platforms"
+        names = ", ".join(f'"{n}"' for n in x.args[2])
+        print(f"\x1b[999;999H\n\nSource data contains new {platforms} {names}")
         print("Please rerun shantay with the same command line arguments!")
         return 1
     except (ConfigError, DownloadFailed, MetadataConflict, MissingPlatformError) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
+        print("\x1b[999;999H\n")
         print(str(x))
         return 1
     except Exception as x:
         # For all other exceptions, that most certainly doesn't hold. They are
         # surprising and we need as much information about them as we can get.
+        print("\x1b[999;999H\n")
         print("".join(traceback.format_exception(x)))
         return 1
     finally:
