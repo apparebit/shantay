@@ -23,8 +23,9 @@ from .framing import (
 )
 from .model import Daily, DateRange, Release
 from .schema import (
-    DurationTransform, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS, TransformType,
-    ValueCountsPlusTransform, VariantValueType, VariantTooValueType
+    CanonicalPlatformNames, DurationTransform, StatisticsSchema, TRANSFORM_COUNT,
+    TRANSFORMS, TransformType, ValueCountsPlusTransform, VariantValueType,
+    VariantTooValueType
 )
 from .util import scale_time
 
@@ -827,9 +828,13 @@ class Statistics:
         """
         frame = pl.read_parquet(
             directory / cls.FILE
-        ).cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        ).with_columns(
+            # Cast to string so that replace matches platform names
+            pl.col("variant").cast(str).replace(CanonicalPlatformNames)
+        ).cast(
+            StatisticsSchema # pyright: ignore[reportArgumentType]
+        )
         return cls(frame)
-
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
 
