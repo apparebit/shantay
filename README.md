@@ -175,7 +175,13 @@ Including the *summarize* and *visualize* tasks used in the above examples,
     downloaded and to collect summary statistics for the entire database.
   * __visualize__ to generate production-quality timeline charts based on the
     statistical data collected for the analyze and summarize tasks.
-    [overview.html](https://apparebit.github.io/shantay/overview.html)
+
+The [overview](https://apparebit.github.io/shantay/overview.html) for the full
+transparency database presents time series with day resolution, whereas the
+[filtered view](https://apparebit.github.io/shantay/child-protection-view.html)
+currently uses month resolution. Even though that is not currently configurable
+from the command line, most of the visualization code transparently adapts to
+the desired resolution.
 
 By definition, summarize produces more comprehensive statistics than prepare &
 analyze. But summarize is also much slower and requires more memory. In fact, it
