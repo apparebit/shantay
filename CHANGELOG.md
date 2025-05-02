@@ -1,5 +1,12 @@
 # Version History for Shantay
 
+## v0.x.x (TBD)
+
+  - Merge metadata from all three root directories (if it exists)
+  - Use canonical mapping to remove parentheses from "Apple Books ~~(ebooks)~~"
+  - Reapply latest canonical mapping when reading statistics data
+
+
 ## v0.2.0 (May 1, 2025)
 
 Shantay now supports analyzing either the entire transparency database, with the
