@@ -363,7 +363,12 @@ class Visualizer:
 
     def ingest(self) -> None:
         _, metadata = collect_release_metadata(
-            Metadata.read_json(self.persistent_root).records
+            Metadata.merge(
+                self._storage.staging_root,
+                self._storage.working_root,
+                self._storage.archive_root,
+                not_exist_ok=True
+            ).records
         )
         statistics = Statistics.read(self.persistent_root)
         self._frequency = get_frequency(statistics.frame())
