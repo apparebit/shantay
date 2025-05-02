@@ -170,7 +170,10 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, StatSo
         filter_value = resolve_query_binding(options.filter)
 
     # Prepare metadata
-    metadata = Metadata.merge(storage.staging_root, storage.working_root, not_exist_ok=True)
+    metadata = Metadata.merge(
+        storage.staging_root, storage.working_root, storage.archive_root,
+        not_exist_ok=True
+    )
     if options.task == "summarize":
         pass
     elif metadata.filter is None:
@@ -336,6 +339,7 @@ def run(args: list[str]) -> int:
         return 0
     except KeyboardInterrupt as x:
         print("".join(traceback.format_exception(x)))
+        # Put cursor into bottom right corner of terminal before printing
         print('\x1b[999;999H\n\ninterrupted by user; terminating...')
         return 1
     except MissingPlatformError as x:

@@ -92,13 +92,11 @@ class Processor[R: Release]:
     def prepare(self) -> None:
         for release in self._coverage:
             self.prepare_batches(release)
-            # If the working root contains a meta.json, then the staging root's
-            # meta.json was created with that file's data. Hence it's perfectly
-            # fine to copy back the JSON after each release. In fact, that
-            # avoids metadata loss if the prepare task is interrupted.
+            # The staging root's meta.json is created by merging the contents of
+            # existing meta.json files in the staging, working, and archive
+            # roots. Hence it's safe to copy back the JSON file after each
+            # release. Not only that, it also prevents data loss.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
-            # Meanwhile the archive copy is just that, a copy. It helps simplify
-            # the logic of visualization.
             Metadata.copy_json(self._storage.staging_root, self._storage.archive_root)
 
     def prepare_batches(self, release: R) -> None:
