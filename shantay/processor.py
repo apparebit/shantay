@@ -97,6 +97,9 @@ class Processor[R: Release]:
             # fine to copy back the JSON after each release. In fact, that
             # avoids metadata loss if the prepare task is interrupted.
             Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
+            # Meanwhile the archive copy is just that, a copy. It helps simplify
+            # the logic of visualization.
+            Metadata.copy_json(self._storage.staging_root, self._storage.archive_root)
 
     def prepare_batches(self, release: R) -> None:
         if (

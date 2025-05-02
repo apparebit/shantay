@@ -260,6 +260,12 @@ class Visualizer:
         self._timestamp = dt.datetime.now()
         self._stat_source = stat_source or "working"
 
+    def has_all_sors(self) -> bool:
+        return self._stat_source == "archive"
+
+    def is_monthly(self) -> bool:
+        return self._frequency == "monthly"
+
     @property
     def persistent_root(self) -> Path:
         return (
@@ -361,6 +367,11 @@ class Visualizer:
         )
         statistics = Statistics.read(self.persistent_root)
         self._frequency = get_frequency(statistics.frame())
+        self._tags = statistics.frame().select(
+            pl.col("tag").drop_nulls().unique()
+        ).get_column(
+            "tag"
+        ).to_list()
         date_range = statistics.range().intersection(
             self._coverage.to_date_range(), empty_ok=False
         ).monthlies().date_range() # Restrict to full months
@@ -381,28 +392,47 @@ class Visualizer:
         ).rename({
             "variant": "keyword"
         }).with_columns(
-            (pl.col("count") / pl.col("count").sum() * 100).alias("pct"),
+            pl.when(
+                pl.col("keyword").is_null()
+            ).then(
+                pl.col("count")
+                / pl.col("count").sum()
+                * 100
+            ).otherwise(
+                pl.col("count")
+                / pl.col("count").filter(pl.col("keyword").is_not_null()).sum()
+                * 100
+            ).alias("pct")
         ).sort(
             pl.col("count"), descending=True
         )
 
         frequent_keywords = (
             self._keyword_usage
-            .filter(1 <= pl.col("pct"))
+            .filter(0.1 <= pl.col("pct"))
             .get_column("keyword")
         )
 
-        self._short_keywords = {
-            k: KeywordsMinorProtection.variants[k][0]
-            for k in frequent_keywords
-            if k is not None
-        }
+        if "CSAM" in self._tags:
+            self._keyword_names = {
+                k: KeywordsMinorProtection.variants[k][0]
+                for k in frequent_keywords
+                if k is not None
+            }
+        else:
+            self._keyword_names = {
+                k: k
+                for k in frequent_keywords
+                if k is not None
+            }
 
     def render_heading(self) -> None:
         self.html(
-            '<h1>The <a href="https://transparency.dsa.ec.europa.eu">DSA '
-            'Transparency Database</a>: Protection of Minors</h1>'
+            '<h1><a href="https://transparency.dsa.ec.europa.eu">The DSA '
+            'Transparency Database</a></h1>'
         )
+        if "CSAM" in self._tags:
+            self.html('<h2>Focus on Protection of Minors</h2>')
         self.html(
             f'<p>Created on {self._timestamp.date().isoformat()} '
             f'at {self._timestamp.time().isoformat()}</p>'
@@ -432,6 +462,11 @@ class Visualizer:
         )
 
         self.html("<h2>Keywords</h2>")
+        self.html(
+            '''\
+<p>The percentage for the "null" keyword denotes the fraction of <em>all</em> SoRs,
+whereas all other percentages denote fractions of SoRs with keywords only.</p>
+            ''')
         self.frame(self._keyword_usage)
         pie = self.overall_keyword_usage()
         self.chart("keyword-pie", pie)
@@ -454,14 +489,18 @@ class Visualizer:
     def render_charts(self) -> None:
         self.html("<h2>Timelines</h2>")
 
-        self.chart("dailies", alt.vconcat(
+        charts: list[alt.Chart | alt.LayerChart] = [
             self.daily_statements_of_reasons(),
             self.daily_statements_of_reasons(rolling_mean_days=7),
-            self.daily_statements_of_reasons(percentage=True),
-            self.daily_statements_of_reasons(rolling_mean_days=7, percentage=True),
-            self.daily_sor_fraction_with_keywords(),
-            self.daily_sor_fraction_with_keywords(rolling_mean_days=7),
-        ).resolve_scale(
+        ]
+
+        if not self.has_all_sors():
+            charts.extend([
+                self.daily_sor_fraction_with_keywords(),
+                self.daily_sor_fraction_with_keywords(rolling_mean_days=7),
+            ])
+
+        self.chart("sor-counts", alt.vconcat(*charts).resolve_scale(
             x="shared",
             color="independent",
         ))
@@ -473,23 +512,27 @@ class Visualizer:
 
         self.chart("platform-statements", alt.vconcat(
             self.overall_statements_by_platform(),
-            self.overall_statements_by_platform(threshold=50_000),
+            self.overall_statements_by_platform(
+                threshold=10_000_000 if self.has_all_sors() else 50_000
+            ),
         ).resolve_scale(
             color="shared",
         ).configure_scale(
             barBandPaddingInner=0.05,
         ))
 
-        self.chart("platform-keywords", alt.vconcat(
-            self.overall_keyword_usage_by_platform(percent=True),
-            self.overall_keyword_usage_by_platform(percent=False),
-        ).resolve_scale(color='independent'))
+        if not self.has_all_sors():
+            self.chart("platform-keywords", alt.vconcat(
+                self.overall_keyword_usage_by_platform(percent=True),
+                self.overall_keyword_usage_by_platform(percent=False),
+            ).resolve_scale(color='independent'))
 
-        self.html("<h3>CSAM SoRs</h3>")
-        self.render_standard_timelines("CSAM")
+        if "CSAM" in self._tags:
+            self.html("<h3>CSAM SoRs</h3>")
+            self.render_standard_timelines("CSAM")
 
     def render_standard_timelines(self, tag: None | str = None) -> None:
-        if self._frequency == "monthly":
+        if self.is_monthly():
             name = f"{tag.lower()}-monthlies" if tag else "monthlies"
         else:
             name = f"{tag.lower()}-dailies" if tag else "more-dailies"
@@ -646,20 +689,30 @@ class Visualizer:
         )
         if spec.selector != "entity":
             filters["entity"] = None
-        if not spec.has_null_variant():
+        if not spec.has_null_variant() and spec.selector not in filters:
             filters[spec.selector] = NOT_NULL
 
         table = self._statistics.frame().filter(
             predicate(**filters)
-        ).group_by(
-            pl.col("start_date").dt.year().alias("year"),
-            pl.col("start_date").dt.month().alias("month"),
-            *spec.groupings(),
-        ).agg(
-            pl.col("start_date").min() + dt.timedelta(days=5),
-            pl.col("end_date").max() - dt.timedelta(days=5),
-            *aggregates()
         )
+
+        if self.is_monthly():
+            table = table.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+                *spec.groupings(),
+            ).agg(
+                pl.col("start_date").min() + dt.timedelta(days=5),
+                pl.col("end_date").max() - dt.timedelta(days=5),
+                *aggregates()
+            )
+        else:
+            table = table.group_by(
+                pl.col("start_date"),
+                *spec.groupings(),
+            ).agg(
+                *aggregates(),
+            )
 
         if spec.has_variants():
             table = table.with_columns(
@@ -695,38 +748,51 @@ class Visualizer:
         if not spec.has_variants():
             bar_area_props["color"] = GRAY
 
-        color_coding = []
+        chart = alt.Chart(
+            table,
+            title=(
+                f"{spec.label}{f" for {tag}" if tag else ""} "
+                f"— {"Monthly" if self.is_monthly() else "Daily"} {quantity}"
+            )
+        )
+
+        if self.is_monthly():
+            chart = chart.mark_bar(**bar_area_props)
+        elif not spec.has_variants():
+            chart = chart.mark_line(**bar_area_props)
+        else:
+            chart = chart.mark_area(**bar_area_props)
+
+        encoding: list[Any] = [
+            alt.X("start_date:T")
+            .title("Month" if self.is_monthly() else "Day"),
+        ]
+        if self.is_monthly():
+            encoding.append(alt.X2("end_date:T").title(""))
+
+        yaxis = alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label)
+        if self.has_all_sors() and spec.quantity == "count":
+            # This does cut off some daily numbers between January and March 2024,
+            # but it also ensures that smaller categories are visible by and large
+            yaxis = yaxis.scale(domain=(0, 120_000_000))
+        encoding.append(yaxis)
+
         if spec.has_variants():
-            color_coding.append(
+            encoding.append(
                 alt.Color(f"{spec.selector}:N").scale(
                     domain=spec.variant_labels(),
                     range=spec.variant_colors(),
                 ).title(spec.label),
             )
 
-        chart = alt.Chart(
-            table,
-            title=(
-                f"{spec.label}{f" for {tag}" if tag else ""} "
-                f"— {"Monthly" if self._frequency == "monthly" else "Daily"} {quantity}"
-            )
-        )
-
-        if self._frequency == "monthly":
-            chart = chart.mark_bar(**bar_area_props)
-        else:
-            chart = chart.mark_area(**bar_area_props)
-
-        return chart.encode(
-            alt.X("start_date:T")
-            .title("Month" if self._frequency == "monthly" else "Day"),
-            alt.X2("end_date:T").title(""),
-            alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label),
-            *color_coding,
+        chart = chart.encode(
+            *encoding
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
         ).interactive()
+
+        return chart
 
     def decision_ground(self, tag: None | str = None) -> pl.DataFrame:
         return self.timeline_data(
@@ -734,14 +800,18 @@ class Visualizer:
         ).pivot(
             on="variant",
             values="count",
-            index=["start_date", "end_date"]
+            index=["start_date"] + (["end_date"] if self.is_monthly() else [])
         ).with_columns(
-            pl.col("Incompatible") - pl.col("Incompatible & Illegal")
+            # Remove incompatible & illegal from incompatible
+            (
+                pl.col("Incompatible") - pl.col("Incompatible & Illegal")
+            )
+            .alias("Incompatible")
         ).unpivot(
             on=["Incompatible", "Illegal", "Incompatible & Illegal"],
             variable_name="variant",
             value_name="count",
-            index=["start_date", "end_date"]
+            index=["start_date"] + (["end_date"] if self.is_monthly() else [])
         )
 
     def cumulative_platform_counts(self) -> alt.Chart:
@@ -754,7 +824,7 @@ class Visualizer:
         ).group_by(*[
             pl.col("mid_date").dt.year().alias("year"),
             pl.col("mid_date").dt.month().alias("month"),
-        ] + [] if self._frequency == "monthly" else [
+        ] + [] if self.is_monthly() else [
             pl.col("mid_date").dt.day().alias("day")
         ]).agg(
             pl.col("mid_date").first(),
@@ -782,17 +852,17 @@ class Visualizer:
             value_name="Count",
         ).collect()
 
-        freq = "Monthly" if self._frequency == "monthly" else "Daily"
+        freq = "Monthly" if self.is_monthly() else "Daily"
         return (
             alt.Chart(
                 table,
-                title="Platforms Submitting Protection of Minors SoRs — "
+                title="Platforms Submitting SoRs with Keywords — "
                 f"Cumulative {freq} Counts"
             ).mark_line(
                 tooltip=True
             ).encode(
                 alt.X("mid_date:T")
-                .title("Month" if self._frequency == "monthly" else "Day"),
+                .title("Month" if self.is_monthly() else "Day"),
                 alt.Y("Count:Q").title("Number of Platforms"),
                 alt.Color("Kind:N").scale(
                     domain=[CSAM, KEY, ALL],
@@ -819,26 +889,31 @@ class Visualizer:
             pl.col("count") >= (threshold if threshold else 1)
         ).collect()
 
+        quantity = "SoRs" if self.has_all_sors() else "Protection of Minors SoRs"
+
         if threshold:
             base = alt.Chart(
                 table,
-                title=f"Protection of Minors SoRs: {table.height} Platforms ≥ "
+                title=f"{quantity}: {table.height} Platforms ≥ "
                 f"{threshold:,} SoRs — Total Counts"
             ).encode(
                 alt.X("variant:N", sort="y")
-                .axis(labelAngle=-45)
+                .axis(labelAngle=-45, labelFontSize=10)
                 .title("Platform"),
                 alt.Y("count:Q")
-                .scale(type="log", domain=(10_000, 100_000_000), clamp=True)
+                .scale(type="log", domain=(
+                    10_000,
+                    30_000_000_000 if self.has_all_sors() else 100_000_000
+                ), clamp=True)
                 .title("log(Statements of Reasons)"),
                 alt.Text("count:Q", format=",d"),
             )
         else:
             base = alt.Chart(
-                table, title="Protection of Minors SoRs by Platform — Total Counts"
+                table, title=f"{quantity} by Platform — Total Counts"
             ).encode(
                 alt.X("variant:N", sort="y")
-                .axis(labelAngle=-45, labelFontSize=8)
+                .axis(labelAngle=-45, labelFontSize=5)
                 .title("Platform"),
                 alt.Y("count:Q")
                 .title("Statements of Reasons"),
@@ -879,7 +954,7 @@ class Visualizer:
         ).with_columns(
             pl.col("variant_too")
             .cast(pl.String)
-            .replace(KeywordsMinorProtection.replacements())
+            .replace(self._keyword_names)
         ).collect()
 
         title = "Platforms' Overall Keyword Usage — "
@@ -904,6 +979,14 @@ class Visualizer:
         y_data = "sum(percent):Q" if percent else "sum(count):Q"
         y_title = "Percent Fraction" if percent else "Statements of Reasons"
 
+        color = alt.Color("variant_too:N")
+        if "CSAM" in self._tags:
+            color = color.scale(
+                domain=KeywordsMinorProtection.variant_labels(),
+                range=KeywordsMinorProtection.variant_colors(),
+            )
+        color = color.title("Keyword")
+
         return alt.Chart(
             frame, title=title
         ).mark_bar(
@@ -912,10 +995,7 @@ class Visualizer:
         ).encode(
             alt.X("variant:N", axis=alt.Axis(labelAngle=-45)).title("Platform"),
             alt.Y(y_data).title(y_title),
-            alt.Color("variant_too:N").scale(
-                domain=KeywordsMinorProtection.variant_labels(),
-                range=KeywordsMinorProtection.variant_colors(),
-            ).title("Keyword")
+            color,
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
@@ -923,21 +1003,21 @@ class Visualizer:
 
     def overall_keyword_usage(self) -> alt.Chart:
         table = self._keyword_usage.filter(
-            pl.col("keyword").is_in(self._short_keywords)
+            pl.col("keyword").is_in(self._keyword_names)
         ).with_columns(
-            pl.col("keyword").cast(pl.String).replace(self._short_keywords)
+            pl.col("keyword").cast(pl.String).replace(self._keyword_names)
         )
 
         return (
             alt.Chart(
-                table, title="Keywords in Protection of Minors SoRs"
+                table, title="Keywords Appearing in > 0.1% of SoRs"
             ).mark_arc(
                 tooltip=True,
             ).encode(
                 alt.Theta("count:Q"),
                 alt.Color("keyword:N").scale(
-                    domain=[*self._short_keywords.values()],
-                    range=KEYWORD_PALETTE[:len(self._short_keywords)],
+                    domain=[*self._keyword_names.values()],
+                    range=KEYWORD_PALETTE[:len(self._keyword_names)],
                 ),
             ).interactive()
         )

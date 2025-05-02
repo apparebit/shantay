@@ -245,7 +245,8 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, StatSo
 
 
 def configure_printing() -> None:
-    pl.Config.set_tbl_rows(100)
+    # As of April 2025, the transparency database contains data for 102 platforms
+    pl.Config.set_tbl_rows(200)
     pl.Config.set_float_precision(3)
     pl.Config.set_thousands_separator(",")
     pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
