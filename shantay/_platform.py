@@ -21,8 +21,8 @@ PlatformNames = (
     "Amazon",
     "Amazon Store",
     "App Store",
-    "Apple Books (ebooks)",
-    "Apple Podcasts Subscriptions",
+    "Apple Books",
+    "Apple Podcasts",
     "Azar",
     "Badoo",
     "Behance",
@@ -126,6 +126,8 @@ PlatformNames = (
 
 CanonicalPlatformNames = MappingProxyType({
     "Adobe Photoshop Lightroom": "Adobe Lightroom",
+    "Apple Books (ebooks)": "Apple Books",
+    "Apple Podcasts Subscriptions": "Apple Podcasts",
     "Discord Netherlands B.V.": "Discord",
     "Meetic SAS": "Meetic",
     "Microsoft Teams personal": "Microsoft Teams",
