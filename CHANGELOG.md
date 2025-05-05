@@ -4,7 +4,8 @@
 
   - Merge metadata from all three root directories (if it exists)
   - Use canonical mapping to remove parentheses from "Apple Books ~~(ebooks)~~"
-  - Reapply latest canonical mapping when reading statistics data
+  - Reapply latest canonical mapping when reading statistics data,
+    thus assuring that the in-memory data always has latest schema
 
 
 ## v0.2.0 (May 1, 2025)
