@@ -412,24 +412,21 @@ class Visualizer:
             pl.col("count"), descending=True
         )
 
-        frequent_keywords = (
+        self._frequent_keywords = (
             self._keyword_usage
-            .filter(0.1 <= pl.col("pct"))
+            .drop_nulls()
+            .filter(1 <= pl.col("pct"))
             .get_column("keyword")
         )
 
         if "CSAM" in self._tags:
             self._keyword_names = {
                 k: KeywordsMinorProtection.variants[k][0]
-                for k in frequent_keywords
+                for k in KeywordsMinorProtection.variants.keys()
                 if k is not None
             }
         else:
-            self._keyword_names = {
-                k: k
-                for k in frequent_keywords
-                if k is not None
-            }
+            self._keyword_names = None
 
     def render_heading(self) -> None:
         self.html(
@@ -510,6 +507,10 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             color="independent",
         ))
 
+        if self.has_all_sors():
+            self.html(
+                "<p>For readability, spikes in statement counts have been cut off.</p>"
+            )
         self.render_standard_timelines()
 
         self.html("<h2>Platforms</h2>")
@@ -569,15 +570,16 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         rolling_mean_days: None | int = None,
         percentage: bool = False,
     ) -> alt.Chart:
+        source = "total_rows" if self.has_all_sors() else "batch_rows"
         table = self._metadata.select(
             pl.col("start_date"),
-            pl.col("batch_rows") / pl.col("total_rows") * 100 if percentage
-            else pl.col("batch_rows") / 1_000,
+            pl.col(source) / pl.col("total_rows") * 100 if percentage
+            else pl.col(source) / 1_000,
         )
 
         if rolling_mean_days is not None:
             table = table.with_columns(
-                pl.col("batch_rows").mean().rolling(
+                pl.col(source).mean().rolling(
                     index_column="start_date", period=f"{rolling_mean_days}d"
                 )
             )
@@ -602,7 +604,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         return chart.encode(
             alt.X("start_date:T").title("Date"),
-            alt.Y("batch_rows:Q").title("Statements of Reasons (Thousands)"),
+            alt.Y(f"{source}:Q").title("Statements of Reasons (Thousands)"),
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
@@ -777,9 +779,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         yaxis = alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label)
         if self.has_all_sors() and spec.quantity == "count":
-            # This does cut off some daily numbers between January and March 2024,
-            # but it also ensures that smaller categories are visible by and large
-            yaxis = yaxis.scale(domain=(0, 120_000_000))
+            # This does cut off around four daily spikes but also ensures that
+            # smaller categories are visible by and large.
+            yaxis = yaxis.scale(domain=(0, 90_000_000))
         encoding.append(yaxis)
 
         if spec.has_variants():
@@ -956,11 +958,16 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.col("variant", "variant_too"),
         ).agg(
             *aggregates()
-        ).with_columns(
-            pl.col("variant_too")
-            .cast(pl.String)
-            .replace(self._keyword_names)
-        ).collect()
+        )
+
+        if self._keyword_names is not None:
+            frame = frame.with_columns(
+                pl.col("variant_too")
+                .cast(pl.String)
+                .replace(self._keyword_names)
+            )
+
+        frame = frame.collect()
 
         title = "Platforms' Overall Keyword Usage — "
         if percent:
@@ -1008,22 +1015,28 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
     def overall_keyword_usage(self) -> alt.Chart:
         table = self._keyword_usage.filter(
-            pl.col("keyword").is_in(self._keyword_names)
-        ).with_columns(
-            pl.col("keyword").cast(pl.String).replace(self._keyword_names)
+            pl.col("keyword").is_in(self._frequent_keywords)
         )
+
+        domain = self._frequent_keywords.to_list()
+        if self._keyword_names is not None:
+            table = table.with_columns(
+                pl.col("keyword").cast(pl.String).replace(self._keyword_names)
+            )
+            domain = [self._keyword_names[key] for key in domain]
+
 
         return (
             alt.Chart(
-                table, title="Keywords Appearing in > 0.1% of SoRs"
+                table, title="Keywords Appearing in > 1% of SoRs"
             ).mark_arc(
                 tooltip=True,
             ).encode(
                 alt.Theta("count:Q"),
                 alt.Color("keyword:N").scale(
-                    domain=[*self._keyword_names.values()],
-                    range=KEYWORD_PALETTE[:len(self._keyword_names)],
-                ),
+                    domain=domain,
+                    range=KEYWORD_PALETTE[:len(self._frequent_keywords)]
+                ).title("Keyword")
             ).interactive()
         )
 
