@@ -151,7 +151,12 @@ _logger = logging.getLogger(__spec__.parent)
 
 # release is a string to avoid dependency on .model module
 def check_new_platform_names(release: str, batch: int, frame: pl.DataFrame) -> None:
-    """Check for previously unknown platform names."""
+    """
+    Check for previously unknown platform names. This function raises an
+    UnknownPlatformError if the data frame uses any unknown names. The three
+    arguments to that error are the release, batch number, and list of unknown
+    names.
+    """
     used_names = frame.select(
         pl.col("platform_name").unique()
     ).get_column("platform_name")
@@ -176,8 +181,8 @@ _MODULE_PARTS = re.compile(
     ^
     (?P<prefix>.*?)
     PlatformNames [ ][=][ ][(][\n]
-        (?P<names>[^)]*)
-    [)]
+        (?P<names>.*?)
+    [\n][)]
     (?P<suffix>.*)
     $
     """,
@@ -185,10 +190,11 @@ _MODULE_PARTS = re.compile(
 )
 
 
-def update_new_platform_names(names: Sequence[str]) -> None:
+def update_new_platform_names(names: Sequence[str]) -> bool:
     """
-    Update the source code of this module with the given platform names. To
-    minimize the possibility of conflicting writes, this function should not be
+    Update the source code of this module with the given platform names.
+
+    To minimize the possibility of conflicting writes, this function must not be
     called from a worker process. However, concurrent tool runs can still result
     in conflicting writes. That is acceptable for three reasons:
 
@@ -196,21 +202,35 @@ def update_new_platform_names(names: Sequence[str]) -> None:
         that implies whole file updates, it also ensures that the source code is
         always well-formed (barring bugs in this function).
      2. This function only adds names to the list of platform names. Hence any
-        order and combination of serializable updates for the same names will
-        always converge on the same final result.
+        order and combination of updates for the same names will eventually
+        converge on the same final result.
      3. While concurrent updates may make names appear and disappear again, the
-        restarted run of shantay will likely fail upon the disappeared name
-        again. On the off-chance that it disappears after use, the concatenation
-        of summary statistics will fail eventually.
+        restarted run of shantay will likely fail on re-encountering deleted
+        names again. On the off-chance that a name is deleted after it has
+        already been counted, the concatenation of summary statistics will fail
+        as it re-applies the statistics schema.
 
     If concatenation fails, human intervention becomes necessary. It entails
     manually adding new platform names to this module. In other words, in the
     unlikely worst-case, users have to wait for a new tool release. However,
     without this module updating itself, waiting for a new tool release is the
-    only option. In other words, the use of self-modifying code is justified.
+    only option. In other words, the use of self-modifying code improves the
+    user experience but does not obviate the need for maintaining an up-to-date
+    list of platform names.
     """
-    # Shantay probably imported this module a while ago.
-    # Let's get a more recent version.
+    # Validate names.
+    for name in names:
+        if '\\' in name:
+            raise ValueError(f"platform name '{name}' contains backslash")
+        if '"' in name:
+            raise ValueError(f"platform name '{name}' contains double quote")
+
+    # Missing platform names become more likely the more recent the DSA entries
+    # being processed. Since a single run of shantay may take a few days, that
+    # implies that this module may have been imported days ago, leaving plenty
+    # of time for another invocation of shantay to make modifications. So before
+    # applying any update, we re-ingest the list from the module source code and
+    # update that version.
     file = Path(__file__)
     tmp = file.with_suffix(".tmp.py")
     source_code = file.read_text(encoding="utf8")
@@ -221,15 +241,21 @@ def update_new_platform_names(names: Sequence[str]) -> None:
     prefix = parts.group("prefix")
     suffix = parts.group("suffix")
 
-    # Rebuild the list of unique platform names and format as source code.
-    all_names = list(eval(f"(\n{parts.group('names')})"))
-    all_names.extend(names)
-    unique_names = frozenset(all_names)
-    new_names = "\n".join(
-        f'    "{n.replace('\\', '\\\\').replace('"', '\\"')}",'
-        for n in sorted(unique_names, key=lambda n: n.casefold())
-    )
+    # Ingest the list of platform names (without eval).
+    old_names = []
+    for line in parts.group("names").splitlines():
+        assert line.startswith('    "')
+        assert line.endswith('",')
+        old_names.append(line[5:-2])
 
-    # Atomically update this module.
-    tmp.write_text(f"{prefix}PlatformNames = (\n{new_names}\n){suffix}", encoding="utf8")
+    # Check whether we need to rewrite this module.
+    old_names = frozenset(old_names)
+    new_names = old_names | frozenset(names)
+    if old_names == new_names:
+        return False
+
+    # Rewrite the source code
+    s = "\n".join(f'    "{n}",' for n in sorted(new_names, key=lambda n: n.casefold()))
+    tmp.write_text(f"{prefix}PlatformNames = (\n{s}\n){suffix}", encoding="utf8")
     tmp.replace(file)
+    return True
