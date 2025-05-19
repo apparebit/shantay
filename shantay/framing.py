@@ -231,8 +231,18 @@ def get_quantity(
     return frame.item() if frame.height == 1 else None
 
 
+def is_daily(frame: pl.DataFrame) -> bool:
+    """Test whether the statistics contain only daily data."""
+    return frame.select(
+        (pl.col("start_date") != pl.col("end_date")).len()
+    ).item() == 0
+
+
 def daily_groupies() -> list[pl.Expr]:
-    """The Pola.rs expressions to `group_by` when computing daily statistics."""
+    """
+    The Pola.rs expressions to `group_by` when computing daily statistics.
+    `is_daily()` must return `True` for the data frame being grouped.
+    """
     return [
         pl.col("start_date"),
         pl.col("end_date"),
@@ -249,6 +259,11 @@ def monthly_groupies() -> list[pl.Expr]:
     return [
         pl.col("start_date").dt.year().alias("year"),
         pl.col("start_date").dt.month().alias("month"),
+        pl.col("tag"),
+        pl.col("column"),
+        pl.col("entity"),
+        pl.col("variant"),
+        pl.col("variant_too"),
     ]
 
 
