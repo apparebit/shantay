@@ -75,8 +75,6 @@ def _validate_row_counts(frame: pl.DataFrame) -> None:
         "incompatible_content_illegal",
         "category",
         "content_language",
-        "moderation_delay",
-        "disclosure_delay",
         "source_type",
         "automated_detection",
         "automated_decision",
@@ -314,8 +312,14 @@ class Collector:
                 case TransformType.DECISION_TYPE:
                     self.collect_decision_type()
                 case DurationTransform(start, end):
-                    # Convert to millseconds, i.e., an integer
-                    duration = (pl.col(end) - pl.col(start)).dt.total_milliseconds()
+                    # Convert positive durations to millseconds, i.e., an integer count
+                    duration = pl.when(
+                        pl.col(start) <= pl.col(end)
+                    ).then(
+                        (pl.col(end) - pl.col(start)).dt.total_milliseconds()
+                    ).otherwise(
+                        pl.lit(None)
+                    )
 
                     self.add_rows(
                         key,
@@ -323,6 +327,12 @@ class Collector:
                         min=duration.min(),
                         mean=duration.mean(),
                         max=duration.max(),
+                    )
+
+                    self.add_rows(
+                        key,
+                        entity="null_bc_negative",
+                        count=(pl.col(start) > pl.col(end)).sum()
                     )
                 case ValueCountsPlusTransform(self_is_list, other_field, other_is_list):
                     self.collect_value_counts_plus(
@@ -566,12 +576,15 @@ class _Summarizer:
                     self.collect1(field_name, "elements_per_row", "max")
                     self.collect1(field_name, "rows_with_elements")
                     self.collect_value_counts(field_name)
-                case DurationTransform(start, end):
+                case DurationTransform(_, _):
                     self.spacer()
                     self.collect1(field_name, quantity="count")
                     self.collect1(field_name, quantity="min")
                     self.collect1(field_name, quantity="mean")
                     self.collect1(field_name, quantity="max")
+                    self.collect1(
+                        field_name, entity="null_bc_negative", quantity="count"
+                    )
                 case ValueCountsPlusTransform(_, other_field, _):
                     self.spacer()
                     self.collect_value_counts(field_name)
@@ -835,6 +848,7 @@ class Statistics:
             StatisticsSchema # pyright: ignore[reportArgumentType]
         )
         return cls(frame)
+
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
 

@@ -903,6 +903,7 @@ EntityValueType = pl.Enum((
     "elements_per_row",
     "rows_with_elements",
     "with_category_specification",
+    "null_bc_negative",
 ))
 
 
