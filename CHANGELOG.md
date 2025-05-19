@@ -2,10 +2,24 @@
 
 ## v0.x.x (TBD)
 
-  - Merge metadata from all three root directories (if it exists)
+Improved handling of platform names:
   - Use canonical mapping to remove parentheses from "Apple Books ~~(ebooks)~~"
-  - Reapply latest canonical mapping when reading statistics data,
-    thus assuring that the in-memory data always has latest schema
+  - Reapply latest canonical mapping for platform names when reading statistics
+  - Enforce that new platform names are well-formed
+  - Do not rely on `eval()` when updating `_platform` module
+
+Improved visualizations:
+  - Increase threshold for frequently used keywords to 1%
+  - Display all keywords when charting platforms' keyword use in percent for
+    working data
+  - Actually chart total statement counts and their rolling mean for full archive
+  - Lower cut-off for statement counts to 90,000,000 statements per day in
+    detail charts
+
+Other, miscellaneous changes:
+  - Merge metadata from all three root directories (if they exist)
+  - Filter out negative durations and track their number
+  - Remove hard-coded assumptions about statistics being daily or monthly
 
 
 ## v0.2.0 (May 1, 2025)
