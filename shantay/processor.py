@@ -477,9 +477,11 @@ class Processor[R: Release]:
                 progress=self._progress
             )
 
-            # Proactively check for hereto unknown platform names. Since this
-            # method may be executed concurrently by several process pool
-            # workers, we only extract new names here but make no updates.
+            # check_new_platform_names probes the data frame for hereto unknown
+            # platform names, raises a MissingPlatformError with any unknown
+            # names, but does not modify the _platform module. Hence, this
+            # method can be safely executed by process pool workers, as long as
+            # they communicate the error and its payload to the coordinator.
             check_new_platform_names(release.id, index, frame)
             collector.collect(release, frame)
 
