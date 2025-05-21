@@ -2,7 +2,7 @@ from abc import ABCMeta, abstractmethod
 import datetime as dt
 from pathlib import Path
 import re
-from typing import Any, Literal
+from typing import Any
 
 import altair as alt
 import mistune
@@ -24,9 +24,11 @@ from .schema import (
     KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
     StatementCount,
 )
-from .stats import Statistics
+from .stats import get_tags, Statistics
 from .util import to_markdown_table
 
+
+CSAM = "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
 
 TIMELINE_WIDTH = 600
 TIMELINE_HEIGHT = 400
@@ -144,17 +146,18 @@ DOC_FOOTER = """\
 
 
 def visualize(
+    stats_file: str,
     storage: Storage,
     coverage: Coverage,
     notebook: bool = False,
     stat_source: StatSource = None,
-) -> None:
+) -> pl.DataFrame:
     charts = storage.staging_root / "charts"
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(storage, coverage, renderer, stat_source)
-    visualizer.run()
+    visualizer = Visualizer(stats_file, storage, coverage, renderer, stat_source)
+    return visualizer.run()
 
 
 # --------------------------------------------------------------------------------------
@@ -246,6 +249,7 @@ class Visualizer:
 
     def __init__(
         self,
+        stats_file: str,
         storage: Storage,
         coverage: Coverage,
         renderer: Renderer,
@@ -259,6 +263,7 @@ class Visualizer:
         self._timelines = False
         self._timestamp = dt.datetime.now()
         self._stat_source = stat_source or "working"
+        self._stats_file = stats_file
 
     def has_all_sors(self) -> bool:
         return self._stat_source == "archive"
@@ -342,7 +347,7 @@ class Visualizer:
         self._document.write(svg)
         self._document.write("\n\n")
 
-    def run(self) -> None:
+    def run(self) -> pl.DataFrame:
         path = self._storage.staging_root / "overview.html"
         self.configure_display()
         self.ingest()
@@ -361,6 +366,8 @@ class Visualizer:
             finally:
                 self._document = None
 
+        return self._statistics.frame()
+
     def ingest(self) -> None:
         _, metadata = collect_release_metadata(
             Metadata.merge(
@@ -370,20 +377,19 @@ class Visualizer:
                 not_exist_ok=True
             ).records
         )
-        statistics = Statistics.read(self.persistent_root)
+
+        statistics = Statistics.read(self.persistent_root / self._stats_file)
         self._frequency = get_frequency(statistics.frame())
-        self._tags = statistics.frame().select(
-            pl.col("tag").drop_nulls().unique()
-        ).get_column(
-            "tag"
-        ).to_list()
+        self._tags = get_tags(statistics.frame())
         date_range = statistics.range().intersection(
             self._coverage.to_date_range(), empty_ok=False
         ).monthlies().date_range() # Restrict to full months
 
         within_range = is_row_within_period(date_range)
         self._metadata = metadata.filter(within_range)
-        self._statistics = Statistics(statistics.frame().filter(within_range))
+        self._statistics = Statistics(
+            self._stats_file, statistics.frame().filter(within_range)
+        )
         if self._statistics.frame().height == 0:
             raise ConfigError("cannot visualize less than a full month of data")
 
@@ -419,7 +425,7 @@ class Visualizer:
             .get_column("keyword")
         )
 
-        if "CSAM" in self._tags:
+        if CSAM in self._tags:
             self._keyword_names = {
                 k: KeywordsMinorProtection.variants[k][0]
                 for k in KeywordsMinorProtection.variants.keys()
@@ -433,7 +439,7 @@ class Visualizer:
             '<h1><a href="https://transparency.dsa.ec.europa.eu">The DSA '
             'Transparency Database</a></h1>'
         )
-        if "CSAM" in self._tags:
+        if CSAM in self._tags:
             self.html('<h2>Focus on Protection of Minors</h2>')
         self.html(
             f'<p>Created on {self._timestamp.date().isoformat()} '
@@ -459,7 +465,9 @@ class Visualizer:
             disclosure=True,
         )
         self.markdown(
-            format_schema(self._statistics.frame(), title=Statistics.FILE),
+            format_schema(
+                self._statistics.frame(), title=self._stats_file[:-len(".parquet")]
+            ),
             disclosure=True,
         )
 
@@ -489,7 +497,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         self.frame(table, all_text=True)
 
     def render_charts(self) -> None:
-        self.html("<h2>Timelines</h2>")
+        main_tag = self._tags[0]
+
+        if main_tag is None:
+            self.html("<h2>Timelines: All SoRs</h2>")
+        else:
+            self.html(f"<h2>Timelines: {main_tag}</h2>")
 
         charts: list[alt.Chart | alt.LayerChart] = [
             self.daily_statements_of_reasons(),
@@ -511,14 +524,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             self.html(
                 "<p>For readability, spikes in statement counts have been cut off.</p>"
             )
-        self.render_standard_timelines()
+        self.render_standard_timelines(main_tag)
 
-        self.html("<h2>Platforms</h2>")
+        self.html("<h3>Platforms in Graphic Detail</h3>")
         self.chart("platform-counts", self.cumulative_platform_counts())
 
         self.chart("platform-statements", alt.vconcat(
-            self.overall_statements_by_platform(),
+            self.overall_statements_by_platform(tag=main_tag),
             self.overall_statements_by_platform(
+                tag=main_tag,
                 threshold=10_000_000 if self.has_all_sors() else 50_000
             ),
         ).resolve_scale(
@@ -529,13 +543,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if not self.has_all_sors():
             self.chart("platform-keywords", alt.vconcat(
-                self.overall_keyword_usage_by_platform(percent=True),
-                self.overall_keyword_usage_by_platform(percent=False),
+                self.overall_keyword_usage_by_platform(percent=True, tag=main_tag),
+                self.overall_keyword_usage_by_platform(percent=False, tag=main_tag),
             ).resolve_scale(color='independent'))
 
-        if "CSAM" in self._tags:
-            self.html("<h3>CSAM SoRs</h3>")
-            self.render_standard_timelines("CSAM")
+        if 1 < len(self._tags):
+            for tag in self._tags[1:]:
+                self.html(f"<h2>Timelines: {tag}</h2>")
+                self.render_standard_timelines(tag)
 
     def render_standard_timelines(self, tag: None | str = None) -> None:
         if self.is_monthly():
@@ -882,10 +897,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
     def overall_statements_by_platform(
-        self, threshold: None | int = None
+        self, threshold: None | int = None, tag: None | str = None
     ) -> alt.Chart | alt.LayerChart:
         table = self._statistics.frame().lazy().filter(
-            pl.col("column").eq("platform_name").and_(pl.col("entity").is_null())
+            predicate(
+                "platform_name",
+                entity=None,
+                tag=tag,
+            )
         ).group_by(
             "variant"
         ).agg(
@@ -947,12 +966,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
             return chart + text
 
-    def overall_keyword_usage_by_platform(self, percent: bool) -> alt.Chart:
+    def overall_keyword_usage_by_platform(
+        self, percent: bool, tag: None | str = None
+    ) -> alt.Chart:
         frame = self._statistics.frame().lazy().filter(
             predicate(
                 "platform_name",
                 entity="with_category_specification",
-                variant_too=NOT_NULL
+                variant_too=NOT_NULL,
+                tag=tag,
             )
         ).group_by(
             pl.col("variant", "variant_too"),
@@ -992,7 +1014,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         y_title = "Percent Fraction" if percent else "Statements of Reasons"
 
         color = alt.Color("variant_too:N")
-        if "CSAM" in self._tags:
+        if CSAM in self._tags:
             color = color.scale(
                 domain=KeywordsMinorProtection.variant_labels(),
                 range=KeywordsMinorProtection.variant_colors(),
