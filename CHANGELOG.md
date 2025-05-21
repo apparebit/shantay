@@ -2,6 +2,21 @@
 
 ## v0.x.x (TBD)
 
+Improved handling of summary statistics:
+  - Collect statistics with daily resolution for full dataset and subsets alike
+  - User can select `--monthly` instead of the default `--daily` resolution when
+    running `visualize`
+  - The parquet files with the summary statistics for subsets now have distinct
+    names that depend on the statement catgory used for deriving the subset,
+    e.g., `protection-of-minors.parquet` for
+    `STATEMENT_CATEGORY_PROTECTION_OF_MINORS`.
+
+Simplified command line options:
+  - The `--filter` option has been removed; the `--category` option remains for
+    specifying the statement category of a subset
+  - The `--first` and `--last` options now work for all tasks; they also are
+    validated to be within a realistic range
+
 Improved handling of platform names:
   - Use canonical mapping to remove parentheses from "Apple Books ~~(ebooks)~~"
   - Reapply latest canonical mapping for platform names when reading statistics
@@ -19,7 +34,6 @@ Improved visualizations:
 Other, miscellaneous changes:
   - Merge metadata from all three root directories (if they exist)
   - Filter out negative durations and track their number
-  - Remove hard-coded assumptions about statistics being daily or monthly
 
 
 ## v0.2.0 (May 1, 2025)
