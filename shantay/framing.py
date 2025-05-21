@@ -20,7 +20,7 @@ from typing import Literal
 import polars as pl
 
 from .metadata import FullMetadataEntry
-from .model import ConfigError, DateRange, Period, QueryExpression
+from .model import DateRange, Period
 
 
 CSAM_TAG = "CSAM"
@@ -86,26 +86,6 @@ def is_row_within_period(period: Period) -> pl.Expr:
 def filter_period(frame: pl.DataFrame, period: Period) -> pl.DataFrame:
     """Filter the data frame for rows that fall within the given period."""
     return frame.filter(is_row_within_period(period))
-
-
-def resolve_query_binding(s: str) -> QueryExpression:
-    module, _, binding = s.partition(":")
-    if not module:
-        raise ConfigError(f'module binding "{s}" without module (before colon)')
-    if not binding:
-        raise ConfigError(f'module binding "{s}" without binding (after colon)')
-
-    try:
-        m = import_module(module)
-    except ImportError:
-        raise ConfigError(f'unable to import module for module binding "{s}"')
-    try:
-        v = getattr(m, binding)
-    except AttributeError:
-        raise ConfigError(f'attribute not found for module binding "{s}"')
-    if not isinstance(v, pl.Expr):
-        raise ConfigError(f'value of module binding "{s}" is not a Pola.rs expression')
-    return v
 
 
 # --------------------------------------------------------------------------------------
