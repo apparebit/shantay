@@ -18,7 +18,6 @@ from .progress import NO_PROGRESS, Progress
 import polars
 type DataFrameType = polars.DataFrame
 type LazyFrameType = polars.LazyFrame
-type QueryExpression = polars.Expr
 del polars
 
 
@@ -82,6 +81,11 @@ class Release(Period):
     @abstractmethod
     def id(self) -> str:
         """The ID."""
+
+    @property
+    @abstractmethod
+    def frequency(self) -> Literal["daily", "monthly"]:
+        """The release frequency."""
 
     @property
     @abstractmethod
@@ -152,6 +156,10 @@ class Daily(Release):
     def id(self) -> str:
         """The ID."""
         return f"{self.year}-{self.month:02}-{self.day:02}"
+
+    @property
+    def frequency(self) -> Literal["daily", "monthly"]:
+        return "daily"
 
     @property
     def start_date(self) -> dt.date:
@@ -248,6 +256,10 @@ class Monthly(Release):
         return f"{self.year}-{self.month:02}"
 
     @property
+    def frequency(self) -> Literal["daily", "monthly"]:
+        return "monthly"
+
+    @property
     def start_date(self) -> dt.date:
         return dt.date(self.year, self.month, 1)
 
@@ -332,7 +344,7 @@ class ReleaseRange[R: Release](Period):
         return DateRange(self.start_date, self.end_date)
 
     def to_monthly(self) -> "ReleaseRange[Monthly]":
-        if isinstance(self.first, Monthly):
+        if self.first.frequency == "monthly":
             return cast(ReleaseRange[Monthly], self)
         else:
             return ReleaseRange(self.first.to_monthly(), self.last.to_monthly())
@@ -368,6 +380,9 @@ class DateRange(Period):
         periods.
         """
         return self.last
+
+    def __contains__(self, day: dt.date) -> bool:
+        return self.first <= day <= self.last
 
     # Explicitly passing empty_ok=False buys us a tighter return type
     @overload
@@ -474,7 +489,15 @@ class Coverage[R: Release]:
 
     first: R
     last: R
-    filter: None | str | QueryExpression
+    filter: None | str
+
+    @classmethod
+    def of(cls, range: ReleaseRange, filter: None | str) -> Self:
+        return cls(range.first, range.last, filter)
+
+    def frequency(self) -> Literal["daily", "monthly"]:
+        assert self.first.frequency == self.last.frequency
+        return self.first.frequency
 
     def __post_init__(self) -> None:
         assert self.first <= self.last
@@ -573,7 +596,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
         release: R,
         index: int,
         name: str,
-        filter: str | QueryExpression,
+        filter: str,
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
@@ -583,6 +606,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
         self,
         root: Path,
         release: Release,
+        filter: str,
         metadata: DataFrameType,
         collector: CollectorProtocol
     ) -> None:
@@ -595,7 +619,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
     def combine_releases[T: Release](
         self,
         root: Path,
-        coverage: Coverage[T],
+        stats_file: str,
         collector: CollectorProtocol,
     ) -> DataFrameType:
         """
