@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import datetime as dt
 import enum
 from types import GenericAlias, MappingProxyType
-from typing import Any, get_args, get_origin, Literal
+from typing import Any, get_args, get_origin, Literal, overload
 
 import polars as pl
 
@@ -860,6 +860,11 @@ TRANSFORM_COUNT = sum(
 # Statistics Schema
 
 
+# For now, the universe of tags are all statement categories and keywords, with
+# each keyword implying the larger category as well.
+TagValueType = pl.Enum(tuple([*StatementCategory, *Keyword]))
+
+
 ColumnValueType = pl.Enum((
     "start_date",
     "end_date",
@@ -962,7 +967,7 @@ VariantTooValueType = pl.Enum(Keyword)
 StatisticsSchema = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
-    "tag": pl.String,
+    "tag": TagValueType,
     "column": ColumnValueType,
     "entity": EntityValueType,
     "variant": VariantValueType,
@@ -973,16 +978,28 @@ StatisticsSchema = pl.Schema({
     "max": pl.Int64,
 })
 """
-The schema for the summary statistics. Durations are encoded min/mean/max values
-of the corresponding milliseconds.
+The schema for the summary statistics. Durations are encoded min, mean, and max
+values of the corresponding integral milliseconds as well as the count of
+durations contributing to the three statistics. The latter enables the
+aggregation of means. Since durations are computed from the difference of two
+date/times, shantay may have to correct for negative durations. It tracks the
+number of these corrections as well.
 """
 
 
 # ======================================================================================
 
 
-def normalize_category(category: str) -> str:
+@overload
+def normalize_category(category: None) -> None: ...
+
+@overload
+def normalize_category(category: str) -> str: ...
+
+def normalize_category(category: None | str) -> None | str:
     """Normalize the given category to a schema-approved one."""
+    if category is None:
+        return None
     cat = category.upper()
     if cat.startswith("CATEGORY_"):
         cat = f"STATEMENT_{cat}"
@@ -991,6 +1008,23 @@ def normalize_category(category: str) -> str:
     if cat not in StatementCategory:
         raise ValueError(f'"{category}" does not match any valid statement categories')
     return cat
+
+
+@overload
+def normalize_keyword(keyword: None) -> None: ...
+
+@overload
+def normalize_keyword(keyword: str) -> str: ...
+
+def normalize_keyword(keyword: None | str) -> None | str:
+    if keyword is None:
+        return None
+    key = keyword.upper()
+    if not key.startswith("KEYWORD_"):
+        key = f"KEYWORD_{key}"
+    if key not in Keyword:
+        raise ValueError(f'"{keyword}" does not match any valid keyword')
+    return key
 
 
 KEYWORDS_V1 = frozenset([
