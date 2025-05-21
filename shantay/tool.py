@@ -9,11 +9,10 @@ import polars as pl
 
 from ._platform import MissingPlatformError
 from .dsa_sor import StatementsOfReasons
-from .framing import resolve_query_binding
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DownloadFailed, MetadataConflict, Release, StatSource,
-    Storage
+    ConfigError, Coverage, DateRange, DownloadFailed, MetadataConflict, Release,
+    StatSource, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -83,14 +82,23 @@ def _parse_options(args: list[str]) -> Any:
         help="set the stop date (the day before yesterday by default)",
     )
     group.add_argument(
-        "--filter",
-        help="set the module name, colon, and global variable name for the Pola.rs"
-        "expression filtering out all but the data of interest",
-    )
-    group.add_argument(
         "--category",
         help="set category to filter (may omit the STATEMENT_CATEGORY_ prefix and/or"
         "use lower case)",
+    )
+    group.add_argument(
+        "--daily",
+        dest="frequency",
+        action="store_const",
+        const="daily",
+        help="use daily aggregates for visualizing statistics; precludes --monthly (default)",
+    )
+    group.add_argument(
+        "--monthly",
+        dest="frequency",
+        action="store_const",
+        const="monthly",
+        help="use monthly aggregates for visualizing statistics; precludes --daily",
     )
 
     group = parser.add_argument_group("logging")
@@ -154,69 +162,84 @@ def get_storage(options: Any) -> Storage:
     )
 
 
-def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, StatSource]:
+def get_configuration(
+    options: Any
+) -> tuple[Storage, Coverage, Metadata, StatSource, str]:
     # Handle --archive, --working, and --staging options
     storage = get_storage(options)
 
-    # Handle --category and --filter options
-    if options.category is not None and options.filter is not None:
-        raise ConfigError("--category and --filter are mutually exclusive")
-
-    filter_name = filter_value = None
-    if options.category is not None:
-        filter_name = filter_value = normalize_category(options.category)
-    if options.filter is not None:
-        filter_name = options.filter
-        filter_value = resolve_query_binding(options.filter)
+    # Handle --category option
+    category = normalize_category(options.category)
+    if category is not None and options.task in ("summarize", "visualize"):
+        raise ConfigError(f'task `{options.task}` does not require a --category ')
 
     # Prepare metadata
     metadata = Metadata.merge(
         storage.staging_root, storage.working_root, storage.archive_root,
         not_exist_ok=True
     )
-    if options.task == "summarize":
-        pass
-    elif metadata.filter is None:
-        if filter_name is None:
+
+    if (
+        options.task in ("prepare", "analyze") or
+        options.task == "visualize" and options.with_working
+    ):
+        if metadata.filter is None:
+            if category is None:
+                raise ConfigError("metadata lacks --category; please specify option")
+            metadata.set_filter(category)
+        elif category is None:
+            category = metadata.filter
+        elif metadata.filter != category:
             raise ConfigError(
-                "no metadata from previous run is available; please specify --category or --filter"
+                f'metadata has --category {metadata.filter} but option is {category}'
             )
-        metadata.set_filter(filter_name)
-    elif filter_name is None:
-        filter_name = metadata.filter
-        if filter_name.startswith("STATEMENT_CATEGORY"):
-            filter_value = filter_name
-        else:
-            filter_value = resolve_query_binding(filter_name)
-    elif metadata.filter != filter_name:
-        raise ConfigError(
-            f'metadata from previous run is incompatible with --category/--filter option'
-        )
 
     storage.staging_root.mkdir(parents=True, exist_ok=True)
     metadata.write_json(storage.staging_root)
 
-    # Handle --first and --last
-    first = last = None
+    # Determine name of file with summary statistics
+    if (
+        options.task == "summarize" or
+        options.task == "visualize" and options.with_archive or
+        category is None
+    ):
+        stats_file = Statistics.DB_STATS_FILE
+    else:
+        stats_file = Statistics.file_name_for(category)
 
-    if options.task in ("prepare", "summarize"):
-        if first is None:
-            first = dt.date(2023, 9, 25)
-        if last is None:
-            last = dt.date.today() - dt.timedelta(days=2)
-    elif 0 < len(metadata):
-        range = metadata.range
-        first, last = range.first, range.last
+    # Handle --first and --last
+    earliest = dt.date(2023, 9, 25)
+    latest = dt.date.today() - dt.timedelta(days=2)
 
     if options.first is not None:
         first = dt.date.fromisoformat(options.first)
+        if first < earliest:
+            raise ConfigError(
+                f"{first.isoformat()} is earlier than first possible date 2023-09-25"
+            )
+    else:
+        first = earliest
+
     if options.last is not None:
         last = dt.date.fromisoformat(options.last)
+        if latest < last:
+            raise ConfigError(
+                f"{last.isoformat()} is later than last possible date {latest.isoformat()}"
+            )
+    else:
+        last = latest
 
-    if first is None:
-        raise ConfigError("cannot determine first date, please provide --first option")
-    if last is None:
-        raise ConfigError("cannot determine last date, please provide --last option")
+    # Handle daily/monthly
+    if options.frequency is not None and options.task != "visualize":
+        raise ConfigError(
+            f"--{options.frequency} can only be used with the `visualize` task"
+        )
+
+    if options.frequency == "monthly":
+        range = DateRange(first, last).monthlies()
+    else:
+        range = DateRange(first, last).dailies()
+    coverage = Coverage.of(range, category)
 
     # Handle --multiproc
     if options.multiproc < 1:
@@ -243,8 +266,7 @@ def get_configuration(options: Any) -> tuple[Storage, Coverage, Metadata, StatSo
         stat_source = "working"
 
     # Finish it all up
-    coverage = Coverage(Release.of(first), Release.of(last), filter_value)
-    return storage, coverage, metadata, stat_source
+    return storage, coverage, metadata, stat_source, stats_file
 
 
 def configure_printing() -> None:
@@ -288,7 +310,7 @@ def _run(args: list[str]) -> None:
         fsck(storage.working_root, progress=Progress())
         return
 
-    storage, coverage, metadata, stat_source = get_configuration(options)
+    storage, coverage, metadata, stat_source, stats_file = get_configuration(options)
 
     if (
         options.task in ("prepare", "analyze", "summarize")
@@ -302,6 +324,7 @@ def _run(args: list[str]) -> None:
             storage=storage,
             coverage=coverage,
             metadata=metadata,
+            stats_file=stats_file,
             size=options.multiproc,
         )
         processor.run(options.task)
@@ -312,18 +335,15 @@ def _run(args: list[str]) -> None:
             storage=storage,
             coverage=coverage,
             metadata=metadata,
+            stats_file=stats_file,
             progress=Progress(),
             stat_source=stat_source,
         )
-        processor.run(options.task)
+        frame = processor.run(options.task)
 
-        if options.task == "prepare":
-            Metadata.copy_json(storage.staging_root, storage.working_root)
-        elif options.task in ("analyze", "summarize"):
-            stats = Statistics.read(
-                storage.staging_root if options.task == "summarize"
-                else storage.working_root
-            )
+        if options.task in ("analyze", "summarize"):
+            assert frame is not None
+            stats = Statistics(stats_file, frame)
             print("\n")
             print(stats.summary())
 

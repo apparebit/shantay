@@ -34,6 +34,7 @@ class Multiprocessor[R: Release]:
         storage: Storage,
         coverage: Coverage[R],
         metadata: Metadata,
+        stats_file: str,
         size: int,
     ) -> None:
         self._dataset = dataset
@@ -42,6 +43,7 @@ class Multiprocessor[R: Release]:
         self._metadata = metadata
         self._metadata_frame = None
         self._stats = None
+        self._stats_file = stats_file
 
         # Prepare processes daily releases, whereas analyze processes monthly ones
         self._task = None
@@ -55,10 +57,14 @@ class Multiprocessor[R: Release]:
         self._runtime = 0
 
     @property
+    def stats_file(self) -> None | str:
+        return self._stats_file
+
+    @property
     def runtime(self) -> float:
         return self._runtime
 
-    def run(self, task: str) -> None:
+    def run(self, task: str) -> None | DataFrameType:
         assert self._pool is not None
         self._task = task
 
@@ -70,6 +76,7 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
+        _logger.info('    key="statistics.file",      value="%s"', self._stats_file)
         _logger.info('    key="pool.size",            value=%d', self._pool.size)
 
         # See Processor.run() for an explanation for time.time()
@@ -78,16 +85,14 @@ class Multiprocessor[R: Release]:
         # Determine cursor's first and final values as well as increment
         if task == "prepare":
             cover = self._coverage
-            increment = "daily"
         elif task == "analyze":
             date_cover, metadata = collect_release_metadata(self._metadata.records)
             self._metadata_frame = metadata
-            self._stats = Statistics()
-            cover = date_cover.monthlies()
-            increment = "monthly"
+            self._stats = Statistics(self._stats_file)
+            cover = date_cover.dailies()
         elif task == "summarize":
             self._stats = Statistics.from_storage(
-                self._storage.staging_root, self._storage.archive_root
+                self._stats_file, self._storage.staging_root, self._storage.archive_root
             )
 
             if not self._stats.is_empty():
@@ -98,14 +103,12 @@ class Multiprocessor[R: Release]:
                 )
 
             cover = Statistics.DEFAULT_RANGE.dailies()
-            increment = "daily"
         else:
             raise ValueError(f"invalid task {task}")
 
         self._iter = iter(cover)
         _logger.info('    key="iter.first",           value="%s"', cover.first.id)
         _logger.info('    key="iter.last",            value="%s"', cover.last.id)
-        _logger.info('    key="iter.increment",       value="%s"', increment)
 
         self._pool.run(self._task_iter(), self._done_with_task)
 
@@ -114,7 +117,7 @@ class Multiprocessor[R: Release]:
 
             _logger.debug(
                 'writing rechunked summary statistics to file="%s"',
-                self._storage.staging_root / Statistics.FILE
+                self._storage.staging_root / self._stats_file
             )
             self._stats.write(self._storage.staging_root, rechunk=True)
 
@@ -124,11 +127,12 @@ class Multiprocessor[R: Release]:
                 persistent = self._storage.archive_root
             _logger.debug(
                 'copying summary statistics to persistent file="%s"',
-                persistent / Statistics.FILE
+                persistent / self._stats_file
             )
-            Statistics.copy(self._storage.staging_root, persistent)
+            Statistics.copy(self._stats_file, self._storage.staging_root, persistent)
 
         self._runtime = time.time() - start_time
+        return None if self._stats is None else self._stats.frame()
 
     def _task_iter(self) -> Iterator[Task]:
         assert self._pool is not None
@@ -152,6 +156,7 @@ class Multiprocessor[R: Release]:
                     storage=self._storage,
                     filter=self._metadata.filter,
                     metadata_frame=self._metadata_frame,
+                    stats_file=self._stats_file,
                     release=release,
                 )
             )
@@ -267,6 +272,7 @@ def run_on_worker[R: Release](
     storage: Storage,
     filter: str,
     metadata_frame: DataFrameType,
+    stats_file: str,
     release: R,
 ) -> Any:
     """
@@ -283,7 +289,15 @@ def run_on_worker[R: Release](
     # as instances of the same type. So we instead communicate critical
     # exceptions as tagged values.
     try:
-        result = _run_on_worker(task, dataset, storage, filter, metadata_frame, release)
+        result = _run_on_worker(
+            task,
+            dataset,
+            storage,
+            filter,
+            metadata_frame,
+            stats_file,
+            release
+        )
         _logger.debug(
             'returning result for task="%s", release="%s", worker=%d',
             task, release, _PID
@@ -316,6 +330,7 @@ def _run_on_worker[R: Release](
     storage: Storage,
     filter: str,
     metadata_frame: DataFrameType,
+    stats_file: str,
     release: R,
 ) -> Any:
     coverage = Coverage(release, release, filter)
@@ -333,6 +348,7 @@ def _run_on_worker[R: Release](
         storage=storage.isolate(_PID),
         coverage=coverage,
         metadata=metadata,
+        stats_file=stats_file,
         progress=WorkerProgress(),
     )
 

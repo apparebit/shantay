@@ -87,6 +87,29 @@ def _validate_row_counts(frame: pl.DataFrame) -> None:
         assert rows == rows_too, f"rows={rows:,}, {column}={rows_too:,}"
 
 
+def get_tags(frame: pl.DataFrame) -> list[None | str]:
+    """
+    Get all tags used in the statistics frame. This function returns the tags in
+    their canonical order, from least to most specific, i.e., `None`, then
+    statement categories, and finally keywords.
+    """
+    raw_tags = frame.select(pl.col("tag").unique()).get_column("tag").to_list()
+    tags = []
+
+    if None in raw_tags:
+        tags.append(None)
+
+    for tag in raw_tags:
+        if tag is not None and tag.startswith("STATEMENT_CATEGORY_"):
+            tags.append(tag)
+
+    for tag in raw_tags:
+        if tag is not None and tag.startswith("KEYWORD_"):
+            tags.append(tags)
+
+    return tags
+
+
 # =================================================================================================
 
 
@@ -339,7 +362,9 @@ class Collector:
                         key, self_is_list, other_field, other_is_list
                     )
 
-    def collect_header(self, metadata: None | pl.DataFrame = None) -> None:
+    def collect_header(
+        self, metadata: None | pl.DataFrame = None, tag: None | str = None
+    ) -> None:
         """Create a header frame with the given statistics."""
         pairs = {}
         if metadata is None:
@@ -377,7 +402,7 @@ class Collector:
         header = Frame({
             "start_date": height * [self._release.start_date],
             "end_date": height * [self._release.end_date],
-            "tag": height * [None],
+            "tag": height * [tag],
             "column": [k for k in pairs.keys()],
             "entity": height * [None],
             "variant": height * [None],
@@ -398,9 +423,9 @@ class Collector:
         metadata: None | pl.DataFrame = None,
     ) -> None:
         """Collect all necessary data in partial data frames."""
-        if tag is None:
-            with self.source_data(frame=frame, release=release) as this:
-                this.collect_header(metadata)
+        if tag is None or tag.startswith("STATEMENT_CATEGORY_"):
+            with self.source_data(frame=frame, release=release, tag=tag) as this:
+                this.collect_header(metadata, tag)
                 this.collect_body()
         else:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
@@ -608,73 +633,86 @@ class _Summarizer:
                             entity="_".join(suffix) if count != 0  else "is_null",
                         )
 
-    def summarize(self, frame: pl.DataFrame) -> _Summary:
-        """Summarize the data frame."""
-        with self.tagged_frame(tag=None, frame=frame) as this:
-            platforms = frame.filter(
-                predicate("platform_name", entity=None, tag=None)
-            ).select(
-                pl.col("variant").n_unique()
-            ).item()
+    def _summary_intro(self, frame: pl.DataFrame, tag: None | str) -> None:
+        platforms = frame.filter(
+            predicate("platform_name", entity=None, tag=tag)
+        ).select(
+            pl.col("variant").n_unique()
+        ).item()
 
-            platforms_with_keywords = frame.filter(
-                predicate("platform_name", entity="with_category_specification", tag=None)
-            ).filter(
-                pl.col("variant_too").is_null().not_()
-            ).select(
-                pl.col("variant").n_unique()
-            ).item()
+        platforms_with_keywords = frame.filter(
+            predicate("platform_name", entity="with_category_specification", tag=tag)
+        ).filter(
+            pl.col("variant_too").is_null().not_()
+        ).select(
+            pl.col("variant").n_unique()
+        ).item()
 
-            platforms_with_csam = frame.filter(
-                predicate("platform_name", entity="with_category_specification", tag=None)
-            ).filter(
-                pl.col("variant_too").eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
-            ).select(
-                pl.col("variant").n_unique()
-            ).item()
+        platforms_with_csam = frame.filter(
+            predicate("platform_name", entity="with_category_specification", tag=tag)
+        ).filter(
+            pl.col("variant_too").eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
+        ).select(
+            pl.col("variant").n_unique()
+        ).item()
 
-            batch_rows = get_quantity(frame, "batch_rows", entity=None)
-            total_rows = get_quantity(frame, "total_rows", entity=None)
-            batch_kw_rows = get_quantity(frame, "batch_rows_with_keywords", entity=None)
-            total_kw_rows = get_quantity(frame, "total_rows_with_keywords", entity=None)
-            assert batch_rows is not None
-            assert batch_kw_rows is not None
-            assert total_rows is not None
-            assert total_kw_rows is not None
+        batch_rows = get_quantity(frame, "batch_rows", entity=None, tag=tag)
+        total_rows = get_quantity(frame, "total_rows", entity=None, tag=tag)
+        batch_kw_rows = get_quantity(frame, "batch_rows_with_keywords", entity=None, tag=tag)
+        total_kw_rows = get_quantity(frame, "total_rows_with_keywords", entity=None, tag=tag)
+        assert tag is None or batch_rows is not None
+        assert tag is None or batch_kw_rows is not None
+        assert total_rows is not None
+        assert total_kw_rows is not None
 
-            this._summary = [
-                ("start_date", frame.select(pl.col("start_date").min()).item()),
-                ("end_date", frame.select(pl.col("end_date").max()).item()),
-                ("batch_count", get_quantity(frame, "batch_count", entity=None)),
-                ("batch_rows", batch_rows),
-                ("batch_rows_pct", batch_rows / total_rows * 100),
-                ("batch_rows_with_keywords", batch_kw_rows),
-                ("batch_rows_with_keywords_pct", batch_kw_rows / batch_rows * 100),
-                ("batch_memory", get_quantity(frame, "batch_memory", entity=None)),
-                ("total_rows", total_rows),
-                ("total_rows_with_keywords", total_kw_rows),
-                ("total_rows_with_keywords_pct", total_kw_rows / total_rows * 100),
-                ("platforms", platforms),
-                ("platforms_with_keywords", platforms_with_keywords),
-                ("platforms_with_csam", platforms_with_csam)
-            ]
+        batch_rows_pct = (
+            (batch_rows or 0) / total_rows * 100 if total_rows != 0 else None
+        )
+        batch_rows_with_keywords_pct = (
+            (batch_kw_rows or 0) / batch_rows * 100
+            if batch_rows is not None and batch_rows != 0
+            else None
+        )
+        total_rows_with_keywords_pct = (
+            total_kw_rows / total_rows * 100 if total_rows != 0 else None
+        )
 
-        # Make sure that baseline comes first
-        tags = [
-            None,
-            *(
-                t
-                for t in frame.select(pl.col("tag").unique()).get_column("tag").to_list()
-                if t is not None
-            )
+        self._summary = [
+            ("start_date", frame.select(pl.col("start_date").min()).item()),
+            ("end_date", frame.select(pl.col("end_date").max()).item()),
+            ("batch_count", get_quantity(frame, "batch_count", entity=None)),
+            ("batch_rows", batch_rows),
+            ("batch_rows_pct", batch_rows_pct),
+            ("batch_rows_with_keywords", batch_kw_rows),
+            ("batch_rows_with_keywords_pct", batch_rows_with_keywords_pct),
+            ("batch_memory", get_quantity(frame, "batch_memory", entity=None)),
+            ("total_rows", total_rows),
+            ("total_rows_with_keywords", total_kw_rows),
+            ("total_rows_with_keywords_pct", total_rows_with_keywords_pct),
+            ("platforms", platforms),
+            ("platforms_with_keywords", platforms_with_keywords),
+            ("platforms_with_csam", platforms_with_csam)
         ]
 
-        for tag in tags:
+    def summarize(self, frame: pl.DataFrame) -> _Summary:
+        """Summarize the data frame."""
+        for index, tag in enumerate(get_tags(frame)):
             with self.tagged_frame(tag, frame) as this:
-                self.spacer()
-                self.spacer()
-                this._summary.append((_Tag(this._tag), _Tag(this._tag)))
-                self.spacer()
+                if index == 0:
+                    this._summary_intro(frame, tag)
+
+                this.spacer()
+                this.spacer()
+                if tag is None:
+                    t = tag
+                elif tag.startswith("STATEMENT_CATEGORY_"):
+                    t = tag[len("STATEMENT_CATEGORY_"):]
+                elif tag.startswith("KEYWORD_"):
+                    t = tag[len("KEYWORD_"):]
+                else:
+                    t = tag
+                this._summary.append((_Tag(t), _Tag(t)))
+                this.spacer()
                 this.summarize_fields()
 
         return self._summary
@@ -794,8 +832,8 @@ class Statistics:
     frame only on demand.
     """
 
-    """The name of the Parquet file with the summary statistics."""
-    FILE: ClassVar[str] = "statistics.parquet"
+    # The file with statistics for the entire database
+    DB_STATS_FILE = "statistics.parquet"
 
     """
     The default date range for summary statistics, which start with
@@ -805,21 +843,22 @@ class Statistics:
         dt.date(2023, 9, 25), dt.date.today() + dt.timedelta(days=1)
     )
 
-    def __init__(self, *frames: pl.DataFrame) -> None:
+    def __init__(self, file: str, *frames: pl.DataFrame) -> None:
+        self._file = file
         self._frames = list(frames)
         self._collector = None
 
     @classmethod
-    def from_storage(cls, staging: Path, persistent: Path) -> Self:
+    def from_storage(cls, file: str, staging: Path, persistent: Path) -> Self:
         """
         Pick the more complete statistics from staging and the persistent root
         directory, i.e., archive or working. This method assumes that if both
         files exist, they also start on the same date.
         """
-        s1 = cls.read(staging) if (staging / cls.FILE).exists() else None
-        s2 = cls.read(persistent) if (persistent / cls.FILE).exists() else None
+        s1 = cls.read(staging / file) if (staging / file).exists() else None
+        s2 = cls.read(persistent / file) if (persistent / file).exists() else None
         if s1 is None:
-            return cls() if s2 is None else s2
+            return cls(file) if s2 is None else s2
         elif s2 is None:
             return s1
 
@@ -834,20 +873,23 @@ class Statistics:
         return s1 if r2.last < r1.last else s2
 
     @classmethod
-    def read(cls, directory: Path) -> Self:
+    def read(cls, path: Path) -> Self:
         """
-        Instantiate a new statistics frame from the given directory. This method
+        Instantiate a new statistics frame from the given file path. This method
         assumes that the file exists and throws an exception otherwise.
         """
         frame = pl.read_parquet(
-            directory / cls.FILE
+            path
         ).with_columns(
             # Cast to string so that replace matches platform names
             pl.col("variant").cast(str).replace(CanonicalPlatformNames)
         ).cast(
             StatisticsSchema # pyright: ignore[reportArgumentType]
         )
-        return cls(frame)
+        return cls(path.name, frame)
+
+    def file(self) -> str:
+        return self._file
 
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
@@ -865,9 +907,7 @@ class Statistics:
         this method, with no intervening calls to `collect` or `append` return
         the exact same data frame.
         """
-        # Fast paths for repeated read-access to not yet built or finished frame.
-        if len(self._frames) == 0:
-            return pl.DataFrame([], schema=StatisticsSchema)
+        # Fast path: Data has already been reduced to a single frame
         if (
             len(self._frames) == 1
             and self._collector is None
@@ -876,11 +916,19 @@ class Statistics:
         ):
             return self._frames[0]
 
-        # Combine frame fragments into one frame
-        all_frames = list(self._frames)
+        # Somewhat slower path: No data or data in collector only
+        if len(self._frames) == 0:
+            if self._collector is None:
+                self._frames.append(pl.DataFrame([], schema=StatisticsSchema))
+            else:
+                self._frames.append(self._collector.frame())
+                self._collector = None
+            return self._frames[0]
+
+        # Slow path: Concatenate 2+ frames
         if self._collector is not None:
-            all_frames.append(self._collector.frame(group_by="day"))
-        frame = pl.concat(all_frames, how="vertical")
+            self._frames.append(self._collector.frame(group_by="day"))
+        frame = pl.concat(self._frames, how="vertical")
 
         # Take care of validation and grouping
         if validate:
@@ -971,19 +1019,31 @@ class Statistics:
             frame = frame.rechunk()
             self._frames = [frame]
 
-        tmp = (directory / self.FILE).with_suffix(".tmp.parquet")
+        path = directory / self.file()
+        tmp = path.with_suffix(".tmp.parquet")
         frame.write_parquet(tmp)
-        tmp.replace(directory / self.FILE)
+        tmp.replace(path)
 
         return self
 
     @classmethod
-    def copy(cls, source: Path, target: Path) -> None:
+    def copy(cls, file: str, source: Path, target: Path) -> None:
         """
         Copy the statistics file in the source directory to the target directory
         via an intermediate temporary file on the same file system as the target
         directory.
         """
-        tmp = (target / cls.FILE).with_suffix(".tmp.parquet")
-        shutil.copy(source / cls.FILE, tmp)
-        tmp.replace(target / cls.FILE)
+        tmp = (target / file).with_suffix(".tmp.parquet")
+        shutil.copy(source / file, tmp)
+        tmp.replace(target / file)
+
+    @classmethod
+    def file_name_for(cls, filter: str) -> str:
+        if filter.startswith("STATEMENT_CATEGORY_"):
+            filter = filter[len("STATEMENT_CATEGORY_"):]
+        elif filter.startswith("KEYWORD_"):
+            filter = filter[len("KEYWORD_"):]
+        else:
+            raise ValueError(f'invalid filter "{filter}"')
+
+        return f'{filter.lower().replace("_", "-")}.parquet'

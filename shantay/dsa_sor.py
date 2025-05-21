@@ -69,7 +69,7 @@ class StatementsOfReasons(Dataset[Daily]):
         release: Daily,
         index: int,
         name: str,
-        filter: str | pl.Expr,
+        filter: str,
         progress: Progress = NO_PROGRESS
     ) -> tuple[str, Counter]:
         path = root / release.temp_directory
@@ -132,7 +132,7 @@ class StatementsOfReasons(Dataset[Daily]):
         release: Daily,
         index: int,
         name: str,
-        filter: None | str | pl.Expr,
+        filter: None | str,
         progress: Progress = NO_PROGRESS
     ) -> pl.DataFrame:
         """
@@ -212,7 +212,7 @@ class StatementsOfReasons(Dataset[Daily]):
         return pl.concat(frames, how="vertical", rechunk=True)
 
     def _scan_csv_with_polars(
-        self, path: str | Path, filter: None | str | pl.Expr = None
+        self, path: str | Path, filter: None | str = None
     ) -> pl.LazyFrame:
         """
         Read one or more CSV files with Polars' CSV reader, while also applying
@@ -233,13 +233,11 @@ class StatementsOfReasons(Dataset[Daily]):
                 (pl.col("category") == filter)
                 | pl.col("category_addition").str.contains(filter, literal=True)
             )
-        elif isinstance(filter, pl.Expr):
-            frame = frame.filter(filter)
 
         return frame
 
     def _read_csv_row_by_row(
-        self, path: str | Path, filter: None | str | pl.Expr = None
+        self, path: str | Path, filter: None | str = None
     ) -> pl.DataFrame:
         """
         Read a CSV file using Python's CSV reader row by row, while also
@@ -276,8 +274,6 @@ class StatementsOfReasons(Dataset[Daily]):
                     rows.append(row)
 
         frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
-        if isinstance(filter, pl.Expr):
-            frame = frame.filter(filter)
         return frame
 
     def finish_frame(self, release: Daily, frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -365,6 +361,7 @@ class StatementsOfReasons(Dataset[Daily]):
         self,
         root: Path,
         release: Release,
+        filter: str,
         metadata: DataFrameType,
         collector: CollectorProtocol,
     ) -> None:
@@ -381,21 +378,31 @@ class StatementsOfReasons(Dataset[Daily]):
         working_data = pl.read_parquet(glob).with_columns(
             pl.col("platform_name").replace(CanonicalPlatformNames)
         )
-        collector.collect(release, working_data, metadata=metadata)
 
-        csam = working_data.filter(
-            pl.col("category_specification").list.contains(
-                "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
-            )
+        collector.collect(
+            release,
+            working_data,
+            metadata=metadata,
+            tag=filter,
         )
-        collector.collect(release, csam, tag="CSAM")
+
+        if filter == "STATEMENT_CATEGORY_PROTECTION_OF_MINORS":
+            csam = working_data.filter(
+                pl.col("category_specification").list.contains(
+                    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
+                )
+            )
+            collector.collect(release, csam, tag="KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
 
     @annotate_error(filename_arg="root")
     def combine_releases(
-        self, root: Path, coverage: Coverage, collector: CollectorProtocol
+        self, root: Path, stats_file: str, collector: CollectorProtocol
     ) -> pl.DataFrame:
-        frame = collector.frame(validate=True)
-        self.write_parquet(frame, root / Statistics.FILE)
+        _logger.debug('combining daily statistics into a single data frame')
+        frame = collector.frame(validate=True).rechunk()
+
+        _logger.debug(f'writing combined statistics to "{stats_file}"')
+        self.write_parquet(frame, root / stats_file)
         return frame
 
     def write_parquet(self, frame: pl.DataFrame, path: Path) -> None:

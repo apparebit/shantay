@@ -20,7 +20,7 @@ from .model import (
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
 from .stats import (
-    check_new_platform_names, Collector, MissingPlatformError, Statistics,
+    check_new_platform_names, MissingPlatformError, Statistics,
     update_new_platform_names
 )
 from .util import annotate_error, scale_time
@@ -41,6 +41,7 @@ class Processor[R: Release]:
         storage: Storage,
         coverage: Coverage[R],
         metadata: Metadata,
+        stats_file: str,
         progress: Progress = NO_PROGRESS,
         stat_source: StatSource = None,
     ) -> None:
@@ -49,16 +50,21 @@ class Processor[R: Release]:
         self._coverage = coverage
         self._metadata = metadata
         self._progress = progress
+        self._stats_file = stats_file
         self._stat_source: StatSource = stat_source
         self._frequency: Literal["daily", "monthly"]
         self._runtime = 0.0
+
+    @property
+    def stats_file(self) -> None | str:
+        return self._stats_file
 
     @property
     def runtime(self) -> float:
         """The latency of the most recent invocation of run()."""
         return self._runtime
 
-    def run(self, task: str) -> None:
+    def run(self, task: str) -> None | DataFrameType:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
@@ -67,6 +73,7 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
+        _logger.info('    key="statistics.file",      value="%s"', self._stats_file)
 
         # Arguably, time.process_time() would be the more accurate time source
         # for measuring latency. However, that may not hold for the parallel
@@ -74,20 +81,23 @@ class Processor[R: Release]:
         # processing. Hence, to keep any comparisons fair-ish, we use wall clock
         # time.
         start_time = time.time()
+        result = None
         if task == "prepare":
             self.prepare()
         elif task == "summarize":
             self.summarize_archive()
         elif task == "analyze":
-            self.analyze_working()
+            result = self.analyze_working()
         elif task == "visualize":
-            self.visualize()
+            result = self.visualize()
         else:
             raise ValueError(f'invalid task "{task}"')
 
         self._runtime = time.time() - start_time
         value, unit = scale_time(self._runtime)
         _logger.info('processing took time=%.3f, unit="%s"', value, unit)
+
+        return result
 
     def prepare(self) -> None:
         for release in self._coverage:
@@ -370,22 +380,36 @@ class Processor[R: Release]:
         range, metadata = collect_release_metadata(self._metadata.records)
         range = range.intersection(
             self._coverage.to_date_range(), empty_ok=False
-        ).monthlies()
+        ).dailies()
 
         # Prepare progress tracker
         self._progress.activity(
-            "analyzing monthly batches", "analyzing batches", "batch", with_rate=False
+            "analyzing daily batches", "analyzing batches", "batch", with_rate=False
         )
         self._progress.start(range.last - range.first + 1)
 
-        collector = Collector()
+        stats = Statistics(self._stats_file)
 
         for index, release in enumerate(range):
             check_not_cancelled()
-            self.analyze_working_release(release, metadata, collector)
+            self.analyze_working_release(release, metadata, stats)
+            # The generation of summary statistics creates a large number of
+            # data frames (at least as few hundred), many of which have only one
+            # row. That ensures that even daily statistics easily fit into
+            # memory. But when there are too many data frames to concatenate,
+            # Pola.rs gets stuck. Hence it's a good idea to regularly save the
+            # statistics and thereby force reduction to a single data frame.
+            # However, saving the statistics for every release noticeably slows
+            # down progress. Hence we only save after processing n days worth of
+            # data.
+            if index % 23 == 0:
+                stats.write(self._storage.staging_root, rechunk=True)
+            elif index % 11 == 0:
+                stats.write(self._storage.staging_root)
             self._progress.step(index + 1, extra=release.id)
+
         return self._dataset.combine_releases(
-            self._storage.working_root, self._coverage, collector
+            self._storage.working_root, self._stats_file, stats
         )
 
     def analyze_working_release(
@@ -396,18 +420,24 @@ class Processor[R: Release]:
     ) -> None:
         """Analyze the working data for the given release."""
         release_metadata = filter_period(metadata, release)
+
+        assert isinstance(self._coverage.filter, str)
         self._dataset.analyze_release(
-            self._storage.working_root, release, release_metadata, collector
+            root=self._storage.working_root,
+            release=release,
+            filter=self._coverage.filter,
+            metadata=release_metadata,
+            collector=collector
         )
 
     def summarize_archive(self) -> None:
         """Analyze the full data set."""
-        staged = self._storage.staging_root / Statistics.FILE
-        archive = self._storage.archive_root / Statistics.FILE
-
         stats = Statistics.from_storage(
-            self._storage.staging_root, self._storage.archive_root
+            self._stats_file, self._storage.staging_root, self._storage.archive_root
         )
+
+        staged = self._storage.staging_root / self._stats_file
+        archive = self._storage.archive_root / self._stats_file
 
         if not stats.is_empty():
             range = stats.range()
@@ -440,7 +470,9 @@ class Processor[R: Release]:
         stats.write(self._storage.staging_root, rechunk=True)
 
         _logger.debug('copying summary statistics to archive file="%s"', archive)
-        Statistics.copy(self._storage.staging_root, self._storage.archive_root)
+        Statistics.copy(
+            self._stats_file, self._storage.staging_root, self._storage.archive_root
+        )
 
     def summarize_archived_release(
         self,
@@ -502,7 +534,11 @@ class Processor[R: Release]:
     def visualize(self) -> None:
         """Visualize the analysis results."""
         visualize(
-            self._storage, self._coverage, notebook=False, stat_source=self._stat_source
+            stats_file=self._stats_file,
+            storage=self._storage,
+            coverage=self._coverage,
+            notebook=False,
+            stat_source=self._stat_source
         )
 
 
