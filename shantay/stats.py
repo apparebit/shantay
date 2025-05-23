@@ -799,9 +799,8 @@ class _Summarizer:
         bar = "|" if markdown else "\u2502"
         for var, val in formatted_pairs:
             if isinstance(var, _Tag) and not markdown:
-                assert isinstance(val, _Tag)
-                var = f" {var} ".center(var_width + 2, "═")
-                val = f" {val} ".center(val_width + 2, "═")
+                var = f" {humane(str(var))} ".center(var_width + 2, "═")
+                val = "═" * (val_width + 2)
                 lines.append(
                     f"╞{var}╪{val}╡"
                 )
