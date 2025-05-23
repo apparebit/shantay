@@ -195,10 +195,10 @@ class TestPrepare(unittest.TestCase):
             frame = collector.frame()
             frame_data = frame.to_dict(as_series=False)
 
-            import pprint
+            # import pprint
 
-            with open("data.txt", mode="w", encoding="utf8") as file:
-                pprint.pprint(frame_data, stream=file)
+            # with open("data.txt", mode="w", encoding="utf8") as file:
+            #     pprint.pprint(frame_data, stream=file)
 
             self.assertEqual(frame_data, EXPECTED_ANALYSIS)
 
