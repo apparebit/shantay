@@ -217,7 +217,7 @@ class TestPrepare(unittest.TestCase):
                     break
 
             self.assertNotEqual(offset, -1)
-            self.assertTrue(offset + 35 <= len(lines))
+            self.assertTrue(offset + 38 <= len(lines))
             self.assertIn("staged file", lines[offset + 0])
             self.assertIn("validated file", lines[offset + 1])
             self.assertIn('unarchived type="nested archive"', lines[offset + 2])
@@ -240,12 +240,15 @@ class TestPrepare(unittest.TestCase):
             self.assertTrue(lines[offset + 15].startswith("    return function(*args, **kwargs)"))
             self.assertTrue(lines[offset + 16].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
             self.assertTrue(lines[offset + 17].startswith("  File"))
-            self.assertTrue(lines[offset + 18].startswith("    return wrap_df(ldf.collect(engine, callback))"))
-            self.assertTrue(lines[offset + 19].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 18].startswith("    return function(*args, **kwargs)"))
+            self.assertTrue(lines[offset + 19].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 20].startswith("  File"))
+            self.assertTrue(lines[offset + 21].startswith("    return wrap_df(ldf.collect(engine, callback))"))
+            self.assertTrue(lines[offset + 22].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
 
             # Since the particulars of the traceback have changed over time,
             # make offsets relative to the next log line.
-            offset = offset + 20
+            offset = offset + 23
 
             self.assertTrue(
                 lines[offset].startswith(
