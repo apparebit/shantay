@@ -399,7 +399,10 @@ class StatementsOfReasons(Dataset[Daily]):
         self, root: Path, stats_file: str, collector: CollectorProtocol
     ) -> pl.DataFrame:
         _logger.debug('combining daily statistics into a single data frame')
-        frame = collector.frame(validate=True).rechunk()
+        frame = collector.frame(validate=True).sort(
+            pl.col("start_date"),
+            maintain_order=True,
+        ).rechunk()
 
         _logger.debug(f'writing combined statistics to "{stats_file}"')
         self.write_parquet(frame, root / stats_file)

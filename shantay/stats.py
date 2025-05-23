@@ -1013,10 +1013,13 @@ class Statistics:
         return summarizer.formatted_summary(markdown)
 
     def write(self, directory: Path, rechunk: bool = False) -> Self:
-        """Write this statistics frame to the given directory."""
+        """
+        Write this statistics frame to the given directory. If `rechunk` is
+        `True`, this method sorts and rechunks the data frame before writing it.
+        """
         frame = self.frame()
         if rechunk:
-            frame = frame.rechunk()
+            frame = frame.sort(pl.col("start_date"), maintain_order=True).rechunk()
             self._frames = [frame]
 
         path = directory / self.file()
