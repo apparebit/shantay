@@ -105,7 +105,7 @@ def get_tags(frame: pl.DataFrame) -> list[None | str]:
 
     for tag in raw_tags:
         if tag is not None and tag.startswith("KEYWORD_"):
-            tags.append(tags)
+            tags.append(tag)
 
     return tags
 
@@ -927,7 +927,7 @@ class Statistics:
 
         # Slow path: Concatenate 2+ frames
         if self._collector is not None:
-            self._frames.append(self._collector.frame(group_by="day"))
+            self._frames.append(self._collector.frame())
         frame = pl.concat(self._frames, how="vertical")
 
         # Take care of validation and grouping
