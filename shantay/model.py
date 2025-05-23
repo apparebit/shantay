@@ -517,9 +517,6 @@ class Coverage[R: Release]:
         return DateRange(self.first.start_date, self.last.end_date)
 
 
-type StatSource = Literal[None, "archive", "working"]
-
-
 class CollectorProtocol[R: Release](Protocol):
     """The protocol for incremental data frame generation."""
 

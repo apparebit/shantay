@@ -12,7 +12,7 @@ from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, DateRange, DownloadFailed, MetadataConflict, Release,
-    StatSource, Storage
+    Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -164,7 +164,7 @@ def get_storage(options: Any) -> Storage:
 
 def get_configuration(
     options: Any
-) -> tuple[Storage, Coverage, Metadata, StatSource, str]:
+) -> tuple[Storage, Coverage, Metadata, str]:
     # Handle --archive, --working, and --staging options
     storage = get_storage(options)
 
@@ -197,11 +197,22 @@ def get_configuration(
     storage.staging_root.mkdir(parents=True, exist_ok=True)
     metadata.write_json(storage.staging_root)
 
+    # Handle --with-archive and --with-working
+    if options.with_archive and options.with_working:
+        raise ConfigError("--with-archive and --with-working are mutually exclusive")
+    if (options.with_archive or options.with_working) and options.task != "visualize":
+        raise ConfigError(
+            "--with-archive and --with-working control `visualize` task only"
+        )
+    if options.with_working and category is None:
+        raise ConfigError(
+            "--with-working requires lacks --category; please specify option"
+        )
+
     # Determine name of file with summary statistics
     if (
         options.task == "summarize" or
-        options.task == "visualize" and options.with_archive or
-        category is None
+        options.task == "visualize" and options.with_archive
     ):
         stats_file = Statistics.DB_STATS_FILE
     else:
@@ -252,21 +263,8 @@ def get_configuration(
             "only prepare, analyze, and summarize support more than one process"
         )
 
-    # Handle --with-archive and --with-working
-    if options.with_archive and options.with_working:
-        raise ConfigError("--with-archive and --with-working are mutually exclusive")
-    if (options.with_archive or options.with_working) and options.task != "visualize":
-        raise ConfigError(
-            "--with-archive and --with-working control `visualize` task only"
-        )
-    stat_source = None
-    if options.with_archive:
-        stat_source = "archive"
-    if options.with_working:
-        stat_source = "working"
-
     # Finish it all up
-    return storage, coverage, metadata, stat_source, stats_file
+    return storage, coverage, metadata, stats_file
 
 
 def configure_printing() -> None:
@@ -310,7 +308,7 @@ def _run(args: list[str]) -> None:
         fsck(storage.working_root, progress=Progress())
         return
 
-    storage, coverage, metadata, stat_source, stats_file = get_configuration(options)
+    storage, coverage, metadata, stats_file = get_configuration(options)
 
     if (
         options.task in ("prepare", "analyze", "summarize")
@@ -327,7 +325,7 @@ def _run(args: list[str]) -> None:
             stats_file=stats_file,
             size=options.multiproc,
         )
-        processor.run(options.task)
+        frame = processor.run(options.task)
     else:
         # Processor uses an analysis context as necessary internally.
         processor = Processor(
@@ -337,15 +335,14 @@ def _run(args: list[str]) -> None:
             metadata=metadata,
             stats_file=stats_file,
             progress=Progress(),
-            stat_source=stat_source,
         )
         frame = processor.run(options.task)
 
-        if options.task in ("analyze", "summarize"):
-            assert frame is not None
-            stats = Statistics(stats_file, frame)
-            print("\n")
-            print(stats.summary())
+    if options.task in ("analyze", "summarize"):
+        assert frame is not None
+        stats = Statistics(stats_file, frame)
+        print("\n")
+        print(stats.summary())
 
     v, u = scale_time(processor.runtime)
     print(f"\nCompleted task {options.task} in {v:,.1f} {u}")

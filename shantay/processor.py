@@ -1,5 +1,4 @@
 from collections import Counter
-import datetime as dt
 import hashlib
 import logging
 import os
@@ -15,7 +14,7 @@ from .framing import collect_release_metadata, filter_period
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
-    MetadataEntry, Release, StatSource, Storage
+    MetadataEntry, Release, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -43,7 +42,6 @@ class Processor[R: Release]:
         metadata: Metadata,
         stats_file: str,
         progress: Progress = NO_PROGRESS,
-        stat_source: StatSource = None,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
@@ -51,7 +49,6 @@ class Processor[R: Release]:
         self._metadata = metadata
         self._progress = progress
         self._stats_file = stats_file
-        self._stat_source: StatSource = stat_source
         self._frequency: Literal["daily", "monthly"]
         self._runtime = 0.0
 
@@ -402,9 +399,7 @@ class Processor[R: Release]:
             # However, saving the statistics for every release noticeably slows
             # down progress. Hence we only save after processing n days worth of
             # data.
-            if index % 23 == 0:
-                stats.write(self._storage.staging_root, rechunk=True)
-            elif index % 11 == 0:
+            if index % 11 == 0:
                 stats.write(self._storage.staging_root)
             self._progress.step(index + 1, extra=release.id)
 
@@ -538,7 +533,6 @@ class Processor[R: Release]:
             storage=self._storage,
             coverage=self._coverage,
             notebook=False,
-            stat_source=self._stat_source
         )
 
 

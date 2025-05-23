@@ -1027,6 +1027,16 @@ def normalize_keyword(keyword: None | str) -> None | str:
     return key
 
 
+def humane(tag: str) -> str:
+    """Generate a humane presentation for the given tag."""
+    if tag.startswith("STATEMENT_CATEGORY_"):
+        tag = tag[len("STATEMENT_CATEGORY_"):]
+    elif tag.startswith("KEYWORD_"):
+        tag = tag[len("KEYWORD_"):]
+    tag = tag.replace("_", " ").title()
+    return tag
+
+
 KEYWORDS_V1 = frozenset([
     # --- Animal welfare
     "KEYWORD_ANIMAL_HARM",

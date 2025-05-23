@@ -1,5 +1,6 @@
 from abc import ABCMeta, abstractmethod
 import datetime as dt
+import logging
 from pathlib import Path
 import re
 from typing import Any
@@ -12,17 +13,15 @@ from .color import (
     BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
-    aggregates, collect_release_metadata, get_frequency, is_row_within_period, NOT_NULL,
-    predicate
+    aggregates, collect_release_metadata, is_row_within_period, NOT_NULL, predicate
 )
 from .metadata import Metadata
-from .model import ConfigError, Coverage, StatSource, Storage
+from .model import ConfigError, Coverage, Storage
 from .schema import (
-    AutomatedDecision, AutomatedDetection,
-    ContentType, DecisionAccount, DecisionGroundAndLegality, DecisionMonetary,
-    DecisionProvision, DecisionType, DecisionVisibility,
-    KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
-    StatementCount,
+    AutomatedDecision, AutomatedDetection, ContentType, DecisionAccount,
+    DecisionGroundAndLegality, DecisionMonetary, DecisionProvision, DecisionType,
+    DecisionVisibility, humane, KeywordsMinorProtection, MetricDeclaration,
+    ProcessingDelay, SCHEMA, StatementCount,
 )
 from .stats import get_tags, Statistics
 from .util import to_markdown_table
@@ -142,6 +141,9 @@ DOC_FOOTER = """\
 """
 
 
+_logger = logging.getLogger(__spec__.parent)
+
+
 # --------------------------------------------------------------------------------------
 
 
@@ -150,13 +152,12 @@ def visualize(
     storage: Storage,
     coverage: Coverage,
     notebook: bool = False,
-    stat_source: StatSource = None,
 ) -> pl.DataFrame:
     charts = storage.staging_root / "charts"
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(stats_file, storage, coverage, renderer, stat_source)
+    visualizer = Visualizer(stats_file, storage, coverage, renderer)
     return visualizer.run()
 
 
@@ -253,7 +254,6 @@ class Visualizer:
         storage: Storage,
         coverage: Coverage,
         renderer: Renderer,
-        stat_source: StatSource,
         with_extras: bool = False,
     ) -> None:
         self._storage = storage
@@ -262,11 +262,10 @@ class Visualizer:
         self._renderer = renderer
         self._timelines = False
         self._timestamp = dt.datetime.now()
-        self._stat_source = stat_source or "working"
         self._stats_file = stats_file
 
     def has_all_sors(self) -> bool:
-        return self._stat_source == "archive"
+        return self._stats_file == Statistics.DB_STATS_FILE
 
     def is_monthly(self) -> bool:
         return self._frequency == "monthly"
@@ -274,7 +273,7 @@ class Visualizer:
     @property
     def persistent_root(self) -> Path:
         return (
-            self._storage.archive_root if self._stat_source == "archive"
+            self._storage.archive_root if self.has_all_sors()
             else self._storage.working_root
         )
 
@@ -369,6 +368,7 @@ class Visualizer:
         return self._statistics.frame()
 
     def ingest(self) -> None:
+        _logger.debug('collecting metadata')
         _, metadata = collect_release_metadata(
             Metadata.merge(
                 self._storage.staging_root,
@@ -378,8 +378,10 @@ class Visualizer:
             ).records
         )
 
-        statistics = Statistics.read(self.persistent_root / self._stats_file)
-        self._frequency = get_frequency(statistics.frame())
+        path = self.persistent_root / self._stats_file
+        _logger.debug('ingesting statistics file="%s"', path)
+        statistics = Statistics.read(path)
+        self._frequency = self._coverage.frequency()
         self._tags = get_tags(statistics.frame())
         date_range = statistics.range().intersection(
             self._coverage.to_date_range(), empty_ok=False
@@ -394,6 +396,7 @@ class Visualizer:
             raise ConfigError("cannot visualize less than a full month of data")
 
         # Determine global keyword usage and keywords with at least 1% use.
+        _logger.debug('analyze keyword usage')
         self._keyword_usage = self._statistics.frame().filter(
             predicate("category_specification", entity=None)
         ).group_by(
@@ -435,6 +438,7 @@ class Visualizer:
             self._keyword_names = None
 
     def render_heading(self) -> None:
+        _logger.debug('render heading')
         self.html(
             '<h1><a href="https://transparency.dsa.ec.europa.eu">The DSA '
             'Transparency Database</a></h1>'
@@ -447,6 +451,7 @@ class Visualizer:
         )
 
     def render_overview(self) -> None:
+        _logger.debug('render overview')
         self.html("<h2>Summary</h2>")
         self.markdown(self._statistics.summary(markdown=True))
 
@@ -498,11 +503,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
     def render_charts(self) -> None:
         main_tag = self._tags[0]
+        _logger.debug('render charts tag="%s"', "" if main_tag is None else main_tag)
 
         if main_tag is None:
             self.html("<h2>Timelines: All SoRs</h2>")
         else:
-            self.html(f"<h2>Timelines: {main_tag}</h2>")
+            self.html(f"<h2>Timelines: {humane(main_tag)}</h2>")
 
         charts: list[alt.Chart | alt.LayerChart] = [
             self.daily_statements_of_reasons(),
@@ -549,7 +555,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if 1 < len(self._tags):
             for tag in self._tags[1:]:
-                self.html(f"<h2>Timelines: {tag}</h2>")
+                assert tag is not None
+                _logger.debug('render charts tag="%s"', tag)
+                self.html(f"<h2>Timelines: {humane(tag)}</h2>")
                 self.render_standard_timelines(tag)
 
     def render_standard_timelines(self, tag: None | str = None) -> None:
@@ -773,7 +781,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         chart = alt.Chart(
             table,
             title=(
-                f"{spec.label}{f" for {tag}" if tag else ""} "
+                f"{spec.label}{f" for {humane(tag)}" if tag else ""} "
                 f"— {"Monthly" if self.is_monthly() else "Daily"} {quantity}"
             )
         )
@@ -824,7 +832,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             values="count",
             index=["start_date"] + (["end_date"] if self.is_monthly() else [])
         ).with_columns(
-            # Remove incompatible & illegal from incompatible
+            # Subtract incompatible & illegal from incompatible
             (
                 pl.col("Incompatible") - pl.col("Incompatible & Illegal")
             )
@@ -841,15 +849,33 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         KEY = "Platforms w/ Keywords"
         CSAM = "Platforms w/ CSAM"
 
-        table = self._statistics.frame().lazy().with_columns(
-            (pl.col("start_date") + dt.timedelta(days=15)).alias("mid_date"),
-        ).group_by(*[
-            pl.col("mid_date").dt.year().alias("year"),
-            pl.col("mid_date").dt.month().alias("month"),
-        ] + [] if self.is_monthly() else [
-            pl.col("mid_date").dt.day().alias("day")
-        ]).agg(
-            pl.col("mid_date").first(),
+        table = self._statistics.frame().lazy()
+        if self.is_monthly():
+            table = table.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+                maintain_order=True,
+            )
+            mid_date = (
+                pl.col("start_date")
+                .first()
+                .dt.month_start()
+                .dt.offset_by("14d")
+                .alias("mid_date")
+            )
+        else:
+            table = table.group_by(
+                pl.col("start_date"),
+                maintain_order=True,
+            )
+            mid_date = (
+                pl.col("start_date")
+                .first()
+                .alias("mid_date")
+            )
+
+        table = table.agg(
+            mid_date,
             pl.col("variant").filter(pl.col("column").eq("platform_name")).alias(ALL),
             pl.col("variant").filter(
                 pl.col("column").eq("platform_name")
@@ -861,8 +887,6 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 .and_(pl.col("entity").eq("with_category_specification"))
                 .and_(pl.col("variant_too").eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"))
             ).alias(CSAM),
-        ).sort(
-            "mid_date"
         ).with_columns(
             pl.col(ALL, KEY, CSAM).cumulative_eval(
                 pl.element().explode().unique().implode().list.len()
