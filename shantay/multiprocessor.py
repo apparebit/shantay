@@ -76,6 +76,7 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
+        _logger.info('    key="coverage.frequency"    value="%s"', self._coverage.frequency())
         _logger.info('    key="statistics.file",      value="%s"', self._stats_file)
         _logger.info('    key="pool.size",            value=%d', self._pool.size)
 

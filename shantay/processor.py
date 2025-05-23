@@ -49,7 +49,6 @@ class Processor[R: Release]:
         self._metadata = metadata
         self._progress = progress
         self._stats_file = stats_file
-        self._frequency: Literal["daily", "monthly"]
         self._runtime = 0.0
 
     @property
@@ -70,6 +69,7 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
+        _logger.info('    key="coverage.frequency"    value="%s"', self._coverage.frequency())
         _logger.info('    key="statistics.file",      value="%s"', self._stats_file)
 
         # Arguably, time.process_time() would be the more accurate time source
