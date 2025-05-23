@@ -1027,6 +1027,15 @@ def normalize_keyword(keyword: None | str) -> None | str:
     return key
 
 
+_MINOR_WORDS = {
+    " And ": " and ",
+    " For ": " for ",
+    " Of ": " of ",
+    " On ": " on ",
+    " Or ": " or ",
+}
+
+
 def humane(tag: str) -> str:
     """Generate a humane presentation for the given tag."""
     if tag.startswith("STATEMENT_CATEGORY_"):
@@ -1034,6 +1043,8 @@ def humane(tag: str) -> str:
     elif tag.startswith("KEYWORD_"):
         tag = tag[len("KEYWORD_"):]
     tag = tag.replace("_", " ").title()
+    for source, target in _MINOR_WORDS.items():
+        tag = tag.replace(source, target)
     return tag
 
 

@@ -33,6 +33,10 @@ TIMELINE_WIDTH = 600
 TIMELINE_HEIGHT = 400
 
 HTML_HEADLINE = re.compile(r"<h([1-3])>([^<]*)</h[1-3]>")
+HTML_TABLEROW = re.compile(
+    r'<tr>\n  <td style="text-align:left"><em><strong>(—+)([^—]+)(—+)</strong></em></td>'
+    r'\n  <td style="text-align:right">⠀</td>'
+)
 
 FRAME_BORDER = re.compile(r' border="1"')
 FRAME_CLASS = re.compile(r' class="dataframe"')
@@ -118,6 +122,9 @@ tbody > tr:first-of-type > :where(th, td) {
 tbody > tr:nth-child(even) {
     background: #f0f0f0
 }
+/*tbody > tr.highlight {
+    background: #fff9cf;
+}*/
 td {
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -126,7 +133,10 @@ th {
     text-align: right;
 }
 .alltext th, .alltext td {
-    text-alight: left;
+    text-align: left;
+}
+tbody > tr.highlight > td {
+    text-align: center;
 }
 </style>
 </head>
@@ -305,6 +315,14 @@ class Visualizer:
 
         assert self._document is not None
         html = str(mistune.html(markdown))
+
+        def replace(match: re.Match) -> str:
+            return (
+                f'<tr class=highlight>\n  <td colspan=2><em><strong>{match.group(1)}'
+                f'{match.group(2)}{match.group(3)}</strong></em></td>'
+            )
+        html = HTML_TABLEROW.sub(replace, html)
+
         hn = HTML_HEADLINE.match(html)
         if not disclosure or hn is None:
             self._document.write(html)
@@ -732,8 +750,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 pl.col("start_date").dt.month().alias("month"),
                 *spec.groupings(),
             ).agg(
-                pl.col("start_date").min() + dt.timedelta(days=5),
-                pl.col("end_date").max() - dt.timedelta(days=5),
+                pl.col("start_date").first().dt.month_start() + dt.timedelta(days=5),
+                (pl.col("start_date").first().dt.month_end() - dt.timedelta(days=5)).alias("end_date"),
                 *aggregates()
             )
         else:

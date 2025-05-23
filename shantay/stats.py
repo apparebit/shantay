@@ -23,9 +23,9 @@ from .framing import (
 )
 from .model import Daily, DateRange, Release
 from .schema import (
-    CanonicalPlatformNames, DurationTransform, StatisticsSchema, TRANSFORM_COUNT,
-    TRANSFORMS, TransformType, ValueCountsPlusTransform, VariantValueType,
-    VariantTooValueType
+    CanonicalPlatformNames, DurationTransform, humane, StatisticsSchema,
+    TRANSFORM_COUNT, TRANSFORMS, TransformType, ValueCountsPlusTransform,
+    VariantValueType, VariantTooValueType
 )
 from .util import scale_time
 
@@ -734,7 +734,10 @@ class _Summarizer:
                     # Delay formatting of tag for non-markdown output
                     # so that we can center it
                     assert isinstance(val, _Tag)
-                    svar = f"***——— {val} ———***" if markdown else var
+                    svar = (
+                        f"***—————————— {humane(str(var))} ——————————***"
+                        if markdown else var
+                    )
                 elif var is _SPACER:
                     svar = "\u2800" if markdown else " "
                 else:
@@ -742,7 +745,7 @@ class _Summarizer:
 
                 if isinstance(val, _Tag):
                     assert isinstance(var, _Tag)
-                    sval = f"***— {val} —***" if markdown else val
+                    sval = "\u2800" if markdown else " "
                 elif val is _SPACER:
                     sval = "\u2800" if markdown else " "
                 elif val is None:
