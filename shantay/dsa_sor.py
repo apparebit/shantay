@@ -305,10 +305,47 @@ class StatementsOfReasons(Dataset[Daily]):
                     "content_type",
                     "territorial_scope",
                 )
-                    .str.strip_prefix("[")
-                    .str.strip_suffix("]")
-                    .str.replace_all('"', "", literal=True)
-                    .str.split(","),
+                .str.strip_prefix("[")
+                .str.strip_suffix("]")
+                .str.replace_all('"', "", literal=True)
+                .str.split(",")
+                # Keep list elements that are not null
+                .list.eval(
+                    pl.element().filter(pl.element().is_not_null())
+                )
+                # Keep list elements that not the empty string
+                .list.eval(
+                    pl.element().filter(
+                        pl.element().ne(
+                            pl.lit("")
+                        )
+                    )
+                )
+            )
+            .with_columns(
+                # Replace empty lists with None. This method used to assume that
+                # the value never is the empty list. That assumption becomes
+                # superfluous with introduction of this clause.
+                pl.when(
+                    pl.col("decision_visibility").list.len() == 0
+                ).then(
+                    pl.lit(None).alias("decision_visibility")
+                ),
+                pl.when(
+                    pl.col("category_specification").list.len() == 0
+                ).then(
+                    pl.lit(None).alias("category_specification")
+                ),
+                pl.when(
+                    pl.col("content_type").list.len() == 0
+                ).then(
+                    pl.lit(None).alias("content_type")
+                ),
+                pl.when(
+                    pl.col("territorial_scope").list.len() == 0
+                ).then(
+                    pl.lit(None).alias("territorial_scope")
+                ),
             )
             # Cast list elements and date columns to their types. Add released_on.
             .with_columns(
