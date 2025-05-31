@@ -365,7 +365,7 @@ class Visualizer:
         self._document.write("\n\n")
 
     def run(self) -> pl.DataFrame:
-        path = self._storage.staging_root / "overview.html"
+        path = (self._storage.staging_root / self._stats_file).with_suffix(".html")
         self.configure_display()
         self.ingest()
 
@@ -722,7 +722,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         self,
         spec: MetricDeclaration,
         tag: None | str = None,
-    ) -> alt.Chart:
+    ) -> alt.Chart | alt.LayerChart:
         table = self.timeline_data(spec, tag)
         return self.timeline_chart(table, spec, tag)
 
@@ -778,7 +778,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         table: pl.DataFrame,
         spec: MetricDeclaration,
         tag: None | str = None,
-    ) -> alt.Chart:
+    ) -> alt.Chart | alt.LayerChart:
         """
         Generate the standard timeline chart. The data frame may contain daily
         or monthly summary statistics.
@@ -796,21 +796,6 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if not spec.has_variants():
             bar_area_props["color"] = GRAY
 
-        chart = alt.Chart(
-            table,
-            title=(
-                f"{spec.label}{f" for {humane(tag)}" if tag else ""} "
-                f"— {"Monthly" if self.is_monthly() else "Daily"} {quantity}"
-            )
-        )
-
-        if self.is_monthly():
-            chart = chart.mark_bar(**bar_area_props)
-        elif not spec.has_variants():
-            chart = chart.mark_line(**bar_area_props)
-        else:
-            chart = chart.mark_area(**bar_area_props)
-
         encoding: list[Any] = [
             alt.X("start_date:T")
             .title("Month" if self.is_monthly() else "Day"),
@@ -822,7 +807,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if self.has_all_sors() and spec.quantity == "count":
             # This does cut off around four daily spikes but also ensures that
             # smaller categories are visible by and large.
-            yaxis = yaxis.scale(domain=(0, 90_000_000))
+            domain = (0, 2_000_000_000 if self.is_monthly() else 90_000_000)
+            yaxis = yaxis.scale(domain=domain, clamp=True)
         encoding.append(yaxis)
 
         if spec.has_variants():
@@ -833,12 +819,34 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 ).title(spec.label),
             )
 
-        chart = chart.encode(
+        base = alt.Chart(
+            table,
+            title=(
+                f"{spec.label}{f" for {humane(tag)}" if tag else ""} "
+                f"— {"Monthly" if self.is_monthly() else "Daily"} {quantity}"
+            )
+        ).encode(
             *encoding
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
-        ).interactive()
+        )
+
+        if self.is_monthly():
+            chart = base.mark_bar(**bar_area_props)
+        elif not spec.has_variants():
+            chart = base.mark_line(**bar_area_props)
+        else:
+            chart = base.mark_area(**bar_area_props)
+
+        # anno = base.mark_text(
+        #     align='center',
+        #     fontSize=50,
+        # ).encode(
+        #     x=alt.value(5),
+        #     y=alt.value(5),
+        #     text=alt.value("BOOM! ⚠️"),
+        # )
 
         return chart
 
