@@ -291,7 +291,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     .alias("territorial_scope"),
                 pl.col("platform_name").replace(CanonicalPlatformNames),
             )
-            # Parse list-valued columns (assumes no [] values)
+            # Parse list-valued columns (assumes no [] values, but see below)
             .with_columns(
                 pl.col(
                     "decision_visibility",
