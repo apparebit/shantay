@@ -1,21 +1,16 @@
 from collections import Counter
-from collections.abc import Iterator
-from contextlib import contextmanager
 import csv
 import hashlib
 import logging
 from pathlib import Path
-from typing import Self
 
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, Release
+    CollectorProtocol, Daily, DataFrameType, Dataset, Release
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import BASE_SCHEMA, CanonicalPlatformNames, PARTIAL_SCHEMA, SCHEMA, TerritorialAlias
-
-from .stats import Statistics
 from .util import annotate_error
 
 
