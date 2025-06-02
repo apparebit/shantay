@@ -633,8 +633,8 @@ class Dataset[R: Release](metaclass=ABCMeta):
 class Storage:
     """The current storage locations."""
 
-    archive_root: Path
-    working_root: Path
+    archive_root: None | Path
+    working_root: None | Path
     staging_root: Path
 
     def isolate(self, worker: int) -> Self:
@@ -644,6 +644,34 @@ class Storage:
             self.working_root,
             self.staging_root.with_suffix(f".{worker}")
         )
+
+    @property
+    def the_archive_root(self) -> Path:
+        """
+        The non-null archive root. If the working root is null, the
+        implementation throws an exception.
+        """
+        if self.archive_root is None:
+            raise ValueError('no archive root available')
+        return self.archive_root
+
+    @property
+    def the_working_root(self) -> Path:
+        """
+        The non-null working root. If the working root is null, the
+        implementation throws an exception.
+        """
+        if self.working_root is None:
+            raise ValueError('no working root available')
+        return self.working_root
+
+    @property
+    def the_staging_root(self) -> Path:
+        """
+        The non-null staging root. The staging root cannot be null, so this
+        property exists solely for interface uniformity.
+        """
+        return self.staging_root
 
 
 # ================================================================================================

@@ -103,13 +103,15 @@ class Processor[R: Release]:
             # existing meta.json files in the staging, working, and archive
             # roots. Hence it's safe to copy back the JSON file after each
             # release. Not only that, it also prevents data loss.
-            Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
-            Metadata.copy_json(self._storage.staging_root, self._storage.archive_root)
+            if self._storage.working_root is not None:
+                Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
+            if self._storage.archive_root is not None:
+                Metadata.copy_json(self._storage.staging_root, self._storage.archive_root)
 
     def prepare_batches(self, release: R) -> None:
         if (
             release in self._metadata
-            and extracted_data_exists(self._storage.working_root, release, self._metadata)
+            and extracted_data_exists(self._storage.the_working_root, release, self._metadata)
         ):
             return
 
@@ -145,13 +147,13 @@ class Processor[R: Release]:
         self.validate_archive(self._storage.staging_root, release)
         _logger.info('validated file="%s"', archive)
         self._progress.perform(f"copying release {release.id} to archive")
-        self.copy_archive(self._storage.staging_root, self._storage.archive_root, release)
+        self.copy_archive(self._storage.staging_root, self._storage.the_archive_root, release)
         _logger.info('archived file="%s"', archive)
 
     def is_archive_downloaded(self, release: R) -> bool:
         """Determine whether the archive for the release has been downloaded."""
         return (
-            self._storage.archive_root
+            self._storage.the_archive_root
             / release.parent_directory
             / self._dataset.archive_name(release)
         ).exists()
@@ -249,7 +251,7 @@ class Processor[R: Release]:
 
         archive = self._dataset.archive_name(release)
         self._progress.perform(f"copying release {release.id} from archive to staging")
-        self.copy_archive(self._storage.archive_root, self._storage.staging_root, release)
+        self.copy_archive(self._storage.the_archive_root, self._storage.staging_root, release)
         _logger.info('staged file="%s"', archive)
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
@@ -321,7 +323,7 @@ class Processor[R: Release]:
             f"persisting {release.id}", "batch", with_rate=False,
         ).start(batch_count)
         self.copy_extracted_data(
-            self._storage.staging_root, self._storage.working_root, release, batch_count
+            self._storage.staging_root, self._storage.the_working_root, release, batch_count
         )
         _logger.info('archived batch-count=%d, release="%s"', batch_count, release.id)
 
@@ -404,7 +406,7 @@ class Processor[R: Release]:
             self._progress.step(index + 1, extra=release.id)
 
         return self._dataset.combine_releases(
-            self._storage.working_root, self._stats_file, stats
+            self._storage.the_working_root, self._stats_file, stats
         )
 
     def analyze_working_release(
@@ -418,7 +420,7 @@ class Processor[R: Release]:
 
         assert isinstance(self._coverage.filter, str)
         self._dataset.analyze_release(
-            root=self._storage.working_root,
+            root=self._storage.the_working_root,
             release=release,
             filter=self._coverage.filter,
             metadata=release_metadata,
@@ -428,11 +430,11 @@ class Processor[R: Release]:
     def summarize_archive(self) -> None:
         """Analyze the full data set."""
         stats = Statistics.from_storage(
-            self._stats_file, self._storage.staging_root, self._storage.archive_root
+            self._stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
 
         staged = self._storage.staging_root / self._stats_file
-        archive = self._storage.archive_root / self._stats_file
+        archive = self._storage.the_archive_root / self._stats_file
 
         if not stats.is_empty():
             range = stats.range()
@@ -466,7 +468,7 @@ class Processor[R: Release]:
 
         _logger.debug('copying summary statistics to archive file="%s"', archive)
         Statistics.copy(
-            self._stats_file, self._storage.staging_root, self._storage.archive_root
+            self._stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
 
     def summarize_archived_release(

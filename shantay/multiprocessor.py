@@ -93,7 +93,9 @@ class Multiprocessor[R: Release]:
             cover = date_cover.dailies()
         elif task == "summarize":
             self._stats = Statistics.from_storage(
-                self._stats_file, self._storage.staging_root, self._storage.archive_root
+                self._stats_file,
+                self._storage.the_staging_root,
+                self._storage.the_archive_root,
             )
 
             if not self._stats.is_empty():
@@ -123,9 +125,9 @@ class Multiprocessor[R: Release]:
             self._stats.write(self._storage.staging_root, rechunk=True)
 
             if task == "analyze":
-                persistent = self._storage.working_root
+                persistent = self._storage.the_working_root
             else:
-                persistent = self._storage.archive_root
+                persistent = self._storage.the_archive_root
             _logger.debug(
                 'copying summary statistics to persistent file="%s"',
                 persistent / self._stats_file
@@ -174,7 +176,7 @@ class Multiprocessor[R: Release]:
                 release is not None
                 and release in self._metadata
                 and extracted_data_exists(
-                    self._storage.working_root,
+                    self._storage.the_working_root,
                     release,
                     self._metadata
                 )
@@ -219,7 +221,9 @@ class Multiprocessor[R: Release]:
             # first writes to a temporary file and then atomically replaces the
             # original, it's ok to update that file here. In fact, it's more
             # than ok because we just updated the metadata with a new release.
-            Metadata.copy_json(self._storage.staging_root, self._storage.working_root)
+            Metadata.copy_json(
+                self._storage.staging_root, self._storage.the_working_root
+            )
         elif self._task in ("analyze", "summarize"):
             assert self._stats is not None
             self._stats.append(result)
@@ -340,7 +344,7 @@ def _run_on_worker[R: Release](
     elif task == "summarize":
         metadata = Metadata()
     elif task == "analyze":
-        metadata = Metadata.read_json(storage.working_root)
+        metadata = Metadata.read_json(storage.the_working_root)
     else:
         raise AssertionError(f"invalid task {task}")
 

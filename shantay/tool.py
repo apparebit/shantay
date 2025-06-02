@@ -146,18 +146,17 @@ def _parse_options(args: list[str]) -> Any:
     return parser.parse_args(args)
 
 
-def get_storage(options: Any) -> Storage:
-    archive = options.archive
-    working = options.working
-    if options.root:
-        if not archive:
-            archive = options.root / "archive"
-        if not working:
-            working = options.root / "data"
+def get_storage(
+    options: Any, with_archive: bool = False, with_working: bool = False
+) -> Storage:
+    if with_archive and options.archive is None:
+        raise ConfigError("please provide an --archive path")
+    if with_working and options.working is None:
+        raise ConfigError("please provide a --working path")
 
     return Storage(
-        archive_root=archive if archive else Path.cwd() / "dsa-db-archive",
-        working_root=working if working else Path.cwd() / "dsa-db-working",
+        archive_root=options.archive,
+        working_root=options.working,
         staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
     )
 
@@ -166,7 +165,17 @@ def get_configuration(
     options: Any
 ) -> tuple[Storage, Coverage, Metadata, str]:
     # Handle --archive, --working, and --staging options
-    storage = get_storage(options)
+    storage = get_storage(
+        options,
+        with_archive=(
+            options.task in ("prepare", "summarize")
+            or options.task == "visualize" and options.with_archive
+        ),
+        with_working=(
+            options.task in ("prepare", "analyze")
+            or options.task == "visualize" and options.with_working
+        ),
+    )
 
     # Handle --category option
     category = normalize_category(options.category)
@@ -304,7 +313,9 @@ def _run(args: list[str]) -> None:
 
     # Handle recovery task before getting configuration
     if options.task == "recover":
-        storage = get_storage(options)
+        storage = get_storage(options, with_working=True)
+        if storage.working_root is None:
+            raise ConfigError("cannot recover --working root without its path")
         fsck(storage.working_root, progress=Progress())
         return
 

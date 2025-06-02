@@ -291,8 +291,8 @@ class Visualizer:
     @property
     def persistent_root(self) -> Path:
         return (
-            self._storage.archive_root if self.has_all_sors()
-            else self._storage.working_root
+            self._storage.the_archive_root if self.has_all_sors()
+            else self._storage.the_working_root
         )
 
     @staticmethod

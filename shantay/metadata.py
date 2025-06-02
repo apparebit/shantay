@@ -86,10 +86,12 @@ class Metadata[R: Release]:
         return len(self._releases)
 
     @classmethod
-    def merge(cls, *sources: Path, not_exist_ok: bool = False) -> Self:
+    def merge(cls, *sources: None | Path, not_exist_ok: bool = False) -> Self:
         """Merge the metadata from the given directories."""
         merged = cls()
         for source in sources:
+            if source is None:
+                continue
             if not_exist_ok and not (source / META_FILE).exists():
                 continue
             source_data = cls.read_json(source)
