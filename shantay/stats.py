@@ -23,9 +23,9 @@ from .framing import (
 )
 from .model import Daily, DateRange, Release
 from .schema import (
-    CanonicalPlatformNames, DurationTransform, humane, StatisticsSchema,
-    TRANSFORM_COUNT, TRANSFORMS, TransformType, ValueCountsPlusTransform,
-    VariantValueType, VariantTooValueType
+    CanonicalPlatformNames, DurationTransform, humane, KeywordChildSexualAbuseMaterial,
+    StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS, TransformType,
+    ValueCountsPlusTransform, VariantValueType, VariantTooValueType
 )
 from .util import scale_time
 
@@ -651,7 +651,7 @@ class _Summarizer:
         platforms_with_csam = frame.filter(
             predicate("platform_name", entity="with_category_specification", tag=tag)
         ).filter(
-            pl.col("variant_too").eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
+            pl.col("variant_too").eq(KeywordChildSexualAbuseMaterial)
         ).select(
             pl.col("variant").n_unique()
         ).item()

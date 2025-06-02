@@ -10,6 +10,7 @@ from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
 from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
+from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Collector, Statistics
 from shantay.tool import configure_logging
 
@@ -34,8 +35,6 @@ CSV_FILES = [
     "sor-global-2024-03-14-full-00001-00000.csv",
     "sor-global-2024-03-14-full-00001-00001.csv",
 ]
-
-FILTER = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
 
 
 def setUpModule():
@@ -69,8 +68,8 @@ class TestPrepare(unittest.TestCase):
                 archive_root=ARCHIVE, working_root=STAGING, staging_root=STAGING
             )
             release = Daily(2024, 3, 14)
-            coverage = Coverage(release, release, FILTER)
-            metadata = Metadata(FILTER, {})
+            coverage = Coverage(release, release, StatementCategoryProtectionOfMinors)
+            metadata = Metadata(StatementCategoryProtectionOfMinors, {})
             processor = Processor(
                 dataset=dataset,
                 storage=storage,
@@ -119,7 +118,7 @@ class TestPrepare(unittest.TestCase):
                 release=release,
                 index=0,
                 name=ZIP_FILES[0],
-                filter=FILTER,
+                filter=StatementCategoryProtectionOfMinors,
             )
             dataset._validate_schema(frame)
 
@@ -149,7 +148,7 @@ class TestPrepare(unittest.TestCase):
                 release=release,
                 index=1,
                 name=ZIP_FILES[1],
-                filter=FILTER,
+                filter=StatementCategoryProtectionOfMinors,
             )
 
             self.assertEqual(
@@ -187,7 +186,7 @@ class TestPrepare(unittest.TestCase):
             dataset.analyze_release(
                 STAGING,
                 release.to_monthly(),
-                "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+                StatementCategoryProtectionOfMinors,
                 release_metadata,
                 collector
             )
@@ -205,7 +204,7 @@ class TestPrepare(unittest.TestCase):
             # Write to parquet
             frame.write_parquet(
                 STAGING /
-                Statistics.file_name_for("STATEMENT_CATEGORY_PROTECTION_OF_MINORS")
+                Statistics.file_name_for(StatementCategoryProtectionOfMinors)
             )
 
         with self.subTest("check log file"):

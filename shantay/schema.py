@@ -455,6 +455,10 @@ InformationSource = MetricDeclaration("source_type", "Information Sources", {
 })
 
 
+KeywordChildSexualAbuseMaterial = "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
+
+
+
 Keyword = (
     # --- Animal welfare
     "KEYWORD_ANIMAL_HARM",
@@ -522,7 +526,7 @@ Keyword = (
 
     # --- Protection of minors
     "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
+    KeywordChildSexualAbuseMaterial,
     "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE",
     "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS",
     "KEYWORD_UNSAFE_CHALLENGES",
@@ -577,7 +581,7 @@ Keyword = (
 KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords", {
     "KEYWORD_ADULT_SEXUAL_MATERIAL": ("Adult Sexual Material", GREEN),
     "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS": ("Age-Restricted", PURPLE),
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL": ("CSAM", LIGHT_BLUE),
+    KeywordChildSexualAbuseMaterial: ("CSAM", LIGHT_BLUE),
     "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE": ("Deepfake", PINK),
     "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS": ("Grooming", RED),
     "KEYWORD_HATE_SPEECH": ("Hate Speech", CYAN),
@@ -614,6 +618,8 @@ ProcessingDelay = MetricDeclaration(
 # https://transparency.dsa.ec.europa.eu/page/additional-explanation-for-statement-attributes
 # for two-level classification for types of violative activity.
 
+StatementCategoryProtectionOfMinors = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
+
 StatementCategory = (
     "STATEMENT_CATEGORY_ANIMAL_WELFARE",
     "STATEMENT_CATEGORY_CONSUMER_INFORMATION",
@@ -627,7 +633,7 @@ StatementCategory = (
     "STATEMENT_CATEGORY_NOT_SPECIFIED_NOTICE",
     "STATEMENT_CATEGORY_OTHER_VIOLATION_TC",
     "STATEMENT_CATEGORY_PORNOGRAPHY_OR_SEXUALIZED_CONTENT",
-    "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+    StatementCategoryProtectionOfMinors,
     "STATEMENT_CATEGORY_RISK_FOR_PUBLIC_SECURITY",
     "STATEMENT_CATEGORY_SCAMS_AND_FRAUD",
     "STATEMENT_CATEGORY_SELF_HARM",
@@ -1089,7 +1095,7 @@ KEYWORDS_V1 = frozenset([
 
     # --- Protection of minors
     "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
+    KeywordChildSexualAbuseMaterial,
     "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE",
     "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS",
     "KEYWORD_UNSAFE_CHALLENGES",
@@ -1199,7 +1205,7 @@ KEYWORDS_V2 = frozenset([
 
     # --- Protection of minors
     "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS",
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
+    KeywordChildSexualAbuseMaterial,
     "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE",
     "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS",
     "KEYWORD_UNSAFE_CHALLENGES",

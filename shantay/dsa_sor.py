@@ -10,7 +10,10 @@ from .model import (
     CollectorProtocol, Daily, DataFrameType, Dataset, Release
 )
 from .progress import NO_PROGRESS, Progress
-from .schema import BASE_SCHEMA, CanonicalPlatformNames, PARTIAL_SCHEMA, SCHEMA, TerritorialAlias
+from .schema import (
+    BASE_SCHEMA, CanonicalPlatformNames, KeywordChildSexualAbuseMaterial,
+    PARTIAL_SCHEMA, SCHEMA, StatementCategoryProtectionOfMinors, TerritorialAlias
+)
 from .util import annotate_error
 
 
@@ -418,13 +421,13 @@ class StatementsOfReasons(Dataset[Daily]):
             tag=filter,
         )
 
-        if filter == "STATEMENT_CATEGORY_PROTECTION_OF_MINORS":
+        if filter == StatementCategoryProtectionOfMinors:
             csam = working_data.filter(
                 pl.col("category_specification").list.contains(
-                    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
+                    KeywordChildSexualAbuseMaterial
                 )
             )
-            collector.collect(release, csam, tag="KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL")
+            collector.collect(release, csam, tag=KeywordChildSexualAbuseMaterial)
 
     @annotate_error(filename_arg="root")
     def combine_releases(

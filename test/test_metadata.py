@@ -3,19 +3,21 @@ import unittest
 
 from shantay.metadata import Metadata
 from shantay.model import MetadataConflict
-from shantay.schema import normalize_category
+from shantay.schema import normalize_category, StatementCategoryProtectionOfMinors
 
 ROOT = Path(__file__).parent
 FIXTURE = ROOT / "fixture"
 METADATA_2000 = FIXTURE / "metadata" / "2000"
 
 CATEGORY = "protection_of_minors"
-FULL_CATEGORY = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
 
 
 class TestMetadata(unittest.TestCase):
     def test_filter(self) -> None:
-        self.assertEqual(normalize_category(CATEGORY), FULL_CATEGORY)
+        self.assertEqual(
+            normalize_category(CATEGORY),
+            StatementCategoryProtectionOfMinors
+        )
 
     def check_metadata_2000(self, metadata: Metadata) -> None:
         self.assertEqual(metadata.filter, "END_OF_THE_WORLD")
@@ -27,7 +29,7 @@ class TestMetadata(unittest.TestCase):
     def test_new_metadata(self) -> None:
         # Instantiate metadata
         metadata = Metadata(normalize_category(CATEGORY))
-        self.assertEqual(metadata.filter, FULL_CATEGORY)
+        self.assertEqual(metadata.filter, StatementCategoryProtectionOfMinors)
         self.assertListEqual([*metadata.records], [])
 
     def test_merge_same_metadata(self) -> None:

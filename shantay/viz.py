@@ -20,14 +20,13 @@ from .model import ConfigError, Coverage, Storage
 from .schema import (
     AutomatedDecision, AutomatedDetection, ContentType, DecisionAccount,
     DecisionGroundAndLegality, DecisionMonetary, DecisionProvision, DecisionType,
-    DecisionVisibility, humane, KeywordsMinorProtection, MetricDeclaration,
-    ProcessingDelay, SCHEMA, StatementCount,
+    DecisionVisibility, humane, KeywordChildSexualAbuseMaterial,
+    KeywordsMinorProtection, MetricDeclaration, ProcessingDelay, SCHEMA,
+    StatementCategoryProtectionOfMinors, StatementCount
 )
 from .stats import get_tags, Statistics
 from .util import to_markdown_table
 
-
-CSAM = "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
 
 TIMELINE_WIDTH = 600
 TIMELINE_HEIGHT = 400
@@ -446,7 +445,7 @@ class Visualizer:
             .get_column("keyword")
         )
 
-        if CSAM in self._tags:
+        if KeywordChildSexualAbuseMaterial in self._tags:
             self._keyword_names = {
                 k: KeywordsMinorProtection.variants[k][0]
                 for k in KeywordsMinorProtection.variants.keys()
@@ -461,7 +460,7 @@ class Visualizer:
             '<h1><a href="https://transparency.dsa.ec.europa.eu">The DSA '
             'Transparency Database</a></h1>'
         )
-        if CSAM in self._tags:
+        if KeywordChildSexualAbuseMaterial in self._tags:
             self.html('<h2>Focus on Protection of Minors</h2>')
         self.html(
             f'<p>Created on {self._timestamp.date().isoformat()} '
@@ -839,15 +838,6 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         else:
             chart = base.mark_area(**bar_area_props)
 
-        # anno = base.mark_text(
-        #     align='center',
-        #     fontSize=50,
-        # ).encode(
-        #     x=alt.value(5),
-        #     y=alt.value(5),
-        #     text=alt.value("BOOM! ⚠️"),
-        # )
-
         return chart
 
     def decision_ground(self, tag: None | str = None) -> pl.DataFrame:
@@ -1064,7 +1054,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         y_title = "Percent Fraction" if percent else "Statements of Reasons"
 
         color = alt.Color("variant_too:N")
-        if CSAM in self._tags:
+        if KeywordChildSexualAbuseMaterial in self._tags:
             color = color.scale(
                 domain=KeywordsMinorProtection.variant_labels(),
                 range=KeywordsMinorProtection.variant_colors(),
