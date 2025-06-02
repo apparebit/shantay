@@ -161,12 +161,19 @@ def visualize(
     storage: Storage,
     coverage: Coverage,
     notebook: bool = False,
+    with_cutoff: bool = True,
 ) -> pl.DataFrame:
     charts = storage.staging_root / "charts"
     charts.mkdir(exist_ok=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(stats_file, storage, coverage, renderer)
+    visualizer = Visualizer(
+        stats_file,
+        storage,
+        coverage,
+        renderer,
+        with_cutoff=with_cutoff
+    )
     return visualizer.run()
 
 
@@ -264,10 +271,12 @@ class Visualizer:
         coverage: Coverage,
         renderer: Renderer,
         with_extras: bool = False,
+        with_cutoff: bool = False,
     ) -> None:
         self._storage = storage
         self._coverage = coverage
         self._with_extras = with_extras
+        self._with_cutoff = with_cutoff
         self._renderer = renderer
         self._timelines = False
         self._timestamp = dt.datetime.now()
@@ -803,11 +812,21 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             encoding.append(alt.X2("end_date:T").title(""))
 
         yaxis = alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label)
-        if self.has_all_sors() and spec.quantity == "count":
-            # This does cut off around four daily spikes but also ensures that
-            # smaller categories are visible by and large.
-            domain = (0, 2_000_000_000 if self.is_monthly() else 90_000_000)
-            yaxis = yaxis.scale(domain=domain, clamp=True)
+
+        if self._with_cutoff and spec.quantity == "count":
+            cutoff = None
+            if self.is_monthly() and tag is None:
+                cutoff = 2_000_000_000
+            elif (
+                self.is_monthly() and
+                tag == StatementCategoryProtectionOfMinors
+            ):
+                cutoff = 5_000_000
+
+            if cutoff is not None:
+                # FIXME: Add emoji warning marker to cut-off bars
+                yaxis = yaxis.scale(domain=(0, cutoff), clamp=True)
+
         encoding.append(yaxis)
 
         if spec.has_variants():
