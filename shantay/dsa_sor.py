@@ -328,21 +328,29 @@ class StatementsOfReasons(Dataset[Daily]):
                     pl.col("decision_visibility").list.len() == 0
                 ).then(
                     pl.lit(None).alias("decision_visibility")
+                ).otherwise(
+                    pl.col("decision_visibility")
                 ),
                 pl.when(
                     pl.col("category_specification").list.len() == 0
                 ).then(
                     pl.lit(None).alias("category_specification")
+                ).otherwise(
+                    pl.col("category_specification")
                 ),
                 pl.when(
                     pl.col("content_type").list.len() == 0
                 ).then(
                     pl.lit(None).alias("content_type")
+                ).otherwise(
+                    pl.col("content_type")
                 ),
                 pl.when(
                     pl.col("territorial_scope").list.len() == 0
                 ).then(
                     pl.lit(None).alias("territorial_scope")
+                ).otherwise(
+                    pl.col("territorial_scope")
                 ),
             )
             # Cast list elements and date columns to their types. Add released_on.
