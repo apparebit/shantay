@@ -7,7 +7,6 @@ from typing import Any
 
 import polars as pl
 
-from ._platform import MissingPlatformError
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
@@ -18,7 +17,7 @@ from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
 from .schema import normalize_category, StatementCategory
-from .stats import Statistics
+from .stats import MissingPlatformError, Statistics
 from .util import scale_time
 
 
@@ -51,11 +50,6 @@ def _parse_options(args: list[str]) -> Any:
     )
 
     group = parser.add_argument_group("data storage")
-    group.add_argument(
-        "--root",
-        type=Path,
-        help="set directories for `archive` and working `data` to the eponymous subdirectories"
-    )
     group.add_argument(
         "--archive",
         type=Path,
@@ -255,10 +249,10 @@ def get_configuration(
             f"--{options.frequency} can only be used with the `visualize` task"
         )
 
-    if options.frequency == "monthly":
-        range = DateRange(first, last).monthlies()
-    else:
+    if options.frequency == "daily":
         range = DateRange(first, last).dailies()
+    else:
+        range = DateRange(first, last).monthlies()
     coverage = Coverage.of(range, category)
 
     # Handle --multiproc
