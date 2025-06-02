@@ -1,10 +1,21 @@
 # Version History for Shantay
 
-## v0.x.x (TBD)
+## v0.3.0 (TBD)
+
+This release substantially improves support for collecting and visualizing
+summary statistics about the entire DSA transparency database as well as
+specific statement categories. It also features a new, more precise schema for
+summary statistics; in other words, please recompute your summary statistics
+before visualization. The new schema uses enumerations where possible, as they
+are easier to use and are more compact to store than Pola.rs' category types or
+strings. One of those enumerations includes all platform names, which churn
+quite a bit. When encountering new platform names, Shantay currently updates its
+local installation. Updates are atomic and additive only, so ordering and
+batching make no difference and still yield the same list.
 
 Improved handling of summary statistics:
   - Collect statistics with daily resolution for full dataset and subsets alike
-  - User can select `--monthly` instead of the default `--daily` resolution when
+  - User can select `--daily` instead of the default `--monthly` resolution when
     running `visualize`
   - The parquet files with the summary statistics for subsets now have distinct
     names that depend on the statement catgory used for deriving the subset,
@@ -12,8 +23,11 @@ Improved handling of summary statistics:
     `STATEMENT_CATEGORY_PROTECTION_OF_MINORS`.
 
 Simplified command line options:
-  - The `--filter` option has been removed; the `--category` option remains for
-    specifying the statement category of a subset
+  - The `--root` option has been removed. The `--archive` and `--working`
+    options now are the only way of specifying root directories; they also
+    are optional now, though most tasks require at least one of them.
+  - The `--filter` option has been removed; the `--category` option is now the
+    only option for selecting a subset of database entries.
   - The `--first` and `--last` options now work for all tasks; they also are
     validated to be within a realistic range
 
@@ -22,14 +36,15 @@ Improved handling of platform names:
   - Reapply latest canonical mapping for platform names when reading statistics
   - Enforce that new platform names are well-formed
   - Do not rely on `eval()` when updating `_platform` module
+  - Platform names are current as of 2025-05-31, including several that are mapped
+    to simpler versions
 
 Improved visualizations:
   - Increase threshold for frequently used keywords to 1%
   - Display all keywords when charting platforms' keyword use in percent for
     working data
   - Actually chart total statement counts and their rolling mean for full archive
-  - Lower cut-off for statement counts to 90,000,000 statements per day in
-    detail charts
+  - Cut off outliers to ensure that the rest remains readable
 
 Other, miscellaneous changes:
   - Merge metadata from all three root directories (if they exist)
