@@ -4,14 +4,17 @@
 
 This release substantially improves support for collecting and visualizing
 summary statistics about the entire DSA transparency database as well as
-specific statement categories. It also features a new, more precise schema for
-summary statistics; in other words, please recompute your summary statistics
-before visualization. The new schema uses enumerations where possible, as they
-are easier to use and are more compact to store than Pola.rs' category types or
-strings. One of those enumerations includes all platform names, which churn
-quite a bit. When encountering new platform names, Shantay currently updates its
-local installation. Updates are atomic and additive only, so ordering and
-batching make no difference and still yield the same list.
+specific statement categories. It also features a new, more compact schema for
+summary statistics. The schema uses several explicit enumerations, as they are
+easier to use and also more compact than Pola.rs' category types or strings.
+However, one of those enumerations includes the platform names, which do churn
+quite a bit. Currently, Shantay updates its local installation with newly
+encountered names and asks the user to rerun Shantay with the same command line
+options. Updates are atomic and additive only, so ordering and batching make no
+difference, still yielding the same list.
+
+Shantay's Python package ships with a copy of the summary statistics for the
+entire DSA transparency database.
 
 Improved handling of summary statistics:
   - Collect statistics with daily resolution for full dataset and subsets alike
@@ -30,9 +33,14 @@ Simplified command line options:
     only option for selecting a subset of database entries.
   - The `--first` and `--last` options now work for all tasks; they also are
     validated to be within a realistic range
+  - While users can still select `--with-archive` or `--with-working` for
+    visualization, just providing the `--archive` or `--working` path suffices.
 
 Improved handling of platform names:
-  - Use canonical mapping to remove parentheses from "Apple Books ~~(ebooks)~~"
+  - Map some of the more unwieldy platform names to shorter versions. For
+    instance, "Apple Books (ebooks)" becomes "Apple Books", "Quora Ireland
+    Limited" becomes "Quora", and "eDarling, EliteSingles, SilverSingles, Zoosk"
+    becomes "Spark Networks".
   - Reapply latest canonical mapping for platform names when reading statistics
   - Enforce that new platform names are well-formed
   - Do not rely on `eval()` when updating `_platform` module
