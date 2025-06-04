@@ -13,9 +13,8 @@ from .color import (
     BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
-    aggregates, collect_release_metadata, is_row_within_period, NOT_NULL, predicate
+    aggregates, is_row_within_period, NOT_NULL, predicate
 )
-from .metadata import Metadata
 from .model import ConfigError, Coverage, Storage
 from .schema import (
     AutomatedDecision, AutomatedDetection, ContentType, DecisionAccount,
@@ -290,10 +289,16 @@ class Visualizer:
 
     @property
     def persistent_root(self) -> Path:
-        return (
-            self._storage.the_archive_root if self.has_all_sors()
-            else self._storage.the_working_root
+        """
+        Get root directory for the current visualization. If neither the archive
+        nor working root are available, the staging root will do as well.
+        """
+        root = (
+            self._storage.archive_root
+            if self.has_all_sors()
+            else self._storage.working_root
         )
+        return root or self._storage.staging_root
 
     @staticmethod
     def configure_display() -> None:
@@ -394,19 +399,14 @@ class Visualizer:
         return self._statistics.frame()
 
     def ingest(self) -> None:
-        _logger.debug('collecting metadata')
-        _, metadata = collect_release_metadata(
-            Metadata.merge(
-                self._storage.staging_root,
-                self._storage.working_root,
-                self._storage.archive_root,
-                not_exist_ok=True
-            ).records
-        )
-
         path = self.persistent_root / self._stats_file
-        _logger.debug('ingesting statistics file="%s"', path)
-        statistics = Statistics.read(path)
+        if not path.exists():
+            _logger.info('ingesting built-in statistics')
+            statistics = Statistics.builtin()
+        else:
+            _logger.info('ingesting statistics file="%s"', path)
+            statistics = Statistics.read(path)
+
         self._frequency = self._coverage.frequency()
         self._tags = get_tags(statistics.frame())
         date_range = statistics.range().intersection(
@@ -414,7 +414,6 @@ class Visualizer:
         ).monthlies().date_range() # Restrict to full months
 
         within_range = is_row_within_period(date_range)
-        self._metadata = metadata.filter(within_range)
         self._statistics = Statistics(
             self._stats_file, statistics.frame().filter(within_range)
         )
@@ -492,10 +491,6 @@ class Visualizer:
             render=not self._renderer.plain
         )
         self.markdown(
-            format_schema(self._metadata, title="meta.json"),
-            disclosure=True,
-        )
-        self.markdown(
             format_schema(
                 self._statistics.frame(), title=self._stats_file[:-len(".parquet")]
             ),
@@ -536,26 +531,18 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         else:
             self.html(f"<h2>Timelines: {humane(main_tag)}</h2>")
 
-        charts: list[alt.Chart | alt.LayerChart] = [
-            self.daily_statements_of_reasons(),
-            self.daily_statements_of_reasons(rolling_mean_days=7),
-        ]
-
-        if not self.has_all_sors():
-            charts.extend([
-                self.daily_sor_fraction_with_keywords(),
-                self.daily_sor_fraction_with_keywords(rolling_mean_days=7),
-            ])
-
-        self.chart("sor-counts", alt.vconcat(*charts).resolve_scale(
+        self.chart("sor-counts", alt.vconcat(
+            self.daily_statements_of_reasons(tag=main_tag),
+            self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=7),
+            self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=30),
+            self.daily_sor_fraction_with_keywords(tag=main_tag),
+            self.daily_sor_fraction_with_keywords(tag=main_tag, rolling_mean_days=7),
+            self.daily_sor_fraction_with_keywords(tag=main_tag, rolling_mean_days=30),
+        ).resolve_scale(
             x="shared",
             color="independent",
         ))
 
-        if self.has_all_sors():
-            self.html(
-                "<p>For readability, spikes in statement counts have been cut off.</p>"
-            )
         self.render_standard_timelines(main_tag)
 
         self.html("<h3>Platforms in Graphic Detail</h3>")
@@ -579,12 +566,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 self.overall_keyword_usage_by_platform(percent=False, tag=main_tag),
             ).resolve_scale(color='independent'))
 
-        if 1 < len(self._tags):
-            for tag in self._tags[1:]:
-                assert tag is not None
-                _logger.debug('render charts tag="%s"', tag)
-                self.html(f"<h2>Timelines: {humane(tag)}</h2>")
-                self.render_standard_timelines(tag)
+        for tag in self._tags[1:]:
+            assert tag is not None
+            _logger.debug('render charts tag="%s"', tag)
+            self.html(f"<h2>Timelines: {humane(tag)}</h2>")
+            self.render_standard_timelines(tag)
 
     def render_standard_timelines(self, tag: None | str = None) -> None:
         if self.is_monthly():
@@ -618,9 +604,24 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         *,
         rolling_mean_days: None | int = None,
         percentage: bool = False,
+        tag: None | str = None
     ) -> alt.Chart:
-        source = "total_rows" if self.has_all_sors() else "batch_rows"
-        table = self._metadata.select(
+        if tag is None:
+            source = "total_rows"
+            filter = predicate(column="total_rows", tag=tag)
+        else:
+            source = "batch_rows"
+            filter = pl.col("column").is_in(["batch_rows", "total_rows"]).and_(
+                pl.col("tag").eq(tag)
+            )
+
+        table = self._statistics.frame().filter(
+            filter
+        ).pivot(
+            on="column",
+            index="start_date",
+            values="count"
+        ).select(
             pl.col("start_date"),
             pl.col(source) / pl.col("total_rows") * 100 if percentage
             else pl.col(source) / 1_000,
@@ -663,38 +664,48 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         self,
         *,
         rolling_mean_days: None | int = None,
+        tag: None | str = None,
     ) -> alt.Chart | alt.LayerChart:
-        title = "Statements of Reasons With Keywords — Daily Percentage"
-        table = self._metadata.select(
-            pl.col("start_date"),
-            (pl.col("batch_rows_with_keywords") / pl.col("batch_rows") * 100)
-            .alias("Protection of Minors Only"),
-            (pl.col("total_rows_with_keywords") / pl.col("total_rows") * 100)
-            .alias("All SoRs"),
+        columns = ["total_rows_with_keywords", "total_rows"]
+        if tag is not None:
+            columns.extend(["batch_rows_with_keywords", "batch_rows"])
+
+        selection = [pl.col("start_date")]
+        if tag is not None:
+            expr = pl.col("batch_rows_with_keywords") / pl.col("batch_rows") * 100
+            if rolling_mean_days is not None:
+                expr = expr.rolling_mean(window_size=rolling_mean_days)
+            selection.append(expr.alias(humane(tag)))
+        expr = pl.col("total_rows_with_keywords") / pl.col("total_rows") * 100
+        if rolling_mean_days is not None:
+            expr = expr.rolling_mean(window_size=rolling_mean_days)
+        selection.append(expr.alias("All SoRs"))
+
+        table = self._statistics.frame().filter(
+            pl.col("column").is_in(columns).and_(pl.col("tag").eq(tag))
+        ).pivot(
+            on="column",
+            index="start_date",
+            values="count",
+        ).select(
+            *selection
         )
 
+        title = "Statements of Reasons With Keywords — "
+        if rolling_mean_days is None:
+            title += "Daily Percentage"
         if rolling_mean_days is not None:
-            title = (
-                "Statements of Reasons With Keywords - "
-                f"{rolling_mean_days}-Day Rolling Min/Mean/Max (Percent)"
-            )
-            table = table.with_columns(
-                pl.col("Protection of Minors Only")
-                .rolling_min(window_size=rolling_mean_days).alias("band_min"),
-                pl.col("Protection of Minors Only")
-                .rolling_max(window_size=rolling_mean_days).alias("band_max"),
-                pl.col("Protection of Minors Only", "All SoRs")
-                .rolling_mean(window_size=rolling_mean_days),
-            )
+            title += f"{rolling_mean_days}-Day Rolling Mean (Percent)"
 
+        columns = ["All SoRs"] if tag is None else ["All SoRs", humane(tag)]
         long_table = table.unpivot(
             index=["start_date"],
-            on=["Protection of Minors Only", "All SoRs"],
+            on=columns,
             variable_name="Kind",
             value_name="pct",
         )
 
-        chart = alt.Chart(
+        return alt.Chart(
             long_table,
             title=title,
         ).mark_line(
@@ -703,28 +714,13 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.X("start_date:T").title("Date"),
             alt.Y("pct:Q").title("Percent"),
             alt.Color("Kind:N").scale(
-                domain=["Protection of Minors Only", "All SoRs"],
-                range=[PINK, BLUE],
+                domain=columns,
+                range=[BLUE, PINK],
             ),
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
         ).interactive()
-
-        if rolling_mean_days is not None:
-            band = alt.Chart(table).mark_errorband().encode(
-                alt.X("start_date:T").title("Date"),
-                alt.Y("band_min:Q").title(""),
-                alt.Y2("band_max:Q"),
-                color=alt.value(PINK),
-            ).properties(
-                height=TIMELINE_HEIGHT,
-                width=TIMELINE_WIDTH,
-            )
-
-            chart = chart + band
-
-        return chart
 
     def render_timeline(
         self,
@@ -879,10 +875,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             index=["start_date"] + (["end_date"] if self.is_monthly() else [])
         )
 
-    def cumulative_platform_counts(self) -> alt.Chart:
+    def cumulative_platform_counts(self, keyword: None | str = None) -> alt.Chart:
         ALL = "All Platforms"
         KEY = "Platforms w/ Keywords"
-        CSAM = "Platforms w/ CSAM"
+        metrics = [ALL, KEY]
+        if keyword is not None:
+            metrics.append(keyword)
 
         table = self._statistics.frame().lazy()
         if self.is_monthly():
@@ -909,7 +907,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 .alias("mid_date")
             )
 
-        table = table.agg(
+        aggregates = [
             mid_date,
             pl.col("variant").filter(pl.col("column").eq("platform_name")).alias(ALL),
             pl.col("variant").filter(
@@ -917,18 +915,26 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 .and_(pl.col("entity").eq("with_category_specification"))
                 .and_(pl.col("variant_too").is_null().not_())
             ).alias(KEY),
-            pl.col("variant").filter(
-                pl.col("column").eq("platform_name")
-                .and_(pl.col("entity").eq("with_category_specification"))
-                .and_(pl.col("variant_too").eq("KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"))
-            ).alias(CSAM),
+        ]
+
+        if keyword is not None:
+            aggregates.append(
+                pl.col("variant").filter(
+                    pl.col("column").eq("platform_name")
+                    .and_(pl.col("entity").eq("with_category_specification"))
+                    .and_(pl.col("variant_too").eq(keyword))
+                ).alias(keyword)
+            )
+
+        table = table.agg(
+            *aggregates
         ).with_columns(
-            pl.col(ALL, KEY, CSAM).cumulative_eval(
+            pl.col(*metrics).cumulative_eval(
                 pl.element().explode().unique().implode().list.len()
             )
         ).unpivot(
             index=["mid_date"],
-            on=[KEY, ALL, CSAM],
+            on=metrics,
             variable_name="Kind",
             value_name="Count",
         ).collect()
@@ -946,8 +952,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 .title("Month" if self.is_monthly() else "Day"),
                 alt.Y("Count:Q").title("Number of Platforms"),
                 alt.Color("Kind:N").scale(
-                    domain=[CSAM, KEY, ALL],
-                    range=[RED, ORANGE, GRAY],
+                    domain=metrics,
+                    range=[GRAY, ORANGE, RED],
                 ),
             ).properties(
                 height=TIMELINE_HEIGHT,
@@ -974,7 +980,10 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.col("count") >= (threshold if threshold else 1)
         ).collect()
 
-        quantity = "SoRs" if self.has_all_sors() else "Protection of Minors SoRs"
+        if tag is None:
+            quantity = "SoRs"
+        else:
+            quantity = f"{humane(tag)} SoRs"
 
         if threshold:
             base = alt.Chart(
