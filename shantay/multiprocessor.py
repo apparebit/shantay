@@ -12,7 +12,7 @@ from typing import Any
 
 from .framing import collect_release_metadata
 from .metadata import Metadata
-from .model import Coverage, DataFrameType, Dataset, Release, Storage
+from .model import Coverage, DataFrameType, Dataset, META_FILE, Release, Storage
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_data_exists, Processor
 from .stats import (
@@ -214,7 +214,10 @@ class Multiprocessor[R: Release]:
             release = result["release"]
             del result["release"]
             self._metadata[release] = result
-            self._metadata.write_json(self._storage.staging_root, sort_keys=True)
+            self._metadata.write_json(
+                self._storage.staging_root / META_FILE,
+                sort_keys=True,
+            )
 
             # If the working root contains a meta.json, then the tool module
             # instantiates _metadata with that file's data. Since copy_json()
@@ -344,7 +347,7 @@ def _run_on_worker[R: Release](
     elif task == "summarize":
         metadata = Metadata()
     elif task == "analyze":
-        metadata = Metadata.read_json(storage.the_working_root)
+        metadata = Metadata.read_json(storage.the_working_root / META_FILE)
     else:
         raise AssertionError(f"invalid task {task}")
 

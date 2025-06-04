@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import time
-from typing import cast, Literal, NoReturn
+from typing import cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
@@ -14,7 +14,7 @@ from .framing import collect_release_metadata, filter_period
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
-    MetadataEntry, Release, Storage
+    META_FILE, MetadataEntry, Release, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -306,7 +306,7 @@ class Processor[R: Release]:
         meta_data_entry = cast(MetadataEntry, dict(full_counters))
         meta_data_entry["sha256"] = compute_digest(digest_file)
         self._metadata[release] = meta_data_entry
-        self._metadata.write_json(self._storage.staging_root)
+        self._metadata.write_json(self._storage.staging_root / META_FILE)
         _logger.info(
             'extracted batch-count=%d, file="%s"',
             batch_count,

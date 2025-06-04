@@ -85,6 +85,23 @@ class Metadata[R: Release]:
         """Get the number of releases covered."""
         return len(self._releases)
 
+    def unfiltered(self) -> Self:
+        """Create a stripped down version suitable for the archive root."""
+        def strip(data: MetadataEntry) -> MetadataEntry:
+            return {
+                "batch_count": data["batch_count"],
+                "total_rows": data.get("total_rows"),
+                "total_rows_with_keywords": data.get("total_rows_with_keywords"),
+            }
+
+        return type(self)(
+            None,
+            {
+                k: strip(v)
+                for k, v in self._releases.items()
+            }
+        )
+
     @classmethod
     def merge(cls, *sources: None | Path, not_exist_ok: bool = False) -> Self:
         """Merge the metadata from the given directories."""
@@ -92,9 +109,12 @@ class Metadata[R: Release]:
         for source in sources:
             if source is None:
                 continue
-            if not_exist_ok and not (source / META_FILE).exists():
-                continue
-            source_data = cls.read_json(source)
+            try:
+                source_data = cls.read_json(source / META_FILE)
+            except FileNotFoundError:
+                if not_exist_ok:
+                    continue
+                raise
             merged._merge_filter(source_data._filter)
             merged._merge_releases(source_data._releases)
         return merged
@@ -144,22 +164,23 @@ class Metadata[R: Release]:
                 raise MetadataConflict(f"divergent metadata for release {release}")
 
     @classmethod
-    def read_json(cls, root: Path) -> Self:
-        with open(root / META_FILE, mode="r", encoding="utf8") as file:
-            data = json.load(file)
+    def read_json(cls, file: Path) -> Self:
+        """Read the given file as metadata."""
+        with open(file, mode="r", encoding="utf8") as stream:
+            data = json.load(stream)
         filter = data["filter"]
         releases = data["releases"]
         return cls(filter, releases)
 
-    def write_json(self, root: Path, *, sort_keys: bool = False) -> None:
-        path = root / META_FILE
-        tmp = path.with_suffix(".tmp.json")
-        with open(tmp, mode="w", encoding="utf8") as file:
+    def write_json(self, file: Path, *, sort_keys: bool = False) -> None:
+        """Write the metadata to the given file."""
+        tmp = file.with_suffix(".tmp.json")
+        with open(tmp, mode="w", encoding="utf8") as handle:
             json.dump({
                 "filter": self._filter,
                 "releases": self._releases
-            }, file, indent=2, sort_keys=sort_keys)
-        tmp.replace(path)
+            }, handle, indent=2, sort_keys=sort_keys)
+        tmp.replace(file)
 
     @classmethod
     def copy_json(cls, source: Path, target: Path) -> None:
@@ -265,7 +286,7 @@ class _Fsck:
     def run(self) -> Metadata:
         """Run the file system analysis."""
         try:
-            self._metadata = Metadata.read_json(self._root)
+            self._metadata = Metadata.read_json(self._root / META_FILE)
         except FileNotFoundError:
             self._metadata = Metadata()
 
@@ -298,7 +319,7 @@ class _Fsck:
 
         # If there were no errors, save metadata and be done.
         if len(self._errors) == 0:
-            self._metadata.write_json(self._root)
+            self._metadata.write_json(self._root / META_FILE)
             self._progress.perform(
                 f'wrote "meta.json" with updated metadata to "{self._root}"'
             )

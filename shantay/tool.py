@@ -10,7 +10,7 @@ import polars as pl
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DateRange, DownloadFailed, MetadataConflict, Release,
+    ConfigError, Coverage, DateRange, DownloadFailed, META_FILE, MetadataConflict,
     Storage
 )
 from .multiprocessor import Multiprocessor
@@ -198,7 +198,7 @@ def get_configuration(
             )
 
     storage.staging_root.mkdir(parents=True, exist_ok=True)
-    metadata.write_json(storage.staging_root)
+    metadata.write_json(storage.staging_root / META_FILE)
 
     # Handle --with-archive and --with-working
     if options.with_archive and options.with_working:
