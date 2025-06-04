@@ -158,13 +158,27 @@ def get_storage(
 def get_configuration(
     options: Any
 ) -> tuple[Storage, Coverage, Metadata, str]:
+    # Handle --with-archive and --with-working (part 1)
+    if options.with_archive and options.with_working:
+        raise ConfigError("--with-archive and --with-working are mutually exclusive")
+    if (options.with_archive or options.with_working) and options.task != "visualize":
+        raise ConfigError(
+            "--with-archive and --with-working control `visualize` task only"
+        )
+    if options.task == "visualize" and (
+        not options.with_archive and not options.with_working
+    ):
+        if options.working is not None:
+            options.with_working = True
+        else:
+            # If no archive root is specified, we fall back on built-in statistics.
+            options.with_archive = True
+
     # Handle --archive, --working, and --staging options
     storage = get_storage(
         options,
-        with_archive=(
-            options.task in ("prepare", "summarize")
-            or options.task == "visualize" and options.with_archive
-        ),
+        # If the archive directory doesn't exist, we use the built-in frame.
+        with_archive=(options.task in ("prepare", "summarize")),
         with_working=(
             options.task in ("prepare", "analyze")
             or options.task == "visualize" and options.with_working
@@ -200,13 +214,7 @@ def get_configuration(
     storage.staging_root.mkdir(parents=True, exist_ok=True)
     metadata.write_json(storage.staging_root / META_FILE)
 
-    # Handle --with-archive and --with-working
-    if options.with_archive and options.with_working:
-        raise ConfigError("--with-archive and --with-working are mutually exclusive")
-    if (options.with_archive or options.with_working) and options.task != "visualize":
-        raise ConfigError(
-            "--with-archive and --with-working control `visualize` task only"
-        )
+    # Handle --with-archive and --with-working (part 2)
     if options.with_working and category is None:
         raise ConfigError(
             "--with-working requires lacks --category; please specify option"
