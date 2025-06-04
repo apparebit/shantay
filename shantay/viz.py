@@ -645,6 +645,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = alt.Chart(table, title=title).mark_bar(
                 tooltip=True,
                 color=GREEN,
+                size=1,
             )
         else:
             chart = alt.Chart(table, title=title).mark_line(
@@ -852,6 +853,33 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = base.mark_line(**bar_area_props)
         else:
             chart = base.mark_area(**bar_area_props)
+
+        if spec is ProcessingDelay:
+            total = self._statistics.frame().filter(
+                predicate(column="moderation_delay", entity=None, tag=tag)
+            ).select(
+                (pl.col("mean") * pl.col("count")).sum() // pl.col("count").sum()
+                / (24 * 60 * 60 * 1_000)
+            )
+
+            rule = alt.Chart(total).mark_rule(
+                color=BLUE,
+                size=2,
+            ).encode(
+                alt.Y("mean:Q")
+            )
+
+            label = rule.mark_text(
+                x="width",
+                dx=6,
+                dy=-7,
+                align="left",
+                baseline="bottom",
+                text=["Mean", "Moderation", "Delay"],
+                color=BLUE,
+            )
+
+            chart = chart + rule + label
 
         return chart
 
@@ -1114,7 +1142,6 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 pl.col("keyword").cast(pl.String).replace(self._keyword_names)
             )
             domain = [self._keyword_names[key] for key in domain]
-
 
         return (
             alt.Chart(
