@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
+from importlib.resources import files, as_file
 from pathlib import Path
 import shutil
 from typing import Any, ClassVar, Literal, Self
@@ -849,6 +850,13 @@ class Statistics:
         self._file = file
         self._frames = list(frames)
         self._collector = None
+
+    @classmethod
+    def builtin(cls) -> Self:
+        """Get the pre-computed statistics for the entire DSA database."""
+        source = files("shantay").joinpath(cls.DB_STATS_FILE)
+        with as_file(source) as path:
+            return cls.read(path)
 
     @classmethod
     def from_storage(cls, file: str, staging: Path, persistent: Path) -> Self:
