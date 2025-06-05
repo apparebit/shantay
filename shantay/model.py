@@ -426,7 +426,7 @@ class DateRange(Period):
         today.
         """
         first = self.last + dt.timedelta(days=1)
-        last = dt.date.today() - dt.timedelta(days=2)
+        last = dt.date.today() - dt.timedelta(days=3)
         return type(self)(first, last) if first <= last else None
 
     def dailies(self) -> ReleaseRange[Daily]:

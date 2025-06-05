@@ -229,9 +229,10 @@ def get_configuration(
     else:
         stats_file = Statistics.file_name_for(category)
 
-    # Handle --first and --last
+    # Handle --first and --last. The last date allows for GMT to be a day ahead
+    # and two days delay to post data.
     earliest = dt.date(2023, 9, 25)
-    latest = dt.date.today() - dt.timedelta(days=2)
+    latest = dt.date.today() - dt.timedelta(days=3)
 
     if options.first is not None:
         first = dt.date.fromisoformat(options.first)

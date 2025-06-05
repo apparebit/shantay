@@ -448,7 +448,7 @@ class Processor[R: Release]:
         # of calendar order. By always processing all possible release dates in
         # order, this loop ensures that any holes are filled, making this a
         # robust, self-healing implementation strategy.
-        for release in Statistics.DEFAULT_RANGE.dailies():
+        for release in self._coverage.to_date_range().dailies():
             if release in stats:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 continue

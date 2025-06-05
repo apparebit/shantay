@@ -852,7 +852,7 @@ class Statistics:
     2023-09-25 and end two days before today.
     """
     DEFAULT_RANGE: ClassVar[DateRange] = DateRange(
-        dt.date(2023, 9, 25), dt.date.today() + dt.timedelta(days=1)
+        dt.date(2023, 9, 25), dt.date.today() - dt.timedelta(days=3)
     )
 
     def __init__(self, file: str, *frames: pl.DataFrame) -> None:
