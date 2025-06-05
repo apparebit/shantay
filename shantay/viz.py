@@ -658,12 +658,13 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = alt.Chart(table, title=title).mark_bar(
                 tooltip=True,
                 color=GREEN,
-                size=1,
+                size=1.3,
             )
         else:
             chart = alt.Chart(table, title=title).mark_line(
                 tooltip=True,
                 color=GREEN,
+                size=1.5,
             )
 
         return chart.encode(
@@ -710,7 +711,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         elif expr2 is None:
             expr = expr1
         else:
-            expr = expr1.and_(expr2)
+            expr = expr1.or_(expr2)
 
         assert expr is not None
         base_frame = self._statistics.frame().filter(
@@ -787,34 +788,36 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         title = "Statements of Reasons With Keywords — "
-        if rolling_mean_days is None:
+        if rolling_mean_days is None and not with_monthly_mean:
             title += "Daily Percentage"
-        if rolling_mean_days is not None:
+        elif rolling_mean_days is not None:
             title += f"{rolling_mean_days}-Day Rolling Mean (Percent)"
+        else:
+            title += f"Daily Percentage vs Monthly Mean"
 
         column_names = []
-        if tag is None or with_total:
-            column_names.append("All SoRs")
         if tag is not None:
             column_names.append(humane(tag))
+        if tag is None or with_total:
+            column_names.append("All SoRs")
 
         daily_chart = alt.Chart(
             daily_frame,
             title=title,
         ).mark_line(
             tooltip=True,
-            size=1.5,
+            size=1 if with_monthly_mean else 1.5,
         ).encode(
             alt.X("start_date:T").title("Date"),
             alt.Y("pct:Q").title("Percent"),
             alt.Color("Kind:N").scale(
                 domain=column_names,
-                range=[BLUE, RED],
+                range=[PINK, BLUE],
             ),
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
-        ).interactive()
+        )
 
         if not with_monthly_mean:
             return daily_chart
@@ -829,28 +832,28 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             monthly_frame,
         ).mark_bar(
             tooltip=True,
-            color=f"{LIGHT_BLUE}a0",
+            color=f"{PURPLE}50",
         ).encode(
             alt.X("start_date:T"),
             alt.X2("end_date:T"),
             alt.Y("sum(pct):Q"),
         )
 
+        if tag is None:
+            text = ["Monthly Mean", "All SoRs", "With Keywords"]
+        else:
+            text = ["Monthly Mean", humane(tag), "SoRs with Keywords"]
+
         label = alt.Chart(
-            pl.DataFrame({"pct": [20]})
+            pl.DataFrame({"pct": [15]})
         ).encode(
-            alt.Y("sum(pct):Q"),
+            alt.Y("pct:Q"),
         ).mark_text(
             x="width",
             dx=6,
-            align="right",
-            text=[
-                "Monthly Mean",
-                "All SoRs" if tag is None else humane(tag),
-                "With Keywords",
-            ],
-            color=GREEN,
-            fontWeight="bold",
+            align="left",
+            text=text,
+            color=PURPLE,
         )
 
         chart = monthly_chart + daily_chart + label
@@ -943,8 +946,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         yaxis = alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label)
 
+        cutoff = None
         if self._with_cutoff and spec.quantity == "count":
-            cutoff = None
             if self.is_monthly() and tag is None:
                 cutoff = 2_000_000_000
             elif (
@@ -954,8 +957,19 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 cutoff = 5_000_000
 
             if cutoff is not None:
-                # FIXME: Add emoji warning marker to cut-off bars
                 yaxis = yaxis.scale(domain=(0, cutoff), clamp=True)
+
+                table = table.with_columns(
+                    pl.col("start_date").dt.offset_by("10d").alias("mid_date"),
+                    pl.lit(cutoff).alias("cutoff"),
+                    pl.when(
+                        pl.col("count").gt(cutoff)
+                    ).then(
+                        pl.lit("⚠️")
+                    ).otherwise(
+                        pl.lit("")
+                    ).alias("warning"),
+                )
 
         encoding.append(yaxis)
 
@@ -986,6 +1000,20 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = base.mark_line(**bar_area_props)
         else:
             chart = base.mark_area(**bar_area_props)
+
+        if cutoff is not None:
+            warnings = base.encode(
+                alt.X("mid_date:T"),
+                alt.Y("cutoff:Q"),
+                alt.Text("warning:N"),
+            ).mark_text(
+                baseline="line-top",
+                dy=3,
+                align="center",
+                fontSize=16,
+            )
+
+            chart = chart + warnings
 
         if spec is ProcessingDelay:
             total = self._statistics.frame().filter(
