@@ -3,14 +3,14 @@ import datetime as dt
 import logging
 from pathlib import Path
 import re
-from typing import Any
+from typing import Any, cast
 
 import altair as alt
 import mistune
 import polars as pl
 
 from .color import (
-    BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
+    BLUE, GRAY, GREEN, KEYWORD_PALETTE, LIGHT_BLUE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
     aggregates, is_row_within_period, NOT_NULL, predicate
@@ -535,9 +535,18 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             self.daily_statements_of_reasons(tag=main_tag),
             self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=7),
             self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=30),
-            self.daily_sor_fraction_with_keywords(tag=main_tag),
-            self.daily_sor_fraction_with_keywords(tag=main_tag, rolling_mean_days=7),
-            self.daily_sor_fraction_with_keywords(tag=main_tag, rolling_mean_days=30),
+        ).resolve_scale(
+            x="shared",
+            color="independent",
+        ))
+
+        self.chart("keyword-fraction", alt.vconcat(
+            self.chart_sor_fraction_with_keywords(
+                tag=main_tag, with_total=main_tag is not None
+            ),
+            self.chart_sor_fraction_with_keywords(
+                tag=main_tag, with_monthly_mean=True
+            ),
         ).resolve_scale(
             x="shared",
             color="independent",
@@ -611,8 +620,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             filter = predicate(column="total_rows", tag=tag)
         else:
             source = "batch_rows"
-            filter = pl.col("column").is_in(["batch_rows", "total_rows"]).and_(
-                pl.col("tag").eq(tag)
+            filter = pl.col("column").eq("total_rows").and_(
+                pl.col("tag").is_null()
+            ).or_(
+                pl.col("column").eq("batch_rows").and_(
+                    pl.col("tag").eq(tag)
+                )
             )
 
         table = self._statistics.frame().filter(
@@ -661,35 +674,116 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             width=TIMELINE_WIDTH,
         ).interactive()
 
-    def daily_sor_fraction_with_keywords(
+    def sor_fraction_with_keywords_data(
+        self,
+        *,
+        tag: None | str = None,
+        rolling_mean_days: None | int = None,
+        with_total: bool = False,
+        with_monthly_mean: bool = False,
+    ) -> pl.DataFrame:
+        """
+        Create the suitable data frame for visualizing the SoR fraction with
+        keywords.
+        """
+        # Filter out unneeded data and then pivot to needed columns
+        if tag is None or with_total:
+            expr1 = (
+                pl.col("column").is_in(["total_rows_with_keywords", "total_rows"])
+                .and_(pl.col("tag").is_null())
+            )
+        else:
+            expr1 = None
+
+        if tag is not None:
+            expr2 = (
+                pl.col("column").is_in(["batch_rows_with_keywords", "batch_rows"])
+                .and_(pl.col("tag").eq(tag))
+            )
+        else:
+            expr2 = None
+
+        if expr1 is None and expr2 is None:
+            raise AssertionError("unreachable statement")
+        elif expr1 is None:
+            expr = expr2
+        elif expr2 is None:
+            expr = expr1
+        else:
+            expr = expr1.and_(expr2)
+
+        assert expr is not None
+        base_frame = self._statistics.frame().filter(
+            expr
+        ).pivot(
+            on="column",
+            index=["start_date", "end_date"],
+            values="count",
+        )
+
+        # Handle monthly aggregation
+        if with_monthly_mean:
+            if tag is None:
+                columns = ["total_rows_with_keywords", "total_rows"]
+            else:
+                columns = ["batch_rows_with_keywords", "batch_rows"]
+
+            frame = base_frame.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+                maintain_order=True,
+            ).agg(
+                pl.col("start_date").first().dt.month_start(),
+                pl.col("start_date").first().dt.month_end().alias("end_date"),
+                pl.col(*columns).sum(),
+            )
+        else:
+            frame = base_frame
+
+        # Convert to percentage fractions
+        def percent_fraction(prefix: str) -> pl.Expr:
+            expr = (
+                pl.col(f"{prefix}_rows_with_keywords") / pl.col(f"{prefix}_rows") * 100
+            )
+            if rolling_mean_days is not None:
+                expr = expr.rolling_mean(window_size=rolling_mean_days)
+            expr = expr.alias(
+                "All SoRs" if prefix == "total" else humane(cast(str, tag))
+            )
+            return expr
+
+        column_names = []
+        fractions = []
+        if tag is None or with_total:
+            column_names.append("All SoRs")
+            fractions.append(percent_fraction("total"))
+        if tag is not None:
+            column_names.append(humane(tag))
+            fractions.append(percent_fraction("batch"))
+
+        return frame.select(
+            pl.col("start_date", "end_date"),
+            *fractions
+        ).unpivot(
+            index=["start_date", "end_date"],
+            on=column_names,
+            variable_name="Kind",
+            value_name="pct",
+        )
+
+    def chart_sor_fraction_with_keywords(
         self,
         *,
         rolling_mean_days: None | int = None,
+        with_total: bool = False,
+        with_monthly_mean: bool = False,
         tag: None | str = None,
     ) -> alt.Chart | alt.LayerChart:
-        columns = ["total_rows_with_keywords", "total_rows"]
-        if tag is not None:
-            columns.extend(["batch_rows_with_keywords", "batch_rows"])
-
-        selection = [pl.col("start_date")]
-        if tag is not None:
-            expr = pl.col("batch_rows_with_keywords") / pl.col("batch_rows") * 100
-            if rolling_mean_days is not None:
-                expr = expr.rolling_mean(window_size=rolling_mean_days)
-            selection.append(expr.alias(humane(tag)))
-        expr = pl.col("total_rows_with_keywords") / pl.col("total_rows") * 100
-        if rolling_mean_days is not None:
-            expr = expr.rolling_mean(window_size=rolling_mean_days)
-        selection.append(expr.alias("All SoRs"))
-
-        table = self._statistics.frame().filter(
-            pl.col("column").is_in(columns).and_(pl.col("tag").eq(tag))
-        ).pivot(
-            on="column",
-            index="start_date",
-            values="count",
-        ).select(
-            *selection
+        daily_frame = self.sor_fraction_with_keywords_data(
+            tag=tag,
+            rolling_mean_days=rolling_mean_days,
+            with_total=with_total,
+            with_monthly_mean=False,
         )
 
         title = "Statements of Reasons With Keywords — "
@@ -698,30 +792,69 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if rolling_mean_days is not None:
             title += f"{rolling_mean_days}-Day Rolling Mean (Percent)"
 
-        columns = ["All SoRs"] if tag is None else ["All SoRs", humane(tag)]
-        long_table = table.unpivot(
-            index=["start_date"],
-            on=columns,
-            variable_name="Kind",
-            value_name="pct",
-        )
+        column_names = []
+        if tag is None or with_total:
+            column_names.append("All SoRs")
+        if tag is not None:
+            column_names.append(humane(tag))
 
-        return alt.Chart(
-            long_table,
+        daily_chart = alt.Chart(
+            daily_frame,
             title=title,
         ).mark_line(
             tooltip=True,
+            size=1.5,
         ).encode(
             alt.X("start_date:T").title("Date"),
             alt.Y("pct:Q").title("Percent"),
             alt.Color("Kind:N").scale(
-                domain=columns,
-                range=[BLUE, PINK],
+                domain=column_names,
+                range=[BLUE, RED],
             ),
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
         ).interactive()
+
+        if not with_monthly_mean:
+            return daily_chart
+
+        monthly_frame = self.sor_fraction_with_keywords_data(
+            tag=tag,
+            rolling_mean_days=None,
+            with_monthly_mean=True,
+        )
+
+        monthly_chart = alt.Chart(
+            monthly_frame,
+        ).mark_bar(
+            tooltip=True,
+            color=f"{LIGHT_BLUE}a0",
+        ).encode(
+            alt.X("start_date:T"),
+            alt.X2("end_date:T"),
+            alt.Y("sum(pct):Q"),
+        )
+
+        label = alt.Chart(
+            pl.DataFrame({"pct": [20]})
+        ).encode(
+            alt.Y("sum(pct):Q"),
+        ).mark_text(
+            x="width",
+            dx=6,
+            align="right",
+            text=[
+                "Monthly Mean",
+                "All SoRs" if tag is None else humane(tag),
+                "With Keywords",
+            ],
+            color=GREEN,
+            fontWeight="bold",
+        )
+
+        chart = monthly_chart + daily_chart + label
+        return chart
 
     def render_timeline(
         self,
@@ -862,9 +995,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 / (24 * 60 * 60 * 1_000)
             )
 
-            rule = alt.Chart(total).mark_rule(
+            rule = alt.Chart(
+                total
+            ).mark_rule(
                 color=BLUE,
-                size=2,
+                size=2.5,
             ).encode(
                 alt.Y("mean:Q")
             )

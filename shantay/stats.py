@@ -94,16 +94,20 @@ def get_tags(frame: pl.DataFrame) -> list[None | str]:
     their canonical order, from least to most specific, i.e., `None`, then
     statement categories, and finally keywords.
     """
-    raw_tags = frame.select(pl.col("tag").unique()).get_column("tag").to_list()
-    tags = []
+    # Filter out total_rows(_with_keywords), since both appear without a tag
+    # also in otherwise tagged statistics
+    raw_tags = frame.filter(
+        pl.col("column").is_in(["total_rows", "total_rows_with_keywords"]).not_()
+    ).select(
+        pl.col("tag").unique()
+    ).get_column("tag").to_list()
 
+    tags = []
     if None in raw_tags:
         tags.append(None)
-
     for tag in raw_tags:
         if tag is not None and tag.startswith("STATEMENT_CATEGORY_"):
             tags.append(tag)
-
     for tag in raw_tags:
         if tag is not None and tag.startswith("KEYWORD_"):
             tags.append(tag)
@@ -403,7 +407,10 @@ class Collector:
         header = Frame({
             "start_date": height * [self._release.start_date],
             "end_date": height * [self._release.end_date],
-            "tag": height * [tag],
+            "tag": [
+                (None if k in ("total_rows", "total_rows_with_keywords") else tag)
+                for k in pairs.keys()
+            ],
             "column": [k for k in pairs.keys()],
             "entity": height * [None],
             "variant": height * [None],
@@ -658,9 +665,9 @@ class _Summarizer:
         ).item()
 
         batch_rows = get_quantity(frame, "batch_rows", entity=None, tag=tag)
-        total_rows = get_quantity(frame, "total_rows", entity=None, tag=tag)
+        total_rows = get_quantity(frame, "total_rows", entity=None, tag=None)
         batch_kw_rows = get_quantity(frame, "batch_rows_with_keywords", entity=None, tag=tag)
-        total_kw_rows = get_quantity(frame, "total_rows_with_keywords", entity=None, tag=tag)
+        total_kw_rows = get_quantity(frame, "total_rows_with_keywords", entity=None, tag=None)
         assert tag is None or batch_rows is not None
         assert tag is None or batch_kw_rows is not None
         assert total_rows is not None
