@@ -166,11 +166,14 @@ class Pool:
         exc_val: BaseException | None,
         exc_tb: TracebackType | None,
     ) -> None | bool:
-        # FIXME: it probably is safe to call ProcessPoolExecutor.__exit__, which
-        # calls shutdown(True) because it's not the future callback thread but
-        # main thread executing this method. If it was the future callback
-        # thread, then that would result in an exception due to the
-        # implementation trying to join that same thread.
+        """
+        Beware: This method internally invokes
+        `ProcessPoolExecutor.shutdown(True)`, which cleans up the executor's
+        resources by, amongst other things, joining the future callback thread.
+        Hence, this method must not be called from the future callback thread.
+        It is, however, safe to call from the main thread.
+        """
+        # See doc comment above.
         self._executor.shutdown(True)
 
         # With all workers gone, there won't be any status updates anymore.
