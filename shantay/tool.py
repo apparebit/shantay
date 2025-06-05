@@ -373,8 +373,8 @@ def run(args: list[str]) -> int:
         print('\x1b[999;999H\n\ninterrupted by user; terminating...')
         return 1
     except MissingPlatformError as x:
-        platforms = "platform" if len(x.args[2]) == 1 else "platforms"
-        names = ", ".join(f'"{n}"' for n in x.args[2])
+        platforms = "platform" if len(x.args[0]) == 1 else "platforms"
+        names = ", ".join(f'"{n}"' for n in x.args[0])
         print(f"\x1b[999;999H\n\nSource data contains new {platforms} {names}")
         print("Please rerun shantay with the same command line arguments!")
         return 1

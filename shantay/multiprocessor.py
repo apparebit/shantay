@@ -16,7 +16,7 @@ from .model import Coverage, DataFrameType, Dataset, META_FILE, Release, Storage
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_data_exists, Processor
 from .stats import (
-    update_new_platform_names, MissingPlatformError, Collector, Statistics
+    update_platforms, MissingPlatformError, Collector, Statistics
 )
 
 
@@ -207,7 +207,7 @@ class Multiprocessor[R: Release]:
         if tag == "cancel":
             raise Cancelled(*result)
         if tag == "platforms":
-            update_new_platform_names(result[2])
+            update_platforms(result[0])
             raise MissingPlatformError(*result)
 
         if self._task == "prepare":

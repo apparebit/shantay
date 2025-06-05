@@ -828,8 +828,10 @@ class _Summarizer:
 
 from ._platform import (
     MissingPlatformError as MissingPlatformError,
-    check_new_platform_names as check_new_platform_names,
-    update_new_platform_names as update_new_platform_names,
+    check_db_platforms as check_db_platforms,
+    check_stats_platforms as check_stats_platforms,
+    sync_web_platforms as sync_web_platforms,
+    update_platforms as update_platforms,
 )
 
 
@@ -861,7 +863,8 @@ class Statistics:
     @classmethod
     def builtin(cls) -> Self:
         """Get the pre-computed statistics for the entire DSA database."""
-        source = files("shantay").joinpath(cls.DB_STATS_FILE)
+        # Per spec, __package__ is the same as __spec__.parent, which
+        source = files(__spec__.parent).joinpath(cls.DB_STATS_FILE)
         with as_file(source) as path:
             return cls.read(path)
 
@@ -900,10 +903,17 @@ class Statistics:
         ).with_columns(
             # Cast to string so that replace matches platform names
             pl.col("variant").cast(str).replace(CanonicalPlatformNames)
-        ).cast(
-            StatisticsSchema # pyright: ignore[reportArgumentType]
         )
-        return cls(path.name, frame)
+
+        # If the platform names are out-of-whack, casting will fail already. But
+        # Pola.rs error messages are rather unhelpful, whereas checking
+        # beforehand also enables automated recovery.
+        check_stats_platforms(frame)
+
+        return cls(
+            path.name,
+            frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        )
 
     def file(self) -> str:
         return self._file

@@ -682,8 +682,7 @@ class ConfigError(Exception):
     """An invalid configuration option."""
 
 
-class DownloadFailed(Exception):
-    """A download ended in a status code other than 200."""
+from ._platform import DownloadFailed as DownloadFailed
 
 
 class MetadataConflict(Exception):

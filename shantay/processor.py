@@ -19,8 +19,8 @@ from .model import (
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
 from .stats import (
-    check_new_platform_names, MissingPlatformError, Statistics,
-    update_new_platform_names
+    check_db_platforms, MissingPlatformError, Statistics,
+    update_platforms
 )
 from .util import annotate_error, scale_time
 from .viz import visualize
@@ -457,7 +457,7 @@ class Processor[R: Release]:
             except MissingPlatformError as x:
                 # This method is only executed during single-process runs and
                 # hence it is safe-ish to update the Python source code.
-                update_new_platform_names(x.args[2])
+                update_platforms(x.args[0])
                 raise
             _logger.debug('writing summary statistics to file="%s"', staged)
             stats.write(self._storage.staging_root)
@@ -506,12 +506,12 @@ class Processor[R: Release]:
                 progress=self._progress
             )
 
-            # check_new_platform_names probes the data frame for hereto unknown
+            # check_frame_platforms probes the data frame for hereto unknown
             # platform names, raises a MissingPlatformError with any unknown
             # names, but does not modify the _platform module. Hence, this
             # method can be safely executed by process pool workers, as long as
             # they communicate the error and its payload to the coordinator.
-            check_new_platform_names(release.id, index, frame)
+            check_db_platforms(release.id, index, frame)
             collector.collect(release, frame)
 
             # A daily release may comprise over 100 GB of uncompressed CSV data.
