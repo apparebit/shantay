@@ -122,7 +122,7 @@ class Multiprocessor[R: Release]:
                 'writing rechunked summary statistics to file="%s"',
                 self._storage.staging_root / self._stats_file
             )
-            self._stats.write(self._storage.staging_root, rechunk=True)
+            self._stats.write(self._storage.staging_root, finalize=True)
 
             if task == "analyze":
                 persistent = self._storage.the_working_root

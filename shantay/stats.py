@@ -1039,14 +1039,23 @@ class Statistics:
         summarizer.summarize(self.frame())
         return summarizer.formatted_summary(markdown)
 
-    def write(self, directory: Path, rechunk: bool = False) -> Self:
+    def write(self, directory: Path, finalize: bool = False) -> Self:
         """
-        Write this statistics frame to the given directory. If `rechunk` is
-        `True`, this method sorts and rechunks the data frame before writing it.
+        Write this statistics frame to the given directory. If `finalize` is
+        `True`, this method groups and aggregates the frame at daily
+        granularity, sorts the entries by date, and rechunks the memory consumed
+        by the data frame before writing it out. The updated version also
+        replaces the original version.
         """
         frame = self.frame()
-        if rechunk:
-            frame = frame.sort(pl.col("start_date"), maintain_order=True).rechunk()
+        if finalize:
+            frame = frame.group_by(
+                *daily_groupies(), maintain_order=True
+            ).agg(
+                *aggregates()
+            ).sort(
+                pl.col("start_date"), maintain_order=True
+            ).rechunk()
             self._frames = [frame]
 
         path = directory / self.file()

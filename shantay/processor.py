@@ -464,7 +464,7 @@ class Processor[R: Release]:
 
         # Rewrite saved statistics after rechunking and copy to persistent root
         _logger.debug('writing rechunked summary statistics to file="%s"', staged)
-        stats.write(self._storage.staging_root, rechunk=True)
+        stats.write(self._storage.staging_root, finalize=True)
 
         _logger.debug('copying summary statistics to archive file="%s"', archive)
         Statistics.copy(
