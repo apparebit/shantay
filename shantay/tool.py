@@ -258,7 +258,7 @@ def get_configuration(
             f"--{options.frequency} can only be used with the `visualize` task"
         )
 
-    if options.frequency == "daily":
+    if options.frequency == "daily" or options.task != "visualize":
         range = DateRange(first, last).dailies()
     else:
         range = DateRange(first, last).monthlies()

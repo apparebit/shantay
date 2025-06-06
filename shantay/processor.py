@@ -13,8 +13,8 @@ from .__init__ import __version__
 from .framing import collect_release_metadata, filter_period
 from .metadata import compute_digest, Metadata
 from .model import (
-    CollectorProtocol, Coverage, DataFrameType, Dataset, DIGEST_FILE, DownloadFailed,
-    META_FILE, MetadataEntry, Release, Storage
+    CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, DIGEST_FILE,
+    DownloadFailed, META_FILE, MetadataEntry, Release, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -82,7 +82,7 @@ class Processor[R: Release]:
         if task == "prepare":
             self.prepare()
         elif task == "summarize":
-            self.summarize_archive()
+            result = self.summarize_archive()
         elif task == "analyze":
             result = self.analyze_working()
         elif task == "visualize":
@@ -427,7 +427,7 @@ class Processor[R: Release]:
             collector=collector
         )
 
-    def summarize_archive(self) -> None:
+    def summarize_archive(self) -> DataFrameType:
         """Analyze the full data set."""
         stats = Statistics.from_storage(
             self._stats_file, self._storage.staging_root, self._storage.the_archive_root
@@ -448,8 +448,8 @@ class Processor[R: Release]:
         # of calendar order. By always processing all possible release dates in
         # order, this loop ensures that any holes are filled, making this a
         # robust, self-healing implementation strategy.
-        for release in self._coverage.to_date_range().dailies():
-            if release in stats:
+        for release in self._coverage:
+            if cast(Daily, release) in stats:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 continue
             try:
@@ -470,6 +470,7 @@ class Processor[R: Release]:
         Statistics.copy(
             self._stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
+        return stats.frame()
 
     def summarize_archived_release(
         self,
