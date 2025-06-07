@@ -289,6 +289,7 @@ _KNOWN_PLATFORM_NAMES: frozenset[str] = frozenset(PlatformNames)
 _logger = logging.getLogger(__spec__.parent)
 _ONE_WEEK = 7 * 24 * 60 * 60
 
+
 def sync_web_platforms() -> Literal["skipped", "mtime", "disk", "memory"]:
     """
     If this module's file modification time is older than a week, this function

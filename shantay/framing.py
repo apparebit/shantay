@@ -252,6 +252,21 @@ def aggregates() -> list[pl.Expr]:
     return [
         pl.col("count").sum(),
         pl.col("min").min(),
-        (pl.col("mean") * pl.col("count")).sum() // pl.col("count").sum(),
+
+        # The following formula started out as:
+        #
+        #     (pl.col("mean") * pl.col("count")).sum() // pl.col("count").sum()
+        #
+        # But that version is prone to overflowing the numerator. So we made two
+        # significant changes: First, we refactored the division of a sum into a
+        # sum of divisions. Second, we changed the resolution of duration from
+        # milliseconds to seconds. We also rewrote the formula using Pola.rs
+        # expressions instead of Python operators.
+
+        pl.col("mean")
+        .mul(pl.col("count"))
+        .floordiv(pl.col("count").sum())
+        .sum(),
+
         pl.col("max").max(),
     ]

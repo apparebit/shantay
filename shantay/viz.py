@@ -10,7 +10,7 @@ import mistune
 import polars as pl
 
 from .color import (
-    BLUE, GRAY, GREEN, KEYWORD_PALETTE, LIGHT_BLUE, ORANGE, PINK, PURPLE, RED
+    BLUE, GRAY, GREEN, KEYWORD_PALETTE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
     aggregates, is_row_within_period, NOT_NULL, predicate
@@ -468,8 +468,18 @@ class Visualizer:
             '<h1><a href="https://transparency.dsa.ec.europa.eu">The DSA '
             'Transparency Database</a></h1>'
         )
-        if KeywordChildSexualAbuseMaterial in self._tags:
-            self.html('<h2>Focus on Protection of Minors</h2>')
+
+        main_tag = self._tags[0]
+        if main_tag is None:
+            self.html("<h2>The Complete Database</h2>")
+        else:
+            self.html(f"<h2>Category {humane(main_tag)}</h2>")
+
+        self.html(
+            "<p>Bars marked ⚠️ represent outliers that go beyond the coordinate "
+            "grid. Thusly clamping the y-axis enures that even subcategories "
+            "remain easily distinguishable in other bars.</p>"
+        )
         self.html(
             f'<p>Created on {self._timestamp.date().isoformat()} '
             f'at {self._timestamp.time().isoformat()}</p>'
@@ -845,13 +855,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             text = ["Monthly Mean", humane(tag), "SoRs with Keywords"]
 
         label = alt.Chart(
-            pl.DataFrame({"pct": [15]})
+            pl.DataFrame({"pct": [0]})
         ).encode(
             alt.Y("pct:Q"),
         ).mark_text(
             x="width",
             dx=6,
+            dy=-30,
             align="left",
+            baseline="bottom",
             text=text,
             color=PURPLE,
         )
@@ -891,9 +903,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 pl.col("start_date").dt.month().alias("month"),
                 *spec.groupings(),
             ).agg(
-                pl.col("start_date").first().dt.month_start() + dt.timedelta(days=5),
-                (pl.col("start_date").first().dt.month_end() - dt.timedelta(days=5)).alias("end_date"),
-                *aggregates()
+                pl.col("start_date").first().dt.month_start().dt.offset_by("5d"),
+                pl.col("start_date").first().dt.month_end().dt.offset_by("-5d").alias("end_date"),
+                *aggregates(),
             )
         else:
             table = table.group_by(
@@ -909,9 +921,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             )
         if spec.quantity != "count" and spec.label == "Delays":
             table = table.with_columns(
-                pl.col(spec.quantity) / (24 * 60 * 60 * 1_000)
+                pl.col(spec.quantity) / (24 * 60 * 60)
             )
-
         return table
 
     def timeline_chart(
@@ -947,6 +958,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         yaxis = alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label)
 
         cutoff = None
+        signage = None
         if self._with_cutoff and spec.quantity == "count":
             if self.is_monthly() and tag is None:
                 cutoff = 2_000_000_000
@@ -958,18 +970,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
             if cutoff is not None:
                 yaxis = yaxis.scale(domain=(0, cutoff), clamp=True)
-
-                table = table.with_columns(
-                    pl.col("start_date").dt.offset_by("10d").alias("mid_date"),
-                    pl.lit(cutoff).alias("cutoff"),
-                    pl.when(
-                        pl.col("count").gt(cutoff)
-                    ).then(
-                        pl.lit("⚠️")
-                    ).otherwise(
-                        pl.lit("")
-                    ).alias("warning"),
-                )
+                signage = self.warning_signage(cutoff, table)
 
         encoding.append(yaxis)
 
@@ -1002,7 +1003,10 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = base.mark_area(**bar_area_props)
 
         if cutoff is not None:
-            warnings = base.encode(
+            assert signage is not None
+            warnings = alt.Chart(
+                signage
+            ).encode(
                 alt.X("mid_date:T"),
                 alt.Y("cutoff:Q"),
                 alt.Text("warning:N"),
@@ -1016,35 +1020,98 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = chart + warnings
 
         if spec is ProcessingDelay:
-            total = self._statistics.frame().filter(
-                predicate(column="moderation_delay", entity=None, tag=tag)
-            ).select(
-                (pl.col("mean") * pl.col("count")).sum() // pl.col("count").sum()
-                / (24 * 60 * 60 * 1_000)
-            )
-
-            rule = alt.Chart(
-                total
-            ).mark_rule(
-                color=BLUE,
-                size=2.5,
-            ).encode(
-                alt.Y("mean:Q")
-            )
-
-            label = rule.mark_text(
-                x="width",
-                dx=6,
-                dy=-7,
-                align="left",
-                baseline="bottom",
-                text=["Mean", "Moderation", "Delay"],
-                color=BLUE,
-            )
-
-            chart = chart + rule + label
+            chart = chart + self.processing_delay_signage(tag)
 
         return chart
+
+    def warning_signage(self, cutoff: int, frame: pl.DataFrame) -> pl.DataFrame:
+        if self.is_monthly():
+            signage = frame.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+            ).agg(
+                pl.col("start_date").first().dt.offset_by("10d").alias("mid_date"),
+                pl.col("count").sum().alias("total"),
+            )
+        else:
+            signage = frame.group_by(
+                pl.col("start_date"),
+            ).agg(
+                pl.col("start_date").first().alias("mid_date"),
+                pl.col("count").sum().alias("total"),
+            )
+
+        return signage.with_columns(
+            pl.lit(cutoff).alias("cutoff"),
+            pl.when(
+                pl.col("total").gt(cutoff)
+            ).then(
+                pl.lit("⚠️")
+            ).otherwise(
+                pl.lit("")
+            ).alias("warning"),
+        )
+
+    def processing_delay_signage(self, tag: None | str = None) -> alt.LayerChart:
+        weighted_mean = (
+            pl.col("mean")
+            .mul(pl.col("count"))
+            .floordiv(pl.col("count").sum())
+            .sum()
+            / (24 * 60 * 60)
+        )
+
+        total = pl.concat([
+            self._statistics.frame().filter(
+                predicate(column="moderation_delay", entity=None, tag=tag)
+            ).select(
+                weighted_mean.alias("moderation")
+            ),
+            self._statistics.frame().filter(
+                predicate(column="disclosure_delay", entity=None, tag=tag)
+            ).select(
+                weighted_mean.alias("disclosure")
+            ),
+        ], how="horizontal")
+
+        base = alt.Chart(total)
+        moderation_rule = base.mark_rule(
+            color=BLUE,
+            size=2.5,
+        ).encode(
+            alt.Y("moderation:Q")
+        )
+
+        moderation_label = moderation_rule.mark_text(
+            x="width",
+            dx=6,
+            dy=-24,
+            align="left",
+            baseline="bottom",
+            text=["Mean", "Moderation", "Delay", f"{total.item(0, 0):.1f} Days"],
+            color=BLUE,
+        )
+
+        disclosure_rule = base.mark_rule(
+            color=RED,
+            size=2.5,
+        ).encode(
+            alt.Y("disclosure:Q")
+        )
+
+        disclosure_label = disclosure_rule.mark_text(
+            x="width",
+            dx=6,
+            dy=-32 if total.item(0,1) < 40 else -14,
+            align="left",
+            baseline="bottom",
+            text=["Mean", "Disclosure", "Delay", f"{total.item(0, 1):.1f} Days"],
+            color=RED,
+        )
+
+        return (
+            disclosure_rule + disclosure_label + moderation_rule + moderation_label
+        )
 
     def decision_ground(self, tag: None | str = None) -> pl.DataFrame:
         return self.timeline_data(

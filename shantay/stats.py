@@ -13,6 +13,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
 from importlib.resources import files, as_file
+import math
 from pathlib import Path
 import shutil
 from typing import Any, ClassVar, Literal, Self
@@ -25,7 +26,7 @@ from .framing import (
 from .model import Daily, DateRange, Release
 from .schema import (
     CanonicalPlatformNames, DurationTransform, humane, KeywordChildSexualAbuseMaterial,
-    StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS, TransformType,
+    StatisticsSchema, StringColumn, TRANSFORM_COUNT, TRANSFORMS, TransformType,
     ValueCountsPlusTransform, VariantValueType, VariantTooValueType
 )
 from .util import scale_time
@@ -340,11 +341,11 @@ class Collector:
                 case TransformType.DECISION_TYPE:
                     self.collect_decision_type()
                 case DurationTransform(start, end):
-                    # Convert positive durations to millseconds, i.e., an integer count
+                    # Convert positive durations to seconds, i.e., an integer count
                     duration = pl.when(
                         pl.col(start) <= pl.col(end)
                     ).then(
-                        (pl.col(end) - pl.col(start)).dt.total_milliseconds()
+                        (pl.col(end) - pl.col(start)).dt.total_seconds()
                     ).otherwise(
                         pl.lit(None)
                     )
@@ -554,8 +555,13 @@ class _Summarizer:
             variable = f"{variable}.{quantity}"
 
         value = get_quantity(self._source, column, entity=entity, statistic=quantity)
-        if duration and quantity != "count" and value is not None:
-            value = dt.timedelta(seconds=value // 1_000, milliseconds=value % 1_000)
+        if (
+            duration
+            and quantity != "count"
+            and value is not None
+            and not math.isnan(value)
+        ):
+            value = dt.timedelta(seconds=value)
 
         self._summary.append((variable, value))
 
@@ -1077,12 +1083,14 @@ class Statistics:
         tmp.replace(target / file)
 
     @classmethod
-    def file_name_for(cls, filter: str) -> str:
-        if filter.startswith("STATEMENT_CATEGORY_"):
-            filter = filter[len("STATEMENT_CATEGORY_"):]
-        elif filter.startswith("KEYWORD_"):
-            filter = filter[len("KEYWORD_"):]
+    def file_name_for(cls, category: None | str) -> str:
+        if category is None:
+            return cls.DB_STATS_FILE
+        if category.startswith("STATEMENT_CATEGORY_"):
+            category = category[len("STATEMENT_CATEGORY_"):]
+        elif category.startswith("KEYWORD_"):
+            category = category[len("KEYWORD_"):]
         else:
-            raise ValueError(f'invalid filter "{filter}"')
+            raise ValueError(f'invalid category "{category}"')
 
-        return f'{filter.lower().replace("_", "-")}.parquet'
+        return f'{category.lower().replace("_", "-")}.parquet'
