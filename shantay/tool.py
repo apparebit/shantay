@@ -53,12 +53,12 @@ def _parse_options(args: list[str]) -> Any:
     group.add_argument(
         "--archive",
         type=Path,
-        help="set directory for downloaded archives (`./dsa-db-archive` by default)",
+        help="set directory for downloaded archives",
     )
     group.add_argument(
         "--working",
         type=Path,
-        help="set directory for parquet files with working data (`./dsa-db-working` by default)"
+        help="set directory for parquet files with category-specific data"
     )
     group.add_argument(
         "--staging",
@@ -66,26 +66,19 @@ def _parse_options(args: list[str]) -> Any:
         help="set directory for temporary files (`./dsa_db-staging` by default)"
     )
 
-    group = parser.add_argument_group("coverage of working set")
+    group = parser.add_argument_group("data coverage")
     group.add_argument(
         "--first",
         help="set the start date (2023-09-25 by default)"
     )
     group.add_argument(
         "--last",
-        help="set the stop date (the day before yesterday by default)",
+        help="set the stop date (three days before Greenwhich's day by default)",
     )
     group.add_argument(
         "--category",
-        help="set category to filter (may omit the STATEMENT_CATEGORY_ prefix and/or"
-        "use lower case)",
-    )
-    group.add_argument(
-        "--daily",
-        dest="frequency",
-        action="store_const",
-        const="daily",
-        help="use daily aggregates for visualizing statistics; precludes --monthly (default)",
+        help="select subset category (may omit the STATEMENT_CATEGORY_ prefix and/or"
+        "use lower case); precludes --all-data",
     )
     group.add_argument(
         "--monthly",
@@ -93,6 +86,13 @@ def _parse_options(args: list[str]) -> Any:
         action="store_const",
         const="monthly",
         help="use monthly aggregates for visualizing statistics; precludes --daily",
+    )
+    group.add_argument(
+        "--daily",
+        dest="frequency",
+        action="store_const",
+        const="daily",
+        help="use daily aggregates for visualizing statistics; precludes --monthly",
     )
 
     group = parser.add_argument_group("logging")
@@ -106,7 +106,7 @@ def _parse_options(args: list[str]) -> Any:
         "--quiet",
         dest="verbose",
         action="store_false",
-        help="disable verbose logging, which is the default"
+        help="disable verbose logging, which is the default",
     )
 
     group = parser.add_argument_group("source statistics for visualization")
@@ -200,15 +200,15 @@ def get_configuration(
         options.task in ("prepare", "analyze") or
         options.task == "visualize" and options.with_working
     ):
-        if metadata.filter is None:
+        if metadata.category is None:
             if category is None:
                 raise ConfigError("metadata lacks --category; please specify option")
-            metadata.set_filter(category)
+            metadata.set_category(category)
         elif category is None:
-            category = metadata.filter
-        elif metadata.filter != category:
+            category = metadata.category
+        elif metadata.category != category:
             raise ConfigError(
-                f'metadata has --category {metadata.filter} but option is {category}'
+                f'metadata has --category {metadata.category} but option is {category}'
             )
 
     storage.staging_root.mkdir(parents=True, exist_ok=True)

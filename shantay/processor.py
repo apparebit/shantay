@@ -36,9 +36,9 @@ class Processor[R: Release]:
     def __init__(
         self,
         *,
-        dataset: Dataset[R],
+        dataset: Dataset,
         storage: Storage,
-        coverage: Coverage[R],
+        coverage: Coverage[Daily],
         metadata: Metadata,
         stats_file: str,
         progress: Progress = NO_PROGRESS,
@@ -66,7 +66,7 @@ class Processor[R: Release]:
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
         _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
+        _logger.info('    key="coverage.category",    value="%s"', self._coverage.category)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency"    value="%s"', self._coverage.frequency())
@@ -80,11 +80,11 @@ class Processor[R: Release]:
         start_time = time.time()
         result = None
         if task == "prepare":
-            self.prepare()
+            self.prepare_category()
         elif task == "summarize":
-            result = self.summarize_archive()
+            result = self.summarize_database()
         elif task == "analyze":
-            result = self.analyze_working()
+            result = self.summarize_category()
         elif task == "visualize":
             result = self.visualize()
         else:
@@ -96,9 +96,9 @@ class Processor[R: Release]:
 
         return result
 
-    def prepare(self) -> None:
+    def prepare_category(self) -> None:
         for release in self._coverage:
-            self.prepare_batches(release)
+            self.prepare_category_release(release)
             # The staging root's meta.json is created by merging the contents of
             # existing meta.json files in the staging, working, and archive
             # roots. Hence it's safe to copy back the JSON file after each
@@ -108,10 +108,10 @@ class Processor[R: Release]:
             if self._storage.archive_root is not None:
                 Metadata.copy_json(self._storage.staging_root, self._storage.archive_root)
 
-    def prepare_batches(self, release: R) -> None:
+    def prepare_category_release(self, release: Daily) -> None:
         if (
             release in self._metadata
-            and extracted_data_exists(self._storage.the_working_root, release, self._metadata)
+            and extracted_category_exists(self._storage.the_working_root, release, self._metadata)
         ):
             return
 
@@ -121,7 +121,7 @@ class Processor[R: Release]:
 
         self.stage_archive(release)
         try:
-            self.extract_batches(release)
+            self.extract_category_release(release)
         except Exception as x:
             x.add_note(
                 f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
@@ -132,7 +132,7 @@ class Processor[R: Release]:
         self._progress.perform(f"done with {release.id}").done()
         return
 
-    def download_archive(self, release: R) -> None:
+    def download_archive(self, release: Daily) -> None:
         if self.is_archive_downloaded(release):
             return
 
@@ -150,7 +150,7 @@ class Processor[R: Release]:
         self.copy_archive(self._storage.staging_root, self._storage.the_archive_root, release)
         _logger.info('archived file="%s"', archive)
 
-    def is_archive_downloaded(self, release: R) -> bool:
+    def is_archive_downloaded(self, release: Daily) -> bool:
         """Determine whether the archive for the release has been downloaded."""
         return (
             self._storage.the_archive_root
@@ -159,7 +159,7 @@ class Processor[R: Release]:
         ).exists()
 
     @annotate_error(filename_arg="root")
-    def _download_archive(self, root: Path, release: R) -> int:
+    def _download_archive(self, root: Path, release: Daily) -> int:
         """Download the release archive and digest."""
         digest = self._dataset.digest_name(release)
         url = self._dataset.url(digest)
@@ -208,7 +208,7 @@ class Processor[R: Release]:
         )
 
     @annotate_error(filename_arg="root")
-    def validate_archive(self, root: Path, release: R) -> None:
+    def validate_archive(self, root: Path, release: Daily) -> None:
         """Validate the archive stored under the root against its digest."""
         digest = root / release.parent_directory / self._dataset.digest_name(release)
         with open(digest, mode="rt", encoding="ascii") as file:
@@ -225,7 +225,7 @@ class Processor[R: Release]:
             raise ValueError(f'digest {actual} does not match {expected}')
 
     @annotate_error(filename_arg="target")
-    def copy_archive(self, source: Path, target: Path, release: R) -> None:
+    def copy_archive(self, source: Path, target: Path, release: Daily) -> None:
         """
         Copy the archive and digest stored under the source directory to the
         target directory.
@@ -239,7 +239,7 @@ class Processor[R: Release]:
         shutil.copy(source_dir / digest, target_dir / digest)
         shutil.copy(source_dir / archive, target_dir / archive)
 
-    def stage_archive(self, release: R) -> None:
+    def stage_archive(self, release: Daily) -> None:
         """
         Stage the archive for the given release. The archive must have been
         downloaded before.
@@ -257,7 +257,7 @@ class Processor[R: Release]:
         self.validate_archive(self._storage.staging_root, release)
         _logger.info('validated file="%s"', archive)
 
-    def is_archive_staged(self, release: R) -> bool:
+    def is_archive_staged(self, release: Daily) -> bool:
         """"Determine whether the archive for the given release has been staged."""
         return (
             self._storage.staging_root
@@ -265,10 +265,10 @@ class Processor[R: Release]:
             / self._dataset.archive_name(release)
         ).exists()
 
-    def extract_batches(self, release: R) -> None:
+    def extract_category_release(self, release: Daily) -> None:
         """Extract the batches for the given release."""
         assert self.is_archive_staged(release)
-        assert self._coverage.filter is not None
+        assert self._coverage.category is not None
 
         filenames = self.list_archived_files(self._storage.staging_root, release)
         batch_count = len(filenames)
@@ -284,12 +284,12 @@ class Processor[R: Release]:
         for index, name in enumerate(filenames):
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
-            digest, counters = self._dataset.extract_file_data(
+            digest, counters = self._dataset.extract_category_data(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
                 name=name,
-                filter=self._coverage.filter,
+                category=self._coverage.category,
                 progress=self._progress
             )
             batch_digests.append(digest)
@@ -322,19 +322,19 @@ class Processor[R: Release]:
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
         ).start(batch_count)
-        self.copy_extracted_data(
+        self.copy_category_data(
             self._storage.staging_root, self._storage.the_working_root, release, batch_count
         )
         _logger.info('archived batch-count=%d, release="%s"', batch_count, release.id)
 
-    def list_archived_files(self, root: Path, release: R) -> list[str]:
+    def list_archived_files(self, root: Path, release: Daily) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
         path = root / release.parent_directory / self._dataset.archive_name(release)
         with zipfile.ZipFile(path) as archive:
             return sorted(archive.namelist())
 
     @annotate_error(filename_arg="root")
-    def unarchive_file(self, root: Path, release: R, index: int, name: str) -> None:
+    def unarchive_file(self, root: Path, release: Daily, index: int, name: str) -> None:
         """
         Unarchive the file with index and name from the archive under the source
         directory into a suitable directory under the target directory.
@@ -355,13 +355,13 @@ class Processor[R: Release]:
                         shutil.copyfileobj(source_file, target_file)
                 _logger.debug('unarchived type="%s", file="%s"', kind, name)
 
-    def extracted_data_exists(self, root: Path, release: R) -> bool:
+    def extracted_data_exists(self, root: Path, release: Daily) -> bool:
         """Determine whether all batch files exist under the given root directory."""
-        return extracted_data_exists(root, release, self._metadata)
+        return extracted_category_exists(root, release, self._metadata)
 
     @annotate_error(filename_arg="target")
-    def copy_extracted_data(
-        self, source: Path, target: Path, release: R, count: int
+    def copy_category_data(
+        self, source: Path, target: Path, release: Daily, count: int
     ) -> None:
         """Copy the batch files between root directories."""
         source_dir = source / release.directory
@@ -373,7 +373,7 @@ class Processor[R: Release]:
             shutil.copy(source_dir / batch, target_dir / batch)
             self._progress.step(index)
 
-    def analyze_working(self) -> DataFrameType:
+    def summarize_category(self) -> DataFrameType:
         """Analyze the data extracted into the working root."""
         # Prepare metadata for analysis
         range, metadata = collect_release_metadata(self._metadata.records)
@@ -383,7 +383,7 @@ class Processor[R: Release]:
 
         # Prepare progress tracker
         self._progress.activity(
-            "analyzing daily batches", "analyzing batches", "batch", with_rate=False
+            "summarizing category data", "summarizing category", "batch", with_rate=False
         )
         self._progress.start(range.last - range.first + 1)
 
@@ -391,7 +391,8 @@ class Processor[R: Release]:
 
         for index, release in enumerate(range):
             check_not_cancelled()
-            self.analyze_working_release(release, metadata, stats)
+            self.prepare_category_release(release)
+            self.summarize_category_release(release, metadata, stats)
             # The generation of summary statistics creates a large number of
             # data frames (at least as few hundred), many of which have only one
             # row. That ensures that even daily statistics easily fit into
@@ -409,25 +410,25 @@ class Processor[R: Release]:
             self._storage.the_working_root, self._stats_file, stats
         )
 
-    def analyze_working_release(
+    def summarize_category_release(
         self,
-        release: Release,
+        release: Daily,
         metadata: DataFrameType,
         collector: CollectorProtocol,
     ) -> None:
         """Analyze the working data for the given release."""
         release_metadata = filter_period(metadata, release)
 
-        assert isinstance(self._coverage.filter, str)
-        self._dataset.analyze_release(
+        assert isinstance(self._coverage.category, str)
+        self._dataset.summarize_release(
             root=self._storage.the_working_root,
             release=release,
-            filter=self._coverage.filter,
+            category=self._coverage.category,
             metadata=release_metadata,
             collector=collector
         )
 
-    def summarize_archive(self) -> DataFrameType:
+    def summarize_database(self) -> DataFrameType:
         """Analyze the full data set."""
         stats = Statistics.from_storage(
             self._stats_file, self._storage.staging_root, self._storage.the_archive_root
@@ -453,7 +454,7 @@ class Processor[R: Release]:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 continue
             try:
-                self.summarize_archived_release(cast(R, release), stats)
+                self.summarize_database_release(release, stats)
             except MissingPlatformError as x:
                 # This method is only executed during single-process runs and
                 # hence it is safe-ish to update the Python source code.
@@ -472,9 +473,9 @@ class Processor[R: Release]:
         )
         return stats.frame()
 
-    def summarize_archived_release(
+    def summarize_database_release(
         self,
-        release: R,
+        release: Daily,
         collector: CollectorProtocol,
     ) -> None:
         """Analyze the full data for the given release."""
@@ -499,7 +500,7 @@ class Processor[R: Release]:
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
 
-            frame = self._dataset.ingest_file_data(
+            frame = self._dataset.ingest_category_data(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
@@ -539,7 +540,7 @@ class Processor[R: Release]:
         )
 
 
-def extracted_data_exists(root: Path, release: Release, metadata: Metadata) -> bool:
+def extracted_category_exists(root: Path, release: Daily, metadata: Metadata) -> bool:
     """Determine whether all batch files exist under the given root directory."""
     path = root / release.directory
     for index in range(metadata.batch_count(release)):

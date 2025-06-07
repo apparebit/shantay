@@ -21,20 +21,20 @@ _logger = logging.getLogger(__spec__.parent)
 
 class Metadata[R: Release]:
 
-    __slots__ = ("_filter", "_releases")
+    __slots__ = ("_category", "_releases")
 
     def __init__(
         self,
-        filter: None | str = None,
+        category: None | str = None,
         releases: None | dict[str, MetadataEntry] = None,
     ) -> None:
-        self._filter = filter
+        self._category = category
         self._releases = releases or {}
 
     @property
-    def filter(self) -> None | str:
-        """Get the filter for the working set."""
-        return self._filter
+    def category(self) -> None | str:
+        """Get the category for the working set."""
+        return self._category
 
     @property
     def records(self) -> Iterator[FullMetadataEntry]:
@@ -56,14 +56,14 @@ class Metadata[R: Release]:
     @property
     def coverage(self) -> Coverage:
         range = self.range
-        return Coverage(Release.of(range.first), Release.of(range.last), self.filter)
+        return Coverage(Release.of(range.first), Release.of(range.last), self.category)
 
-    def set_filter(self, filter: str) -> None:
+    def set_category(self, category: str) -> None:
         """Set the not yet configured category."""
-        if self._filter is None:
-            self._filter = filter
-        elif self._filter != filter:
-            raise MetadataConflict(f"categories {self._filter} and {filter} differ")
+        if self._category is None:
+            self._category = category
+        elif self._category != category:
+            raise MetadataConflict(f"categories {self._category} and {category} differ")
 
     def batch_count(self, release: str | R) -> int:
         """Get the batch count for the given release."""
@@ -115,24 +115,24 @@ class Metadata[R: Release]:
                 if not_exist_ok:
                     continue
                 raise
-            merged._merge_filter(source_data._filter)
+            merged._merge_category(source_data._category)
             merged._merge_releases(source_data._releases)
         return merged
 
     def merge_with(self, other: Self) -> Self:
         """Merge with the other metadata."""
-        merged = type(self)(self._filter, dict(self._releases))
-        merged._merge_filter(other._filter)
+        merged = type(self)(self._category, dict(self._releases))
+        merged._merge_category(other._category)
         merged._merge_releases(other._releases)
         return merged
 
-    def _merge_filter(self, other: None | str) -> None:
+    def _merge_category(self, other: None | str) -> None:
         if other is None:
             pass
-        elif self._filter is None or self._filter == other:
-            self._filter = other
+        elif self._category is None or self._category == other:
+            self._category = other
         else:
-            raise MetadataConflict(f"divergent categories {self._filter} and {other}")
+            raise MetadataConflict(f"divergent categories {self._category} and {other}")
 
     def _merge_releases(self, other: dict[str, MetadataEntry]) -> None:
         for release, entry2 in other.items():
@@ -168,16 +168,16 @@ class Metadata[R: Release]:
         """Read the given file as metadata."""
         with open(file, mode="r", encoding="utf8") as stream:
             data = json.load(stream)
-        filter = data["filter"]
+        category = data["category"]
         releases = data["releases"]
-        return cls(filter, releases)
+        return cls(category, releases)
 
     def write_json(self, file: Path, *, sort_keys: bool = False) -> None:
         """Write the metadata to the given file."""
         tmp = file.with_suffix(".tmp.json")
         with open(tmp, mode="w", encoding="utf8") as handle:
             json.dump({
-                "filter": self._filter,
+                "category": self._category,
                 "releases": self._releases
             }, handle, indent=2, sort_keys=sort_keys)
         tmp.replace(file)
@@ -191,7 +191,7 @@ class Metadata[R: Release]:
         tmp.replace(path)
 
     def __repr__(self) -> str:
-        return f"Metadata({self._filter}, {len(self._releases):,} releases)"
+        return f"Metadata({self._category}, {len(self._releases):,} releases)"
 
 
 def read_digest_file(directory: Path) -> None | dict[str, str]:
@@ -329,7 +329,7 @@ class _Fsck:
         # There were errors. Metadata may still be useful, so save under another name.
         with open(Path.cwd() / "fsck.json", mode="w", encoding="utf8") as file:
             json.dump({
-                "filter": self._metadata._filter,
+                "category": self._metadata._category,
                 "releases": self._metadata._releases
             }, file, indent=2)
 
@@ -421,8 +421,8 @@ class _Fsck:
             # Only write a new digest file if there were no errors and no file.
             write_digest_file(day, actual_digests)
 
-        if self._metadata._filter is None and 0 < batch_no:
-            self.update_filter(f"{day}/*.parquet")
+        if self._metadata._category is None and 0 < batch_no:
+            self.update_category(f"{day}/*.parquet")
 
         digest_of_digests = None
         if (day / DIGEST_FILE).exists():
@@ -435,7 +435,7 @@ class _Fsck:
 
         _logger.info('checked batch-count=%d directory="%s"', batch_no, day)
 
-    def update_filter(self, glob: str) -> None:
+    def update_category(self, glob: str) -> None:
         """
         Scan data frames matching glob to extract only category name. If the
         frames do not have a unique category name, do nothing.
@@ -443,7 +443,7 @@ class _Fsck:
         from .framing import extract_category_from_parquet
         category = extract_category_from_parquet(glob)
         if category:
-            self._metadata._filter = category
+            self._metadata._category = category
 
     def update_batch_count(
         self,

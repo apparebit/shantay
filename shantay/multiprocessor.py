@@ -12,9 +12,9 @@ from typing import Any
 
 from .framing import collect_release_metadata
 from .metadata import Metadata
-from .model import Coverage, DataFrameType, Dataset, META_FILE, Release, Storage
+from .model import Coverage, Daily, DataFrameType, Dataset, META_FILE, Release, Storage
 from .pool import Cancelled, Pool, Task, WorkerProgress
-from .processor import extracted_data_exists, Processor
+from .processor import extracted_category_exists, Processor
 from .stats import (
     update_platforms, MissingPlatformError, Collector, Statistics
 )
@@ -26,13 +26,13 @@ _PID = os.getpid()
 _logger = logging.getLogger(__spec__.parent)
 
 
-class Multiprocessor[R: Release]:
+class Multiprocessor:
 
     def __init__(
         self,
-        dataset: Dataset[R],
+        dataset: Dataset,
         storage: Storage,
-        coverage: Coverage[R],
+        coverage: Coverage[Daily],
         metadata: Metadata,
         stats_file: str,
         size: int,
@@ -73,7 +73,7 @@ class Multiprocessor[R: Release]:
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
         _logger.info('    key="storage.working_root", value="%s"', self._storage.working_root)
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="coverage.filter",      value="%s"', self._coverage.filter)
+        _logger.info('    key="coverage.category",    value="%s"', self._coverage.category)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency"    value="%s"', self._coverage.frequency())
@@ -157,7 +157,7 @@ class Multiprocessor[R: Release]:
                     task=self._task,
                     dataset=self._dataset,
                     storage=self._storage,
-                    filter=self._metadata.filter,
+                    category=self._metadata.category,
                     metadata_frame=self._metadata_frame,
                     stats_file=self._stats_file,
                     release=release,
@@ -175,7 +175,7 @@ class Multiprocessor[R: Release]:
             while (
                 release is not None
                 and release in self._metadata
-                and extracted_data_exists(
+                and extracted_category_exists(
                     self._storage.the_working_root,
                     release,
                     self._metadata
@@ -274,25 +274,16 @@ class Multiprocessor[R: Release]:
         sys.exit(1)
 
 
-def run_on_worker[R: Release](
+def run_on_worker(
     task: str,
-    dataset: Dataset[R],
+    dataset: Dataset,
     storage: Storage,
-    filter: str,
+    category: None | str,
     metadata_frame: DataFrameType,
     stats_file: str,
-    release: R,
+    release: Daily,
 ) -> Any:
-    """
-    Run a task in a worker process.
-
-    This function runs a prepare or analyze-working task in a worker process.
-    All of the function's arguments are used for both tasks, with exception of
-    filter, which is only used by prepare, and metadata_frame, which is only
-    used by analyze-working. The result for a prepare task is the metadata entry
-    for the release. The result for an analyze-working task is the statistics
-    data frame for the release.
-    """
+    """Run a task in a worker process."""
     # As a major WTF, the process pool executor unpickles all worker exceptions
     # as instances of the same type. So we instead communicate critical
     # exceptions as tagged values.
@@ -301,7 +292,7 @@ def run_on_worker[R: Release](
             task,
             dataset,
             storage,
-            filter,
+            category,
             metadata_frame,
             stats_file,
             release
@@ -332,18 +323,18 @@ def run_on_worker[R: Release](
         traceback.format_exception(x)
         raise
 
-def _run_on_worker[R: Release](
+def _run_on_worker(
     task: str,
-    dataset: Dataset[R],
+    dataset: Dataset,
     storage: Storage,
-    filter: str,
+    category: None | str,
     metadata_frame: DataFrameType,
     stats_file: str,
-    release: R,
+    release: Daily,
 ) -> Any:
-    coverage = Coverage(release, release, filter)
+    coverage = Coverage(release, release, category)
     if task == "prepare":
-        metadata = Metadata(filter)
+        metadata = Metadata(category)
     elif task == "summarize":
         metadata = Metadata()
     elif task == "analyze":
@@ -360,18 +351,22 @@ def _run_on_worker[R: Release](
         progress=WorkerProgress(),
     )
 
-    _logger.debug('running task=%s, release="%s", worker=%d', task, release, _PID)
+    _logger.debug(
+        'running task=%s, category="%s", release="%s", worker=%d',
+        task, category or "", release, _PID
+    )
+
     if task == "prepare":
-        processor.prepare_batches(release)
+        processor.prepare_category_release(release)
         record = metadata[release]
         result = dict(release=release, **record)
     elif task == "summarize":
         collector = Collector()
-        processor.summarize_archived_release(release, collector)
+        processor.summarize_database_release(release, collector)
         result = collector.frame()
     elif task == "analyze":
         collector = Collector()
-        processor.analyze_working_release(release, metadata_frame, collector)
+        processor.summarize_category_release(release, metadata_frame, collector)
         result = collector.frame()
     else:
         raise AssertionError(f"invalid task {task}")

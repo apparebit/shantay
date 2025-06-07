@@ -489,11 +489,11 @@ class Coverage[R: Release]:
 
     first: R
     last: R
-    filter: None | str
+    category: None | str
 
     @classmethod
-    def of(cls, range: ReleaseRange, filter: None | str) -> Self:
-        return cls(range.first, range.last, filter)
+    def of(cls, range: ReleaseRange, category: None | str) -> Self:
+        return cls(range.first, range.last, category)
 
     def frequency(self) -> Literal["daily", "monthly"]:
         assert self.first.frequency == self.last.frequency
@@ -517,7 +517,7 @@ class Coverage[R: Release]:
         return DateRange(self.first.start_date, self.last.end_date)
 
 
-class CollectorProtocol[R: Release](Protocol):
+class CollectorProtocol(Protocol):
     """The protocol for incremental data frame generation."""
 
     # The name of the main statistics frame.
@@ -553,7 +553,7 @@ class CollectorProtocol[R: Release](Protocol):
         ...
 
 
-class Dataset[R: Release](metaclass=ABCMeta):
+class Dataset(metaclass=ABCMeta):
     """A specific dataset."""
 
     @property
@@ -566,19 +566,19 @@ class Dataset[R: Release](metaclass=ABCMeta):
         """The URL for the release."""
 
     @abstractmethod
-    def archive_name(self, release: R) -> str:
+    def archive_name(self, release: Daily) -> str:
         """The archive file name for the release."""
 
     @abstractmethod
-    def digest_name(self, release: R) -> str:
+    def digest_name(self, release: Daily) -> str:
         """The digest file name for the release."""
 
     @abstractmethod
-    def ingest_file_data(
+    def ingest_category_data(
         self,
         *,
         root: Path,
-        release: R,
+        release: Daily,
         index: int,
         name: str,
         progress: Progress = NO_PROGRESS,
@@ -586,24 +586,24 @@ class Dataset[R: Release](metaclass=ABCMeta):
         """Ingest unfiltered, uncompressed data."""
 
     @abstractmethod
-    def extract_file_data(
+    def extract_category_data(
         self,
         *,
         root: Path,
-        release: R,
+        release: Daily,
         index: int,
         name: str,
-        filter: str,
+        category: str,
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
         """Extract working data from an uncompressed data."""
 
     @abstractmethod
-    def analyze_release(
+    def summarize_release(
         self,
         root: Path,
-        release: Release,
-        filter: str,
+        release: Daily,
+        category: str,
         metadata: DataFrameType,
         collector: CollectorProtocol
     ) -> None:
@@ -613,7 +613,7 @@ class Dataset[R: Release](metaclass=ABCMeta):
         """
 
     @abstractmethod
-    def combine_releases[T: Release](
+    def combine_releases(
         self,
         root: Path,
         stats_file: str,

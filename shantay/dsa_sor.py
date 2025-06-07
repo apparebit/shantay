@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Daily, DataFrameType, Dataset, Release
+    CollectorProtocol, Daily, DataFrameType, Dataset
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
@@ -20,7 +20,7 @@ from .util import annotate_error
 _logger = logging.getLogger(__spec__.parent)
 
 
-class StatementsOfReasons(Dataset[Daily]):
+class StatementsOfReasons(Dataset):
 
     @property
     def name(self) -> str:
@@ -36,7 +36,7 @@ class StatementsOfReasons(Dataset[Daily]):
         return f"{self.archive_name(release)}.sha1"
 
     @annotate_error(filename_arg="root")
-    def ingest_file_data(
+    def ingest_category_data(
         self,
         *,
         root: Path,
@@ -53,21 +53,21 @@ class StatementsOfReasons(Dataset[Daily]):
             release=release,
             index=index,
             name=name,
-            filter=None,
+            category=None,
             progress=progress
         )
         self._validate_schema(frame)
         return frame
 
     @annotate_error(filename_arg="root")
-    def extract_file_data(
+    def extract_category_data(
         self,
         *,
         root: Path,
         release: Daily,
         index: int,
         name: str,
-        filter: str,
+        category: str,
         progress: Progress = NO_PROGRESS
     ) -> tuple[str, Counter]:
         path = root / release.temp_directory
@@ -83,7 +83,7 @@ class StatementsOfReasons(Dataset[Daily]):
             release=release,
             index=index,
             name=name,
-            filter=filter,
+            category=category,
             progress=progress
         )
 
@@ -130,7 +130,7 @@ class StatementsOfReasons(Dataset[Daily]):
         release: Daily,
         index: int,
         name: str,
-        filter: None | str,
+        category: None | str,
         progress: Progress = NO_PROGRESS
     ) -> pl.DataFrame:
         """
@@ -145,7 +145,7 @@ class StatementsOfReasons(Dataset[Daily]):
         try:
             frame = self.finish_frame(
                 release,
-                self._scan_csv_with_polars(csv_files, filter)
+                self._scan_csv_with_polars(csv_files, category)
             ).collect()
             _logger.debug(
                 'extracted rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
@@ -174,7 +174,7 @@ class StatementsOfReasons(Dataset[Daily]):
             try:
                 frame = self.finish_frame(
                     release,
-                    self._scan_csv_with_polars(file_path, filter)
+                    self._scan_csv_with_polars(file_path, category)
                 ).collect()
                 frames.append(frame)
 
@@ -192,7 +192,7 @@ class StatementsOfReasons(Dataset[Daily]):
             try:
                 frame = self.finish_frame(
                     release,
-                    self._read_csv_row_by_row(file_path, filter).lazy()
+                    self._read_csv_row_by_row(file_path, category).lazy()
                 ).collect()
                 frames.append(frame)
 
@@ -210,7 +210,7 @@ class StatementsOfReasons(Dataset[Daily]):
         return pl.concat(frames, how="vertical", rechunk=True)
 
     def _scan_csv_with_polars(
-        self, path: str | Path, filter: None | str = None
+        self, path: str | Path, category: None | str = None
     ) -> pl.LazyFrame:
         """
         Read one or more CSV files with Polars' CSV reader, while also applying
@@ -226,16 +226,16 @@ class StatementsOfReasons(Dataset[Daily]):
             infer_schema=False,
         )
 
-        if isinstance(filter, str):
+        if isinstance(category, str):
             frame = frame.filter(
-                (pl.col("category") == filter)
-                | pl.col("category_addition").str.contains(filter, literal=True)
+                (pl.col("category") == category)
+                | pl.col("category_addition").str.contains(category, literal=True)
             )
 
         return frame
 
     def _read_csv_row_by_row(
-        self, path: str | Path, filter: None | str = None
+        self, path: str | Path, category: None | str = None
     ) -> pl.DataFrame:
         """
         Read a CSV file using Python's CSV reader row by row, while also
@@ -252,7 +252,7 @@ class StatementsOfReasons(Dataset[Daily]):
             reader = csv.reader(file)
             header = next(reader)
 
-            if isinstance(filter, str):
+            if isinstance(category, str):
                 category_index = header.index("category")
                 addition_index = header.index("category_addition")
                 if category_index < 0:
@@ -261,7 +261,7 @@ class StatementsOfReasons(Dataset[Daily]):
                     raise ValueError(f'"{path}" does not include "category_addition" column')
 
                 predicate = (
-                    lambda row: row[category_index] == filter or filter in row[addition_index]
+                    lambda row: row[category_index] == category or category in row[addition_index]
                 )
             else:
                 predicate = lambda _row: True
@@ -400,11 +400,11 @@ class StatementsOfReasons(Dataset[Daily]):
         )
 
     @annotate_error(filename_arg="root")
-    def analyze_release(
+    def summarize_release(
         self,
         root: Path,
-        release: Release,
-        filter: str,
+        release: Daily,
+        category: str,
         metadata: DataFrameType,
         collector: CollectorProtocol,
     ) -> None:
@@ -426,10 +426,10 @@ class StatementsOfReasons(Dataset[Daily]):
             release,
             working_data,
             metadata=metadata,
-            tag=filter,
+            tag=category,
         )
 
-        if filter == StatementCategoryProtectionOfMinors:
+        if category == StatementCategoryProtectionOfMinors:
             csam = working_data.filter(
                 pl.col("category_specification").list.contains(
                     KeywordChildSexualAbuseMaterial
