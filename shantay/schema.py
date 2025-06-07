@@ -614,33 +614,9 @@ ProcessingDelay = MetricDeclaration(
 )
 
 
-# See
-# https://transparency.dsa.ec.europa.eu/page/additional-explanation-for-statement-attributes
-# for two-level classification for types of violative activity.
-
-StatementCategoryProtectionOfMinors = "STATEMENT_CATEGORY_PROTECTION_OF_MINORS"
-
-StatementCategory = (
-    "STATEMENT_CATEGORY_ANIMAL_WELFARE",
-    "STATEMENT_CATEGORY_CONSUMER_INFORMATION",
-    "STATEMENT_CATEGORY_CYBER_VIOLENCE",
-    "STATEMENT_CATEGORY_CYBER_VIOLENCE_AGAINST_WOMEN",
-    "STATEMENT_CATEGORY_DATA_PROTECTION_AND_PRIVACY_VIOLATIONS",
-    "STATEMENT_CATEGORY_ILLEGAL_OR_HARMFUL_SPEECH",
-    "STATEMENT_CATEGORY_INTELLECTUAL_PROPERTY_INFRINGEMENTS",
-    "STATEMENT_CATEGORY_NEGATIVE_EFFECTS_ON_CIVIC_DISCOURSE_OR_ELECTIONS",
-    "STATEMENT_CATEGORY_NON_CONSENSUAL_BEHAVIOUR",
-    "STATEMENT_CATEGORY_NOT_SPECIFIED_NOTICE",
-    "STATEMENT_CATEGORY_OTHER_VIOLATION_TC",
-    "STATEMENT_CATEGORY_PORNOGRAPHY_OR_SEXUALIZED_CONTENT",
-    StatementCategoryProtectionOfMinors,
-    "STATEMENT_CATEGORY_RISK_FOR_PUBLIC_SECURITY",
-    "STATEMENT_CATEGORY_SCAMS_AND_FRAUD",
-    "STATEMENT_CATEGORY_SELF_HARM",
-    "STATEMENT_CATEGORY_SCOPE_OF_PLATFORM_SERVICE",
-    "STATEMENT_CATEGORY_UNSAFE_AND_ILLEGAL_PRODUCTS",
-    "STATEMENT_CATEGORY_UNSAFE_AND_PROHIBITED_PRODUCTS",
-    "STATEMENT_CATEGORY_VIOLENCE",
+from ._category import (
+    StatementCategoryProtectionOfMinors as StatementCategoryProtectionOfMinors,
+    StatementCategory as StatementCategory,
 )
 
 
@@ -991,6 +967,41 @@ aggregation of means. Since durations are computed from the difference of two
 date/times, shantay may have to correct for negative durations. It tracks the
 number of these corrections as well.
 """
+
+
+# ======================================================================================
+
+
+StringColumn = (
+    "decision_visibility_other",
+    "decision_monetary_other",
+    "decision_ground_reference_url",
+    "illegal_content_legal_ground",
+    "illegal_content_explanation",
+    "incompatible_content_ground",
+    "incompatible_content_explanation",
+    "category_specification_other",
+    "content_type_other",
+    "decision_facts",
+    "source_identity",
+)
+
+
+StringColumnType = pl.Enum(StringColumn)
+
+
+PlatformType = pl.Enum(PlatformNames)
+
+
+StringStatsSchema = pl.Schema({
+    "start_date": pl.Date,
+    "end_date": pl.Date,
+    "tag": TagValueType,
+    "column": StringColumnType,
+    "text": str,
+    "count": pl.Int64,
+    "platform": PlatformType,
+})
 
 
 # ======================================================================================
