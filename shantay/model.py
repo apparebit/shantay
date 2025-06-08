@@ -429,6 +429,10 @@ class DateRange(Period):
         last = dt.date.today() - dt.timedelta(days=3)
         return type(self)(first, last) if first <= last else None
 
+    def to_tuple(self) -> tuple[dt.date, dt.date]:
+        """Convert the date range to a tuple of the first and last dates."""
+        return self.first, self.last
+
     def dailies(self) -> ReleaseRange[Daily]:
         """Convert to the corresponding daily release range."""
         return ReleaseRange(Daily.of(self.first), Daily.of(self.last))
