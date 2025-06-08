@@ -172,16 +172,6 @@ def configure_printing() -> None:
     pl.Config.set_tbl_cols(20)
 
 
-def configure_logging(logfile: str, *, verbose: bool) -> None:
-    logging.Formatter.default_msec_format = "%s.%03d"
-    logging.basicConfig(
-        format='%(asctime)s︙%(process)d︙%(name)s︙%(levelname)s︙%(message)s',
-        filename=logfile,
-        encoding="utf8",
-        level=logging.DEBUG if verbose else logging.INFO,
-    )
-
-
 def _run(options: Any) -> None:
     configure_printing()
 
