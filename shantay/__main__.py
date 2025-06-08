@@ -1,9 +1,151 @@
+from argparse import ArgumentParser, RawDescriptionHelpFormatter
+import logging
+from pathlib import Path
 import sys
+from typing import Any
+
+
+def parse_options(args: list[str]) -> Any:
+    parser = ArgumentParser(
+        prog="shantay",
+        formatter_class=RawDescriptionHelpFormatter,
+        description="""
+        `recover` scans the working directory to validate contents and
+        restore metadata.
+
+        `prepare` downloads daily distributions that haven't been
+        downloaded yet and extracts the working subset.
+
+        `analyze` computes summary statistics about the working
+        subset.
+
+        `summarize` downloads daily distributions that haven't been
+        downloaded yet and computes summary statistics about the
+        entire dataset.
+
+        `visualize` visualizes summary statistics derived from
+        working subset or full dataset.
+
+        Since prepare and summarize may download distributions and process
+        the complete dataset, they are slow, taking at least half a day.
+        By contrast, analyze-working is much faster, taking a few minutes
+        only.
+        """
+    )
+
+    group = parser.add_argument_group("data storage")
+    group.add_argument(
+        "--archive",
+        type=Path,
+        help="set directory for downloaded archives",
+    )
+    group.add_argument(
+        "--working",
+        type=Path,
+        help="set directory for parquet files with category-specific data"
+    )
+    group.add_argument(
+        "--staging",
+        type=Path,
+        help="set directory for temporary files (`./dsa_db-staging` by default)"
+    )
+
+    group = parser.add_argument_group("data coverage")
+    group.add_argument(
+        "--first",
+        help="set the start date (2023-09-25 by default)"
+    )
+    group.add_argument(
+        "--last",
+        help="set the stop date (three days before Greenwhich's day by default)",
+    )
+    group.add_argument(
+        "--category",
+        help="select subset category (may omit the STATEMENT_CATEGORY_ prefix and/or"
+        "use lower case); precludes --all-data",
+    )
+    group.add_argument(
+        "--monthly",
+        dest="frequency",
+        action="store_const",
+        const="monthly",
+        help="use monthly aggregates for visualizing statistics; precludes --daily",
+    )
+    group.add_argument(
+        "--daily",
+        dest="frequency",
+        action="store_const",
+        const="daily",
+        help="use daily aggregates for visualizing statistics; precludes --monthly",
+    )
+
+    group = parser.add_argument_group("logging")
+    group.add_argument(
+        "--logfile",
+        default="shantay.log",
+        type=Path,
+        help="set file receiving log output (`./shantay.log` by default)",
+    )
+    group.add_argument(
+        "--quiet",
+        dest="verbose",
+        action="store_false",
+        help="disable verbose logging, which is the default",
+    )
+
+    group = parser.add_argument_group("source statistics for visualization")
+    group.add_argument(
+        "--with-archive",
+        action="store_true",
+        help="visualize the summary statistics stored in the archive root (not working "
+        "root)"
+    )
+    group.add_argument(
+        "--with-working",
+        action="store_true",
+        help="visualize the summary statistics stored in the working root (not archive "
+        "root)"
+    )
+
+    parser.add_argument(
+        "--multiproc",
+        default=1,
+        type=int,
+        help="use several processes for downloading archives and extracting working data",
+    )
+
+    parser.add_argument(
+        "task",
+        choices=["recover", "prepare", "analyze", "summarize", "visualize"],
+        default="prepare",
+        help="select the task to execute",
+    )
+
+    return parser.parse_args(args)
+
+
+def configure_logging(logfile: str, *, verbose: bool) -> None:
+    logging.Formatter.default_msec_format = "%s.%03d"
+    logging.basicConfig(
+        format='%(asctime)s︙%(process)d︙%(name)s︙%(levelname)s︙%(message)s',
+        filename=logfile,
+        encoding="utf8",
+        level=logging.DEBUG if verbose else logging.INFO,
+    )
+
 
 if __name__ == "__main__":
+    # Make sure logging is configured before dealing with platform names.
+    options = parse_options(sys.argv[1:])
+    configure_logging(options.logfile, verbose=options.verbose)
+    logger = logging.getLogger(__package__)
+    logger.info(
+        '▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁'
+        '▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁'
+    )
+
     # To be fully effective, this function must be invoked before the model,
-    # schema, or stats modules have been loaded. That is clearly the case only
-    # right here.
+    # schema, or stats modules have been loaded. That is the case right here.
     from ._platform import sync_web_platforms
     action = sync_web_platforms()
     if action == "disk":
@@ -15,5 +157,4 @@ if __name__ == "__main__":
         )
 
     from .tool import run
-    sys.exit(run(sys.argv[1:]))
-
+    sys.exit(run(options))
