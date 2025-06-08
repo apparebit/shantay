@@ -16,7 +16,7 @@ from .model import Coverage, Daily, DataFrameType, Dataset, META_FILE, Release, 
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_category_exists, Processor
 from .stats import (
-    update_platforms, MissingPlatformError, Collector, Statistics
+    MissingPlatformError, Collector, Statistics, update_platforms
 )
 
 

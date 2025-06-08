@@ -1,75 +1,50 @@
-# ==============================
-#    If you regularly call
-#     the stats module's
-#    sync_web_platforms(),
-#    check_db_platforms(),
-#  and check_stats_platforms(),
-#   this module automatically
-#      maintains itself.
-#
-#     PLEASE DO NOT EDIT!
-# ===========================
-
 """
-Shantay uses Pola.rs enumerations for all categorical columns of the summary
-statistics; hence all variants must be declared in advance. Pola.rs categorical
-types do not require declaration but a global registry. To support
-multiprocessing and categorical types, that registry would have to be
-out-of-process, which is not currently supported by Pola.rs. Furthermore, even
-if it was possible to implement such a registry, its performance would likely be
-prohibitive. Finally, strings take up too much in-memory storage.
+There are three options for encoding categorical data with Pola.rs. Strings are
+stored verbatim over and over again and hence take up too much space.
+Categorical types avoid the storage overhead but require a process-wide
+registry. There is no interface for coordinating between several processes and,
+even if that existed, the performance overhead would likely be too big. Finally,
+enumeration types avoid the storage overhead and don't require dynamic
+registration. They do, however, require up-front declaration.
 
-Declaring all variants in advance actually isn't too hard for almost all
-columns. Alas, one of the columns includes platform names, the one entity that
-is seeing constant churn. Updating Shantay on a regular basis puts releases on
-the critical path of every users, which doesn't seem desirable. So a more
-dynamic update mechanism is needed.
+Shantay uses enumeration types whereever possible. The only real complication
+are platform names, whose number has been growing at a rate of almost 10 names
+per month from summer 2024 to summer 2025. Hence we cannot hardcode the list, as
+that would put new releases on the critical path of all users. Instead, it
+stores the list in a subdirectory of the user's home directory.
 
-Shantay actually implements *two* mechanisms because neither strikes us as a
-guaranteed solution. Hopefully, the combination of the two is effective in
-practice. Both mechanisms update the source code of this module. Since **updates
-are atomic**, thanks to Shantay's use of appropriate file system operations,
-updates are guaranteed to always result in a usable module (barring bugs in this
-module), even for several concurrent Shantay runs off the same installation.
-However, since Shantay does not use transactions for reading this module,
-notably when importing it, and later on updating it, there is a theoretical risk
-of read-write conflicts due to concurrent tool runs. That is acceptable for the
-following reasons:
+To detect new platform names, Shantay checks data frames right after reading
+them and also scrapes the EU's website once a week. To avoid write/write
+conflicts by several concurrent runs of Shantay, it updates the file system
+atomically. It cannot avoid read after write conflicts entirely but minimizes
+them by reading the file with platform names just before updating.
 
-  * Shantay always checks Parquet files with transparency data or summary
-    statistics for currently unknown platform names. If it detects any, it
-    terminates the current run.
-  * By proactively validating data during loading, Shantay also knows which
-    platform names are missing and updates this module with those names. Updates
-    are strictly additive. It never deletes platform names.
-  * This module is loaded early on during a run and unknown platform names are
-    usually detected towards the end of what may be a dayslong run. That is too
-    long a window for read-write conflicts. Hence Shantay re-reads the list of
-    platform names just before updating its source code.
-  * The only source of unknown platform names also is the only source of data
-    for concurrent runs of Shantay. In other words, if some names are missing,
-    concurrent runs are likely to encounter the same names in the same order.
-  * Updating this module and rerunning Shantay is effective but a bit annoying,
-    especially if you end up manually monitoring your runs. So Shantay also
-    updates platform names by scraping the search webpage for the DSA
-    transparency database, which enumerates almost all of them, every seven
-    days.
+We believe that is acceptable for the following reasons:
+
+  - Shantay never removes names, only adds them. As a result, the order and
+    grouping of names does not matter.
+  - Shantay always tries to update the file when encountering an unknown
+    platform name and terminates right after updating the file. As long as the
+    user keeps restarting the tool, it keeps trying.
+  - The list of platform names up to and including some date is always fixed. In
+    other words, there is a well-defined end-state.
 
 Alas, should you be able to observe update thrashing between two concurrent
 processes that make no forward progress as a result, I'd love to hear about it.
 """
 
 from collections.abc import Iterable
+import datetime as dt
+import json
 import logging
+import os
 from pathlib import Path
 import re
 import sys
 import time
 from types import MappingProxyType
-from typing import Literal
+from typing import Any, Literal
 from urllib.request import Request, urlopen
-
-import polars as pl
 
 
 PlatformNames = (
@@ -281,6 +256,7 @@ CanonicalPlatformNames = MappingProxyType({
     "Xbox.com Website Store": "Xbox.com",
 })
 
+
 class MissingPlatformError(Exception):
     """An exception indicating that previously unknown platform names."""
 
@@ -292,42 +268,36 @@ _ONE_WEEK = 7 * 24 * 60 * 60
 
 def sync_web_platforms() -> Literal["skipped", "mtime", "disk", "memory"]:
     """
-    If this module's file modification time is older than a week, this function
-    scrapes the list of platform names from the EU's DSA transparency database
-    website and updates this module if necessary. Otherwise, it does nothing and
-    returns `skipped`. See `update_platforms` for the meaning of the other three
-    return values. In particular, unless this function returns `memory`, the
-    current tool run must be terminated.
+    Scrape the list of platform names from the EU's DSA transparency database
+    website and update the local list accordingly.
     """
-    file = Path(__file__)
     now = time.time()
-    if now - file.stat().st_mtime < _ONE_WEEK:
+    mtime = _PLATFORM_FILE.stat().st_mtime
+
+    if now - mtime < _ONE_WEEK:
+        ts = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
+        _logger.info(
+            'skip scraping of platform names for path="%s" mtime="%s"',
+            _PLATFORM_FILE, ts.isoformat()
+        )
         return "skipped"
 
+    _logger.info('scraping platform names')
     new_names = _scrape_platforms()
-    unknown_names = new_names - _KNOWN_PLATFORM_NAMES
-    if len(unknown_names) == 0:
-        file.touch(exist_ok=True)
-        return "mtime"
-
-    return update_platforms(unknown_names)
+    return update_platforms(new_names)
 
 
-def check_db_platforms(release: str, batch: int, frame: pl.DataFrame) -> None:
+def check_db_platforms(release: str, batch: int, frame: Any) -> None:
     """
-    Check a data frame with DSA transparency data for previously unknown
-    platform names. This function raises an `UnknownPlatformError` if the data
-    frame uses any unknown names. The three arguments to that error are the
-    release, batch number, and the set of unknown names.
-
-    This function does not update this module's state, whether on disk or in
-    memory.
+    Check the data frame with transparency data for previously unknown platform
+    names and raise a missing platform error with any unknown names.
     """
+    import polars as pl
     used_names = frame.select(
         pl.col("platform_name").unique()
     ).get_column("platform_name")
 
-    unknown_names = _canonical_platforms(used_names) - _KNOWN_PLATFORM_NAMES
+    unknown_names = to_canonical_platforms(used_names) - _KNOWN_PLATFORM_NAMES
     if len(unknown_names) == 0:
         return
     for name in unknown_names:
@@ -338,21 +308,17 @@ def check_db_platforms(release: str, batch: int, frame: pl.DataFrame) -> None:
     raise MissingPlatformError(unknown_names, release, batch)
 
 
-def check_stats_platforms(frame: pl.DataFrame) -> None:
+def check_stats_platforms(frame: Any) -> None:
     """
-    Check a data frame with summary statistics for unknown platform names. This
-    function raises an `UnknownPlatformError` if the data frame uses any unknown
-    names. The three arguments to that error are the release, batch number, and
-    the set of unknown names.
-
-    This function does not update this module's state, whether on disk or in
-    memory.
+    Check the data frame with summary statistics for previously unknown platform
+    names and raise a missing platform error with any unknown names.
     """
+    import polars as pl
     used_names = frame.select(
         pl.col("variant").filter(pl.col("column").eq("platform_name")).unique()
     ).get_column("variant")
 
-    unknown_names = _canonical_platforms(used_names) - _KNOWN_PLATFORM_NAMES
+    unknown_names = to_canonical_platforms(used_names) - _KNOWN_PLATFORM_NAMES
     if len(unknown_names) == 0:
         return
     for name in unknown_names:
@@ -361,6 +327,68 @@ def check_stats_platforms(frame: pl.DataFrame) -> None:
         )
 
     raise MissingPlatformError(unknown_names)
+
+
+_PLATFORM_FILE = Path.home() / ".shantay" / "platforms.json"
+
+
+def update_platforms(names: Iterable[str]) -> Literal["mtime", "disk", "memory"]:
+    """
+    Update the persistent list of platform names with the given names. After
+    converting the given names to their canonical versions, this function read
+    the list of known platform names from persistent storage, merges the two
+    lists, and writes out the combined list if it is any different.
+
+    The result indicates the extent of this function changes:
+      - `mtime` means that only the last modified time of the platform file was
+        updated. In other words, the given names were already included in the
+        platform file. However, since the names were new to this run of Shantay,
+        it must be restarted.
+      - `disk` means that the platform file was updated. However, the in-memory
+        version is still outdated and hence Shantay must be restarted.
+      - `memory` means that the platform file and the in-memory version were
+        updated. It is safe to continue running.
+    """
+    global PlatformNames, _KNOWN_PLATFORM_NAMES
+
+    names = to_canonical_platforms(names)
+
+    old_names = set(_read_platforms())
+    new_names = old_names | names
+    if new_names == old_names:
+        _PLATFORM_FILE.touch(exist_ok=True)
+        return "mtime"
+
+    sorted_names = _to_sorted_platforms(new_names)
+    _write_platforms(sorted_names)
+
+    if _did_import_unsafe_modules():
+        return "disk"
+
+    PlatformNames = tuple(sorted_names)
+    _KNOWN_PLATFORM_NAMES = frozenset(sorted_names)
+    return "memory"
+
+
+def _read_platforms() -> list[str]:
+    with open(_PLATFORM_FILE, mode="r", encoding="utf8") as file:
+        return json.load(file)
+
+
+def _write_platforms(names: list[str] | tuple[str, ...]) -> None:
+    _PLATFORM_FILE.parent.mkdir(exist_ok=True)
+
+    tmp = _PLATFORM_FILE.with_suffix(f".tmp.{os.getpid()}.json")
+    with open(tmp, mode="w", encoding="utf8") as file:
+        json.dump(names, file)
+    tmp.replace(_PLATFORM_FILE)
+
+
+try:
+    PlatformNames = tuple(_read_platforms())
+    _KNOWN_PLATFORM_NAMES = frozenset(PlatformNames)
+except FileNotFoundError:
+    _write_platforms(PlatformNames)
 
 
 _PAGE_PATTERN = re.compile(
@@ -382,10 +410,10 @@ class DownloadFailed(Exception):
     """A download ended in a status code other than 200."""
 
 
-def _scrape_platforms() -> frozenset[str]:
+def _scrape_platforms() -> list[str]:
     """
     Scrape the list of current platfrom names from the EU's DSA transparency
-    database website. This function returns canonical names.
+    database website. This function returns raw names.
     """
     url = "https://transparency.dsa.ec.europa.eu/statement"
 
@@ -404,21 +432,33 @@ def _scrape_platforms() -> frozenset[str]:
     match = _PAGE_PATTERN.search(page)
     assert match is not None, f"failed to scrape platform names from {url}"
 
-    platforms = _canonical_platforms(_OPTION_PATTERN.findall(match.group(1)))
-    return platforms
+    return _OPTION_PATTERN.findall(match.group(1))
 
 
-def _canonical_platforms(names: Iterable[str]) -> frozenset[str]:
-    """Convert the given names to their canonical versions."""
-    return frozenset(CanonicalPlatformNames.get(p, p) for p in names)
+def to_canonical_platforms(names: Iterable[str]) -> set[str]:
+    """
+    Convert the given names to their canonical versions, while also validating
+    that they do not contain backslashes or double quotes.
+    """
+    canonical_names = set()
+
+    for name in names:
+        if '\\' in name:
+            raise ValueError(f"platform name '{name}' contains backslash")
+        if '"' in name:
+            raise ValueError(f"platform name '{name}' contains double quote")
+
+        canonical_names.add(CanonicalPlatformNames.get(name, name))
+
+    return canonical_names
 
 
-def _sorted_platforms(names: Iterable[str]) -> list[str]:
+def _to_sorted_platforms(names: Iterable[str]) -> list[str]:
     """Return the given canonical platform names in their canonical order."""
     return sorted(names, key=lambda n: n.casefold())
 
 
-def _imported_unsafe_modules() -> bool:
+def _did_import_unsafe_modules() -> bool:
     """
     Determine if any of the unsafe modules (model, schema, or stats) have
     already been loaded. If that is the case, this module's in-memory state must
@@ -429,91 +469,3 @@ def _imported_unsafe_modules() -> bool:
         if f"{pkg}.{mod}" in sys.modules:
             return True
     return False
-
-
-_MODULE_PARTS = re.compile(
-    r"""
-    ^
-    (?P<prefix>.*?)
-    PlatformNames [ ][=][ ][(][\n]
-        (?P<names>.*?)
-    [\n][)]
-    (?P<suffix>.*)
-    $
-    """,
-    re.VERBOSE | re.DOTALL
-)
-
-
-def update_platforms(names: Iterable[str]) -> Literal["mtime", "disk", "memory"]:
-    """
-    Update the source code of this module with the given platform names. This
-    function merges the given platform names with the already known platform
-    names.
-
-     1. If the merged list does not contain any previously unknown platform
-        names, this function updates this module's modified time and returns
-        `mtime`.
-     2. Otherwise, it updates this module's source code to include the
-        previously unknown platform names. If the model, schema, or stats
-        modules have already been loaded, this function returns `disk`.
-
-        The on-disk and in-memory state for this module are inconsistent and
-        Shantay must be restarted.
-     3. If the model, schema, or stats modules have not been loaded, this
-        function also updates the in-memory state and returns `memory`.
-
-    Before merging, this function validates the given platform names. In
-    particular, names must not contain backslashes or double quotes.
-    """
-    global PlatformNames, _KNOWN_PLATFORM_NAMES
-
-    # Validate names.
-    for name in names:
-        if '\\' in name:
-            raise ValueError(f"platform name '{name}' contains backslash")
-        if '"' in name:
-            raise ValueError(f"platform name '{name}' contains double quote")
-
-    # Missing platform names become more likely the more recent the DSA entries
-    # being processed. Since a single run of shantay may take a few days, that
-    # implies that this module may have been imported days ago, leaving plenty
-    # of time for another invocation of shantay to make modifications. So before
-    # applying any update, we re-ingest the list from the module source code and
-    # update that version.
-    file = Path(__file__)
-    tmp = file.with_suffix(".tmp.py")
-    source_code = file.read_text(encoding="utf8")
-
-    # Break the module into its parts.
-    parts = _MODULE_PARTS.match(source_code)
-    assert parts is not None
-    prefix = parts.group("prefix")
-    suffix = parts.group("suffix")
-
-    # Ingest the list of platform names (without eval).
-    old_names: set[str] = set()
-    for line in parts.group("names").splitlines():
-        assert line.startswith('    "')
-        assert line.endswith('",')
-        old_names.add(line[5:-2])
-
-    # Check whether we need to rewrite this module.
-    new_names = old_names | _canonical_platforms(names)
-    if old_names == new_names:
-        file.touch(exist_ok=True)
-        return "mtime"
-
-    # Rewrite the source code
-    sorted_names = _sorted_platforms(new_names)
-    s = "\n".join(f'    "{n}",' for n in sorted_names)
-    tmp.write_text(f"{prefix}PlatformNames = (\n{s}\n){suffix}", encoding="utf8")
-    tmp.replace(file)
-
-    # Update module state if it hasn't been imported yet.
-    if _imported_unsafe_modules():
-        return "disk"
-
-    PlatformNames = sorted_names
-    _KNOWN_PLATFORM_NAMES = frozenset(sorted_names)
-    return "memory"
