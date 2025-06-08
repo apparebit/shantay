@@ -763,9 +763,11 @@ del _generate_schemata
 
 class TransformType(enum.Enum):
     """Non-parametric transform types."""
+    PLATFORM_NAME = enum.auto()
     SKIPPED_DATE = enum.auto()
     ROWS = enum.auto()
     VALUE_COUNTS = enum.auto()
+    TEXT_VALUE_COUNTS = enum.auto()
     LIST_VALUE_COUNTS = enum.auto()
     DECISION_TYPE = enum.auto()
 
@@ -792,11 +794,14 @@ TRANSFORMS = {
     "decision_visibility": ValueCountsPlusTransform(
         self_is_list=True, other_field="end_date_visibility_restriction"
     ),
+    "decision_visibility_other": TransformType.TEXT_VALUE_COUNTS,
     "end_date_visibility_restriction": TransformType.SKIPPED_DATE,
     "visibility_restriction_duration": DurationTransform(
         "application_date", "end_date_visibility_restriction"
     ),
-    "decision_monetary": TransformType.VALUE_COUNTS,
+    "decision_monetary": ValueCountsPlusTransform(
+        self_is_list=False, other_field="end_date_monetary_restriction"),
+    "decision_monetary_other": TransformType.TEXT_VALUE_COUNTS,
     "end_date_monetary_restriction": TransformType.SKIPPED_DATE,
     "monetary_restriction_duration": DurationTransform(
         "application_date", "end_date_monetary_restriction"
@@ -820,20 +825,20 @@ TRANSFORMS = {
     "category": TransformType.VALUE_COUNTS,
     "category_addition": TransformType.LIST_VALUE_COUNTS,
     "category_specification": TransformType.LIST_VALUE_COUNTS,
+    "category_specification_other": TransformType.TEXT_VALUE_COUNTS,
     "content_type": TransformType.LIST_VALUE_COUNTS,
+    "content_type_other": TransformType.TEXT_VALUE_COUNTS,
     "content_language": TransformType.VALUE_COUNTS,
     "moderation_delay": DurationTransform("content_date", "application_date"),
     "disclosure_delay": DurationTransform("application_date", "created_at"),
     "source_type": TransformType.VALUE_COUNTS,
     "automated_detection": TransformType.VALUE_COUNTS,
     "automated_decision": TransformType.VALUE_COUNTS,
-    "platform_name": ValueCountsPlusTransform(
-        self_is_list=False, other_field="category_specification", other_is_list=True
-    ),
+    "platform_name": TransformType.PLATFORM_NAME,
 }
 
 TRANSFORM_COUNT = sum(
-    (0 if v is TransformType.SKIPPED_DATE else 1)
+    (0 if v in (TransformType.SKIPPED_DATE, TransformType.PLATFORM_NAME) else 1)
     for v in TRANSFORMS.values()
 )
 
@@ -845,6 +850,9 @@ TRANSFORM_COUNT = sum(
 # For now, the universe of tags are all statement categories and keywords, with
 # each keyword implying the larger category as well.
 TagValueType = pl.Enum(tuple([*StatementCategory, *Keyword]))
+
+
+PlatformValueType = pl.Enum(PlatformNames)
 
 
 ColumnValueType = pl.Enum((
@@ -950,10 +958,12 @@ StatisticsSchema = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
     "tag": TagValueType,
+    "platform": PlatformValueType,
     "column": ColumnValueType,
     "entity": EntityValueType,
     "variant": VariantValueType,
     "variant_too": VariantTooValueType,
+    "text": pl.String,
     "count": pl.Int64,
     "min": pl.Int64,
     "mean": pl.Int64,
@@ -967,41 +977,6 @@ aggregation of means. Since durations are computed from the difference of two
 date/times, shantay may have to correct for negative durations. It tracks the
 number of these corrections as well.
 """
-
-
-# ======================================================================================
-
-
-StringColumn = (
-    "decision_visibility_other",
-    "decision_monetary_other",
-    "decision_ground_reference_url",
-    "illegal_content_legal_ground",
-    "illegal_content_explanation",
-    "incompatible_content_ground",
-    "incompatible_content_explanation",
-    "category_specification_other",
-    "content_type_other",
-    "decision_facts",
-    "source_identity",
-)
-
-
-StringColumnType = pl.Enum(StringColumn)
-
-
-PlatformType = pl.Enum(PlatformNames)
-
-
-StringStatsSchema = pl.Schema({
-    "start_date": pl.Date,
-    "end_date": pl.Date,
-    "tag": TagValueType,
-    "column": StringColumnType,
-    "text": str,
-    "count": pl.Int64,
-    "platform": PlatformType,
-})
 
 
 # ======================================================================================

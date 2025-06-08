@@ -16,17 +16,17 @@ from importlib.resources import files, as_file
 import math
 from pathlib import Path
 import shutil
-from typing import Any, ClassVar, Literal, Self
+from typing import Any, ClassVar, Self
 
 import polars as pl
 
 from .framing import (
-    aggregates, daily_groupies, get_quantity, predicate, Quantity
+    aggregates, daily_groupies, get_quantity, NOT_NULL, predicate, Quantity
 )
 from .model import Daily, DateRange, Release
 from .schema import (
     CanonicalPlatformNames, DurationTransform, humane, KeywordChildSexualAbuseMaterial,
-    StatisticsSchema, StringColumn, TRANSFORM_COUNT, TRANSFORMS, TransformType,
+    StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS, TransformType,
     ValueCountsPlusTransform, VariantValueType, VariantTooValueType
 )
 from .util import scale_time
@@ -126,6 +126,7 @@ class Collector:
         self._source = pl.DataFrame()
         self._tag = None
         self._release = None
+        self._platform = None
         self._frames = []
 
     @contextmanager
@@ -147,6 +148,24 @@ class Collector:
             self._tag = old_tag
             self._release = old_release
 
+    @contextmanager
+    def platform_data(
+        self,
+        platform: None | str,
+    ) -> Iterator[Self]:
+        """Create a context for the platform."""
+        new_source = self._source.filter(
+            pl.col("platform_name").eq(platform)
+        )
+
+        old_source, self._source = self._source, new_source
+        old_platform, self._platform = self._platform, platform
+        try:
+            yield self
+        finally:
+            self._source = old_source
+            self._platform = old_platform
+
     def add_rows(
         self,
         column: str,
@@ -154,6 +173,7 @@ class Collector:
         variant: None | pl.Expr = None,
         variant_too: None | pl.Expr = None,
         value_counts: None | pl.Expr = None,
+        text_value_counts: None | pl.Expr = None,
         frame: None | pl.DataFrame | pl.LazyFrame = None,
         **kwargs: None | int | pl.Expr,
     ) -> None:
@@ -200,8 +220,23 @@ class Collector:
                     .alias("variant_too")
             )
 
+        if text_value_counts is None:
+            effective_values.append(
+                pl.lit(None, dtype=pl.String).alias("text")
+            )
+        else:
+            effective_values.append(
+                text_value_counts
+                    .value_counts(sort=True)
+                    .list.explode()
+                    .struct.unnest()
+            )
+
         for key in ("count", "min", "mean", "max"):
-            if value_counts is not None and key == "count":
+            if (
+                (value_counts is not None or text_value_counts is not None)
+                and key == "count"
+            ):
                 continue
 
             value = kwargs.get(key, None)
@@ -215,6 +250,7 @@ class Collector:
             pl.lit(self._release.start_date).alias("start_date"),
             pl.lit(self._release.end_date).alias("end_date"),
             pl.lit(tag).alias("tag"),
+            pl.lit(self._platform).alias("platform"),
             pl.lit(column).alias("column"),
             pl.lit(entity).alias("entity"),
             *effective_values,
@@ -224,14 +260,18 @@ class Collector:
             frame = frame.rename({
                 column: "variant",
             })
+        elif text_value_counts is not None:
+            frame = frame.rename({
+                column: "text",
+            })
 
         frame = frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
 
         # Enforce canonical column order, so that frames can be concatenated!
         self._frames.append(frame.select(
             pl.col(
-                "start_date", "end_date", "tag", "column", "entity",
-                "variant", "variant_too", "count", "min", "mean", "max"
+                "start_date", "end_date", "tag", "platform", "column", "entity",
+                "variant", "variant_too", "text", "count", "min", "mean", "max"
             )
         ))
 
@@ -314,16 +354,22 @@ class Collector:
             entity = "is_null" if count == 0 else "_".join(suffix)
             self.add_rows("decision_type", entity=entity, count=expr.sum())
 
-    def collect_body(self) -> None:
+    def collect_platform_data(self) -> None:
         """Collect the standard statistics for the current data frame."""
         for key, value in TRANSFORMS.items():
             match value:
+                case TransformType.PLATFORM_NAME:
+                    assert key == "platform_name"
+                    # Summary statistics include column for platform name, which
+                    # is already filled in while handling other fields.
                 case TransformType.SKIPPED_DATE:
                     pass
                 case TransformType.ROWS:
                     self.add_rows(key, count=pl.len())
                 case TransformType.VALUE_COUNTS:
                     self.add_rows(key, value_counts=pl.col(key))
+                case TransformType.TEXT_VALUE_COUNTS:
+                    self.add_rows(key, text_value_counts=pl.col(key))
                 case TransformType.LIST_VALUE_COUNTS:
                     self.add_rows(
                         key, entity="elements",
@@ -367,6 +413,17 @@ class Collector:
                     self.collect_value_counts_plus(
                         key, self_is_list, other_field, other_is_list
                     )
+
+    def collect_body(self) -> None:
+        platform_names = self._source.select(
+            pl.col("platform_name").unique()
+        )
+        if isinstance(platform_names, pl.LazyFrame):
+            platform_names = platform_names.collect()
+
+        for name, in platform_names.iter_rows():
+            with self.platform_data(name) as this:
+                this.collect_platform_data()
 
     def collect_header(
         self, metadata: None | pl.DataFrame = None, tag: None | str = None
@@ -412,10 +469,12 @@ class Collector:
                 (None if k in ("total_rows", "total_rows_with_keywords") else tag)
                 for k in pairs.keys()
             ],
+            "platform": height * [None],
             "column": [k for k in pairs.keys()],
             "entity": height * [None],
             "variant": height * [None],
             "variant_too": height * [None],
+            "text": height * [None],
             "count": [v for v in pairs.values()],
             "min": height * [None],
             "mean": height * [None],
@@ -486,6 +545,7 @@ class _Summarizer:
 
     def __init__(self) -> None:
         self._source = pl.DataFrame()
+        self._source_by_platform = pl.DataFrame()
         self._tag = None
         self._summary = []
 
@@ -494,6 +554,7 @@ class _Summarizer:
         self,
         tag: None | str,
         frame: pl.DataFrame,
+        platform: None | str = None,
     ) -> Iterator[Self]:
         """Create a tagged context."""
         old_tag, self._tag = self._tag, (tag if tag != "" else None)
@@ -501,10 +562,19 @@ class _Summarizer:
             frame = frame.filter(pl.col("tag").is_null())
         else:
             frame = frame.filter(pl.col("tag").eq(tag))
+        if platform is not None:
+            frame = frame.filter(pl.col("platform").eq(platform))
 
         old_source = self._source
-        self._source = frame.group_by(
-            pl.col("column", "entity", "variant", "variant_too")
+        old_source_by_platform = self._source_by_platform
+        self._source_by_platform = frame.group_by(
+            pl.col("platform", "column", "entity", "variant", "variant_too", "text")
+        ).agg(
+            pl.col("start_date").min(),
+            *aggregates()
+        )
+        self._source = self._source_by_platform.group_by(
+            pl.col("column", "entity", "variant", "variant_too", "text")
         ).agg(
             *aggregates()
         )
@@ -513,6 +583,7 @@ class _Summarizer:
             yield self
         finally:
             self._source = old_source
+            self._source_by_platform = old_source_by_platform
             self._tag = old_tag
 
     @contextmanager
@@ -560,25 +631,33 @@ class _Summarizer:
 
         self._summary.append((variable, value))
 
-    def collect_value_counts(self, column: str, entity: None | str = None) -> None:
+    def collect_value_counts(
+        self, column: str, entity: None | str = None, is_text: bool = False
+    ) -> None:
         """Collect the given column's value counts."""
         for row in self._source.filter(
             predicate(column, entity=entity)
         ).select(
-            pl.col("column", "entity", "variant", "variant_too", "count")
+            pl.col("column", "entity", "variant", "variant_too", "text", "count")
         ).sort(
-            ["count", "variant", "variant_too"], descending=True
+            ["count", "variant", "variant_too", "text"], descending=True
         ).rows():
-            column, entity, variant, variant_too, count = row
+            column, entity, variant, variant_too, text, count = row
             var = column
 
             if entity == "with_end_date":
                 var = f"{var}.{entity}"
 
-            if variant is None:
-                var = f"{var}.is_null"
+            if is_text:
+                if text is None:
+                    var = f"{var}.is_null"
+                else:
+                    var = f"{var}.{text}"
             else:
-                var = f"{var}.{variant}"
+                if variant is None:
+                    var = f"{var}.is_null"
+                else:
+                    var = f"{var}.{variant}"
 
             if (
                 entity is not None
@@ -592,10 +671,38 @@ class _Summarizer:
 
             self._summary.append((var, count))
 
+    def collect_platform_names(self) -> None:
+        base = self._source_by_platform.filter(
+            predicate("rows", entity=None)
+        ).group_by(
+            "platform"
+        )
+
+        self.spacer()
+        for platform, count in base.agg(
+            pl.col("count").sum()
+        ).sort(
+            "count",
+            descending=True
+        ).rows():
+            self._summary.append((f"platform.{platform}.rows", count))
+
+        self.spacer()
+        for platform, start_date in base.agg(
+            pl.col("start_date").min()
+        ).sort(
+            "start_date",
+            descending=False
+        ).rows():
+            self._summary.append((f"platform.{platform}.start_date", start_date))
+
     def summarize_fields(self) -> None:
         """Summarize all fields of summary statistics."""
         for field_name, field_type in TRANSFORMS.items():
             match field_type:
+                case TransformType.PLATFORM_NAME:
+                    assert field_name == "platform_name"
+                    self.collect_platform_names()
                 case TransformType.SKIPPED_DATE:
                     pass
                 case TransformType.ROWS:
@@ -604,6 +711,9 @@ class _Summarizer:
                 case TransformType.VALUE_COUNTS:
                     self.spacer()
                     self.collect_value_counts(field_name)
+                case TransformType.TEXT_VALUE_COUNTS:
+                    self.spacer()
+                    self.collect_value_counts(field_name, is_text=True)
                 case TransformType.LIST_VALUE_COUNTS:
                     self.spacer()
                     self.collect1(field_name, "elements")
@@ -643,26 +753,24 @@ class _Summarizer:
                         )
 
     def _summary_intro(self, frame: pl.DataFrame, tag: None | str) -> None:
-        platforms = frame.filter(
-            predicate("platform_name", entity=None, tag=tag)
-        ).select(
-            pl.col("variant").n_unique()
+        platforms = frame.select(
+            pl.col("platform").filter(pl.col("platform").is_not_null()).n_unique()
         ).item()
 
         platforms_with_keywords = frame.filter(
-            predicate("platform_name", entity="with_category_specification", tag=tag)
-        ).filter(
-            pl.col("variant_too").is_null().not_()
+            predicate("category_specification", variant=NOT_NULL, tag=tag)
         ).select(
-            pl.col("variant").n_unique()
+            pl.col("platform").n_unique()
         ).item()
 
         platforms_with_csam = frame.filter(
-            predicate("platform_name", entity="with_category_specification", tag=tag)
-        ).filter(
-            pl.col("variant_too").eq(KeywordChildSexualAbuseMaterial)
+            predicate(
+                "category_specification",
+                variant=KeywordChildSexualAbuseMaterial,
+                tag=tag
+            )
         ).select(
-            pl.col("variant").n_unique()
+            pl.col("platform").n_unique()
         ).item()
 
         batch_rows = get_quantity(frame, "batch_rows", entity=None, tag=tag)

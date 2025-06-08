@@ -120,62 +120,38 @@ def predicate(
     variant: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     variant_too: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    platform: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
-    Create the predicate over the "tag", "column", "entity", "variant", and
-    "variant_too" columns. If the argument is a string or list of strings, the
-    predicate tests that column for the literal string value(s). If it is None,
-    the predicate tests for the column being null. If it is `NOT_NULL`, the
-    predicate tests for it being not null. Finally, if it is
+    Create the predicate over the "tag", "platform", "column", "entity",
+    "variant", and "variant_too" columns. If the argument is a string or list of
+    strings, the predicate tests that column for the literal string value(s). If
+    it is None, the predicate tests for the column being null. If it is
+    `NOT_NULL`, the predicate tests for it being not null. Finally, if it is
     `NO_ARGUMENT_PROVIDED`, the predicate does not test that column.
     """
-    # We always query the tag and column
-    if tag is None:
-        predicate = pl.col("tag").is_null()
-    elif isinstance(tag, NotNull):
-        predicate = pl.col("tag").is_null().not_()
-    elif tag is not NO_ARGUMENT_PROVIDED:
-        predicate = pl.col("tag").eq(tag)
+    # The column named "column" is required
+    if isinstance(column, str):
+        predicate = pl.col("column").eq(column)
+    elif isinstance(column, NotNull):
+        predicate = pl.col("column").is_null().not_()
     else:
-        predicate = None
+        predicate = pl.col("column").is_in(column)
 
-    # The column is always required
-    if predicate is None:
-        if isinstance(column, str):
-            predicate = pl.col("column").eq(column)
-        elif isinstance(column, NotNull):
-            predicate = pl.col("column").is_null().not_()
-        else:
-            predicate = pl.col("column").is_in(column)
-    else:
-        if isinstance(column, str):
-            predicate = predicate.and_(pl.col("column").eq(column))
-        elif isinstance(column, NotNull):
-            predicate = predicate.and_(pl.col("column").is_null().not_())
-        else:
-            predicate = predicate.and_(pl.col("column").is_in(column))
-
-    # However, entity and variant are optional
-    if entity is None:
-        predicate = predicate.and_(pl.col("entity").is_null())
-    elif isinstance(entity, NotNull):
-        predicate = predicate.and_(pl.col("entity").is_null().not_())
-    elif entity is not NO_ARGUMENT_PROVIDED:
-        predicate = predicate.and_(pl.col("entity").eq(entity))
-
-    if variant is None:
-        predicate = predicate.and_(pl.col("variant").is_null())
-    elif isinstance(variant, NotNull):
-        predicate = predicate.and_(pl.col("variant").is_null().not_())
-    elif variant is not NO_ARGUMENT_PROVIDED:
-        predicate = predicate.and_(pl.col("variant").eq(variant))
-
-    if variant_too is None:
-        predicate = predicate.and_(pl.col("variant_too").is_null())
-    elif isinstance(variant_too, NotNull):
-        predicate = predicate.and_(pl.col("variant_too").is_null().not_())
-    elif variant_too is not NO_ARGUMENT_PROVIDED:
-        predicate = predicate.and_(pl.col("variant_too").eq(variant_too))
+    # All other columns are optional
+    for key, value in (
+        ("tag", tag),
+        ("platform", platform),
+        ("entity", entity),
+        ("variant", variant),
+        ("variant_too", variant_too),
+    ):
+        if value is None:
+            predicate = predicate.and_(pl.col(key).is_null())
+        elif isinstance(value, NotNull):
+            predicate = predicate.and_(pl.col(key).is_null().not_())
+        elif value is not NO_ARGUMENT_PROVIDED:
+            predicate = predicate.and_(pl.col(key).eq(value))
 
     return predicate
 
@@ -190,7 +166,8 @@ def get_quantity(
     variant: NoArgumentProvided | None | str = NO_ARGUMENT_PROVIDED,
     variant_too: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
-    statistic: Quantity = "count"
+    platform: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    statistic: Quantity = "count",
 ) -> None | int:
     """Retrieve a quantity from the data frame."""
     frame = frame.filter(
@@ -199,7 +176,8 @@ def get_quantity(
             entity=entity,
             variant=variant,
             variant_too=variant_too,
-            tag=tag
+            tag=tag,
+            platform=platform,
         )
     ).select(
         aggregates()
@@ -227,10 +205,12 @@ def daily_groupies() -> list[pl.Expr]:
         pl.col("start_date"),
         pl.col("end_date"),
         pl.col("tag"),
+        pl.col("platform"),
         pl.col("column"),
         pl.col("entity"),
         pl.col("variant"),
         pl.col("variant_too"),
+        pl.col("text"),
     ]
 
 
@@ -240,10 +220,12 @@ def monthly_groupies() -> list[pl.Expr]:
         pl.col("start_date").dt.year().alias("year"),
         pl.col("start_date").dt.month().alias("month"),
         pl.col("tag"),
+        pl.col("platform"),
         pl.col("column"),
         pl.col("entity"),
         pl.col("variant"),
         pl.col("variant_too"),
+        pl.col("text"),
     ]
 
 
