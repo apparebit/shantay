@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Literal, Self
 import polars as pl
 
 from .framing import (
-    aggregates, daily_groupies, get_quantity, monthly_groupies, predicate, Quantity
+    aggregates, daily_groupies, get_quantity, predicate, Quantity
 )
 from .model import Daily, DateRange, Release
 from .schema import (
@@ -440,9 +440,7 @@ class Collector:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
                 this.collect_body()
 
-    def frame(
-        self, validate: bool = False, group_by: None | Literal["day", "month"] = None
-    ) -> pl.DataFrame:
+    def frame(self, validate: bool = False) -> pl.DataFrame:
         """Combine the collected partial frames into one."""
         frame = pl.concat(self._frames, how="vertical")
         if isinstance(frame, pl.LazyFrame):
@@ -450,9 +448,6 @@ class Collector:
         frame = frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         if validate:
             _validate_row_counts(frame)
-        if group_by is not None:
-            groupies = daily_groupies if group_by == "day" else monthly_groupies
-            frame = frame.group_by(*groupies(), maintain_order=True).agg(*aggregates())
         return frame
 
 
@@ -927,11 +922,7 @@ class Statistics:
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
 
-    def frame(
-        self,
-        validate: bool = False,
-        group_by: None | Literal["day", "month"] = None,
-    ) -> pl.DataFrame:
+    def frame(self, validate: bool = False) -> pl.DataFrame:
         """
         Materialize a single data frame with the summary statistics. If this
         method computes a new single data frame, it also updates the internal
@@ -945,7 +936,6 @@ class Statistics:
             len(self._frames) == 1
             and self._collector is None
             and not validate
-            and group_by is None
         ):
             return self._frames[0]
 
@@ -966,13 +956,6 @@ class Statistics:
         # Take care of validation and grouping
         if validate:
             _validate_row_counts(frame)
-        if group_by is not None:
-            groupies = daily_groupies if group_by == "day" else monthly_groupies
-            frame = frame.group_by(
-                *groupies(), maintain_order=True
-            ).agg(
-                *aggregates()
-            )
 
         # Update internal state
         self._frames = [frame]
@@ -988,8 +971,7 @@ class Statistics:
         """
         Determine whether the summary statistics contain data for the given
         date. This method recognizes summary statistics with either daily or
-        monthly granularity, as collected by the summarize and analyze tasks,
-        respectively.
+        monthly granularity.
         """
         if date is None:
             return False
@@ -1094,3 +1076,4 @@ class Statistics:
             raise ValueError(f'invalid category "{category}"')
 
         return f'{category.lower().replace("_", "-")}.parquet'
+

@@ -541,9 +541,7 @@ class CollectorProtocol(Protocol):
         provided, the frame contains working data only.
         """
 
-    def frame(
-        self, validate: bool = False, group_by: None | Literal["day", "month"] = None
-    ) -> DataFrameType:
+    def frame(self, validate: bool = False) -> DataFrameType:
         """
         Combine all summary statistics collected so far into one data frame.
         Optionally validate the summary statistics. Also, optionally group by
