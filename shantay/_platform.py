@@ -380,7 +380,7 @@ def _write_platforms(names: list[str] | tuple[str, ...]) -> None:
 
     tmp = _PLATFORM_FILE.with_suffix(f".tmp.{os.getpid()}.json")
     with open(tmp, mode="w", encoding="utf8") as file:
-        json.dump(names, file)
+        json.dump(names, file, indent=0, ensure_ascii=False)
     tmp.replace(_PLATFORM_FILE)
 
 
