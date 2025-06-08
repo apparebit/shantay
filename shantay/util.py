@@ -42,6 +42,22 @@ def annotate_error[**P, R](
     return wrapper
 
 
+def minify(value: int) -> str:
+    """Format the value with three digits and optionally one letter."""
+    limit = 1_000
+    round = 2
+
+    while limit <= value and limit <= 1_000_000_000_000:
+        limit *= 10
+        round += 1
+
+    factor = 1_000 ** (round // 3)
+    prec = 2 - (round % 3)
+    letter = " KMGT"[round // 3].strip()
+
+    return f"{value / factor:,.{prec}f}{letter}"
+
+
 def scale(value: float) -> tuple[float, str]:
     """Scale the value to three digits before the decimal and a unit prefix."""
     if value < 0:
