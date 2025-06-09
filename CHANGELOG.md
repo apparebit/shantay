@@ -2,61 +2,77 @@
 
 ## v0.3.0 (TBD)
 
-This release substantially improves support for collecting and visualizing
-summary statistics about the entire DSA transparency database as well as
-specific statement categories. It also features a new, more compact schema for
-summary statistics. The schema uses several explicit enumerations, as they are
-easier to use and also more compact than Pola.rs' category types or strings.
-However, one of those enumerations includes the platform names, which do churn
-quite a bit. Currently, Shantay updates its local installation with newly
-encountered names and asks the user to rerun Shantay with the same command line
-options. Updates are atomic and additive only, so ordering and batching make no
-difference, still yielding the same list.
+Shantay now collects richer statistics and produces more compelling
+visualizations with a simpler interface. It can either process the full
+transparency database or a category-specific subset for all the categories
+supported by the database.
 
-Shantay's Python package ships with a copy of the summary statistics for the
-entire DSA transparency database.
 
-Improved handling of summary statistics:
-  - Collect statistics with daily resolution for full dataset and subsets alike
-  - User can select `--daily` instead of the default `--monthly` resolution when
-    running `visualize`
-  - The parquet files with the summary statistics for subsets now have distinct
-    names that depend on the statement catgory used for deriving the subset,
-    e.g., `protection-of-minors.parquet` for
-    `STATEMENT_CATEGORY_PROTECTION_OF_MINORS`.
+### Simpler Command Line Interface
 
-Simplified command line options:
-  - The `--root` option has been removed. The `--archive` and `--working`
-    options now are the only way of specifying root directories; they also
-    are optional now, though most tasks require at least one of them.
-  - The `--filter` option has been removed; the `--category` option is now the
-    only option for selecting a subset of database entries.
-  - The `--first` and `--last` options now work for all tasks; they also are
-    validated to be within a realistic range
-  - While users can still select `--with-archive` or `--with-working` for
-    visualization, just providing the `--archive` or `--working` path suffices.
+Shantay now supports three primary tasks:
 
-Improved handling of platform names:
-  - Map some of the more unwieldy platform names to shorter versions. For
-    instance, "Apple Books (ebooks)" becomes "Apple Books", "Quora Ireland
-    Limited" becomes "Quora", and "eDarling, EliteSingles, SilverSingles, Zoosk"
-    becomes "Spark Networks".
-  - Reapply latest canonical mapping for platform names when reading statistics
-  - Enforce that new platform names are well-formed
-  - Do not rely on `eval()` when updating `_platform` module
-  - Platform names are current as of 2025-05-31, including several that are mapped
-    to simpler versions
+  - `extract` to prepare category-specific subsets of the transparency database.
+  - `summarize` to collect statistics about the full database or
+    category-specific subset.
+  - `visualize` to prepare helpful charts illustrating previously collected
+    statistics.
 
-Improved visualizations:
-  - Increase threshold for frequently used keywords to 1%
-  - Display all keywords when charting platforms' keyword use in percent for
-    working data
-  - Actually chart total statement counts and their rolling mean for full archive
-  - Cut off outliers to ensure that the rest remains readable
+When processing the entire database, you provide the `--archive` directory for
+storing original daily releases and global statistics. When processing a
+category-specific subset, you provide the `--archive` as well as `--working`
+directories, with the latter storing data and statistics for the subset. The
+first invocation of `extract` requires the `--category`, too.
 
-Other, miscellaneous changes:
-  - Merge metadata from all three root directories (if they exist)
-  - Filter out negative durations and track their number
+Shantay covers all available data by default. You can also restrict the date
+range with `--first` and `--last`.
+
+The `--filter`, `--root`, `--with-archive`, and `--with-working` options have
+been removed. The `prepare` task is now called `extract` and the `analyze` task
+has been subsumed by the `summarize` task.
+
+
+### More compelling visualization
+
+Amongst other changes, the HTML document produced by `visualize` is now named
+after the category, e.g., `protection-of-minors.html`, when covering a subset
+and `all-data.html` when covering the full database. It now starts with an
+outline, includes graphs tracking the volume of daily statements of reasons
+(SoRs) and breaking down the various attributes for (by default) monthly SoRs.
+Where needed, bars are annotated with their numeric quantities and means; others
+cut off outliers (clearly marked with ⚠️) to ensure good readability of the
+majority of (stacked) bar graphs. Each summary repeats the same set of timelines
+for overall SoRs, the top-three non-Meta platforms by SoRs, and Meta's platforms
+(both in aggregate and individually). The visual appearance of the document has
+also been improved.
+
+
+### Richer statistics
+
+The summary statistics driving the visualization are collected with a daily
+resolution and cover all transparency database properties with fixed, categorial
+values as well as several properties with in theory arbitrary but in practice
+ad-hoc categorical text. To minimize the storage required for summary
+statistics, Shantay makes extensive use of [Pola.rs'
+enumerations](https://docs.pola.rs/user-guide/expressions/categorical-data-and-enums/).
+
+While generally straight-forward, including platform names in enumerations is a
+bit tricky, since their number has been growing by almost 10 platforms per
+month. To avoid putting releases on the critical path of users, Shantay
+dynamically detects new platform names and updates its list of valid platform
+names accordingly. The corresponding functionality is implemented by the
+[`shantay._platform`](https://github.com/apparebit/shantay/blob/boss/shantay/_platform.py)
+module, but should be accessed through the
+[`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
+module. The file with the up-to-date platform names is
+`~/.shantay/platforms.json` on Linux/macOS and uses an equivalent path on
+Windows.
+
+
+Shantay's Python package ships with a copy of the **summary statistics for the
+entire DSA transparency database**. This version covers the database from its
+first day, 2023-09-25, through 2025-06-04, inclusive. Likewise, platform names
+are current as of that last date, 2025-06-04.
 
 
 ## v0.2.0 (May 1, 2025)

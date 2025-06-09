@@ -5,10 +5,10 @@ licensed](https://github.com/apparebit/shantay/blob/boss/LICENSE), open-source,
 Python-based command line tool for analyzing the European Commission's [DSA
 transparency database](https://transparency.dsa.ec.europa.eu/). That database
 collects the anonymized statements of reasons for online platforms' content
-moderation decision. Even though the database is huge, 1.5 TB and growing,
+moderation decision. Even though the database is huge, almost 2 TB and growing,
 *shantay* runs on consumer hardware. All you need is a USB drive, such as the 2
 TB Samsung T7, that is large enough to store the full database and, for some
-tasks, patience, as they may take all day (or night).
+tasks, patience, as they may take a day, or two.
 
 I've written [a blog post about my initial
 impressions](https://apparebit.com/blog/2025/sashay-shantay) of the DSA
@@ -62,179 +62,162 @@ Don't forget to replace `<directory>` with the actual path.
 When running with parallel worker processes, *shantay*'s original process serves
 as coordinator. Notably, it updates the status display on the console and writes
 log entries to a file, by default `shantay.log` in the current working
-directory. Note that the queue-based forwarding mechanism preserves the ordering
-of messages originating from the same process but no more. In particular,
-messages from different processes may be arbitrarily interleaved.
+directory.
 
 Once *shantay* is done downloading and summarizing the daily releases for 2023,
-you'll find a `statistics.parquet` file in the archive's root directory. It
+you'll find a `all-data.parquet` file in the archive's root directory. It
 contains the summary statistics at day-granularity. To visualize that same data,
 execute:
 
 ```
-$ uvx shantay --archive <directory> --with-archive visualize
+$ uvx shantay --archive <directory> visualize
 ```
 
-The `--with-archive` option selects the output of the summarize task for
-visualization. You may use `--with-working` for the alternative dataset, even
-though it already is the default.
-
-Once finished, you'll find an `overview.html` document with all charts in the
+Once finished, you'll find an `all-data.html` document with all charts in the
 default staging directory `dsa-db-staging`.
 
 
-## 2. Organization of Storage
+## 2. Using Shantay
 
-The screenshot below shows an example directory hierarchy under the *working*
-root. It illustrates the directory levels discussed in 2.2 as well as the files
-with digests and summary statistics discussed in 2.3.
+As illustrated above, each invocation of *shantay* performs a single task. In
+addition to the *summarize* and *visualize* tasks already introduced above,
+*shantay* supports two more tasks:
+
+  - **extract** downloads daily distributions and extracts a category-specific
+    subset. It requires `--archive` and `--working` directories. For a newly
+    created subset, it also requires the `--category` to extract. That category
+    and other metadata are stored in `meta.json`.
+
+  - **recover** scans the `--working` directory to validate the files and
+    restore (some of the) metadata in `meta.json`.
+
+  - **summarize** collects summary statistics either for the full database or a
+    category-specific subset, depending on whether `--archive` only (for the
+    full database) or both `--archive` and `--working` (for a subset) are
+    specified. For the full database, it also downloads daily distributions.
+
+  - **visualize** generates an HTML document that visualizes summary statistics.
+    `--archive` and `--working` determine the scope of the visualization, just
+    as for `summarize`.
+
+Summary statistics are stored in `all-data.parquet` for the full database and in
+a file named after the category, such as `protection-of-minors.parquet`, for
+category-specific data. The HTML documents follow the same naming convention.
+
+Shantay covers all available data from 2023-09-25 to three days before today by
+default. You can also restrict the range with `--first` and `--last`.
+
+
+## 3. Organization of Storage
+
+The screenshot below shows an example directory hierarchy under the `--working`
+root. It illustrates the directory levels discussed in 3.2 as well as the files
+with digests and summary statistics discussed in 3.3.
 
 ![The working root hierarchy](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/screenshot/hierarchy.png)
 
 
-### 2.1 Three Root Directories: Staging, Archive, Working
+### 3.1 Three Root Directories: Staging, Archive, Working
 
-*Shantay* distinguishes between three primary directories, *staging* as
-temporary storage, *archive* for the original distributions, and *working* for a
-practical subset:
+*Shantay* distinguishes between three primary directories, `--staging` as
+temporary storage, `--archive` for the original distributions, and `--working`
+for a category-specific subset:
 
- 1. *Staging* stores data currently being processed, e.g., by uncompressing,
+  - **Staging** stores data currently being processed, e.g., by uncompressing,
     converting, and filtering it. You wouldn't be wrong if you called this
     directory *temp* or *tmp* instead. This directory must be on a fast, local
     file system; it should not be on an external disk, particularly not if the
     disk is connected with USB.
- 2. *Archive* stores the original, daily ZIP files and their SHA1 digests. It is
-    append-only storage and holds the ground truth. This directory must be on a
-    large file system, e.g., 2 TB as minimum. It may be on an external drive
-    (such as the T7 mentioned before).
- 3. *Working* stores parquet files with a (much) smaller subset of the database.
-    Like *archive*, *working* is treated as append-only storage. Unlike
-    *archive*, which is unique, different runs of *shantay* may use different
-    *working* directories representing different subsets of the database.
+  - **Archive** stores the original, daily ZIP files and their SHA1 digests. It
+    is treated as append-only storage and holds the ground truth. This directory
+    must be on a large file system, e.g., 2 TB just about holds all data from
+    2023-09-25 into May 2025. It may be on an external drive (such as the T7
+    mentioned before).
+  - **Working** stores parquet files with a (much) smaller subset of the
+    database. Like *archive*, *working* is treated as append-only storage.
+    Unlike *archive*, which is unique, different runs of *shantay* may use
+    different *working* directories representing different subsets of the
+    database.
 
 
-### 2.2 Three Levels of Nested Directories: Year, Month, Day
+### 3.2 Three Levels of Nested Directories: Year, Month, Day
 
 Under the three root directories, *shantay* arranges files into a hierarchy of
 directories, e.g., resulting in paths like
 `2025/03/14/2025-03-14-00000.parquet`. The top level is named for years,
 followed by two-digit months one level down, followed by two-digit days another
-level down. Finally, batch files have a zero-based five-digit index.
+level down. Finally, daily archive files have their original names, whereas
+files with category-specific data are named after the date and a zero-based
+five-digit index (as illustrated earlier in this paragraph).
 
-In addition to the data files, *shantay* maintains a per-day digest file named
-`sha256.txt`, which contains the SHA-256 digests for every batch file in the
+For the working root, *shantay* maintains a per-day digest file named
+`sha256.txt`. It contains the SHA-256 digests for every parquet file in the
 directory: Each line contains one hexadecimal ASCII digest, a space,and the
-batch file's name.
+file's name.
 
 
-### 2.3 Summary Statistics: `meta.json` and `statistics.parquet`
+### 3.3 Summary Statistics: `meta.json`, `all-data.parquet`, etc
 
-In addition to yearly directories, *shantay* also stores th following two files
+In addition to yearly directories, *shantay* also stores the following two files
 inside root directories.
 
-  - `meta.json` contains an object with the `filter` used for selecting the
+  - `meta.json` contains an object with the `category` used for selecting the
     working data and some statistics about `releases`. `batch_count` must be the
-    number of batch files and `sha256` must be the (recursive) digest of the
-    digests in the `sha256.txt` file.
+    number of daily data files and `sha256` must be the (recursive) digest of
+    the digests in the `sha256.txt` file.
 
-  - `statistics.parquet` contains daily or monthly summary statistics about
-    (part of) the dataset. It basically is a non-tidy, long data frame that uses
-    up to four columns for identifying variables and as many columns for
-    identifying values. While an encoding with fewer columns is eminently
-    feasible, the current scheme is optimized for selecting and aggregating
-    quantities.
+  - `all-data.parquet` contains the summary statistics about the full database.
+    Statistics for category-specific subsets are named after their categories.
+    Each file basically is a non-tidy, long data frame that uses up to seven
+    columns for identifying variables and up to four columns for identifying
+    values. While an encoding with fewer columns is eminently feasible, the
+    schema is optimized for being easy to work with (e.g., aggregations are
+    trivial) and compact to store (e.g., a column of nulls requires almost no
+    space).
 
     The individual columns are:
 
       - `start_date` and `end_date` denote the date coverage of a row.
-      - `tag` is a symbolic tag for filtered source data.
+      - `tag` is the category for filtered source data.
+      - `platform` is the online platform making the disclosures.
       - `column` is the original transparency database column, with a few
         virtual column names added.
       - `entity` describes the metric contained in that row.
-      - `variant` and `variant_too` capture database column values, which usually
-        are enumeration constants.
+      - `variant` captures values from the original database, encoded as a very
+        large enumeration.
+      - `text` does the same for transparency database columns with arbitrary
+        text.
       - `count`, `min`, `mean`, and `max` contain the eponymous descriptive
-        statistics, which all aggregate differently.
+        statistics.
+
+    If `mean` contains a value, then `count` also contains a value, thus
+    enabling correct aggregation with a weighted average.
 
 
-## 3. Running Tasks
+## 4. Big Data in the Small
 
-As illustrated above, each invocation of *shantay* performs a single task.
-Including the *summarize* and *visualize* tasks used in the above examples,
-*shantay* supports the following tasks:
+Unlike most big data tools, Shantay is designed to run on consumer-level
+hardware, e.g., a reasonably fast laptop or desktop with an external flash
+drive, such as the Samsung T7, will do. In fact, that's my own setup: My primary
+development machine is a four-year-old x86 iMac and all data is stored on a 2 TB
+Samsung drive—though I'll have to upgrade to the next larger size soon enough.
 
-  * __recover__ to check whether the files in a directory hierarchy conform to
-    *shantay*'s naming conventions and cover a continuous time period. Also
-    rebuilds some of the metadata in `meta.json`.
-  * __prepare__ to download daily database releases that haven't been downloaded
-    und to extract a subset of the statements of reasons readily amenable to
-    iterative analysis and visualization.
-  * __analyze__ to compute statistics about the downloaded and extracted working
-    data.
-  * __summarize__ to download daily database releases that haven't been
-    downloaded and to collect summary statistics for the entire database.
-  * __visualize__ to generate production-quality timeline charts based on the
-    statistical data collected for the analyze and summarize tasks.
+Shantay targets consumer-level hardware because transparency as an
+accountability mechanism mustn't be limited to people who have access to compute
+clusters, whether locally or in the cloud. No, for a transparency database to be
+effective, anyone with a reasonable computer should be able to do their own
+analysis.
 
-The [overview](https://apparebit.github.io/shantay/overview.html) for the full
-transparency database presents time series with day resolution, whereas the
-[filtered view](https://apparebit.github.io/shantay/child-protection-view.html)
-currently uses month resolution. Even though that is not currently configurable
-from the command line, most of the visualization code transparently adapts to
-the desired resolution.
-
-By definition, summarize produces more comprehensive statistics than prepare &
-analyze. But summarize is also much slower and requires more memory. In fact, it
-is so slow that iterating over questions and metrics is impractical. For just
-that reason, I implemented prepare & analyze well before summarize, after I had
-introduced a standard set of metrics. In other words, it took the experience of
-implementing prepare & analyze to convince me that summarize was a realistic
-possibility.
-
-Unlike most commercial solutions for Big Data, *shantay* purposefully limits
-itself to running on consumer hardware. But that doesn't mean that it should be
-gratuitously slow. On the contrary, *shantay* relies on the fast
-[Pola.rs](https://pola.rs) data frame and also supports parallel execution for
-prepare, analyze, and summarize. In basic testing, that yielded a speedup of
-1.7x for two worker processes, i.e., not perfect but still noticeable.
-
-
-### 3.1 Generic vs Bespoke Analysis and Visualization
-
-In the current implementation, the summarize task yields information about the
-entire transparency database, but `prepare` and `analyze` produce information
-specific to the protection of minors, the focus of my own research, or any other
-statement category. Still, most of the code doing the preparing and analyzing is
-entirely generic and not tied to a specific category of statements of reasons.
-Furthermore, even visualization is driven by declarative schemas defined in the
-[`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
-module, which ensures that they are easily reconfigurable and reusable.
-
-Since *shantay* does not yet expose configuration options for directing its
-analysis/summarization, you may need to update some code for your own research
-purposes. In addition to `shantay.schema`, you'll find the following two modules
-useful:
-
-  - [`shantay.framing`](https://github.com/apparebit/shantay/blob/boss/shantay/framing.py)
-    contains the code for collecting summary statistics from the working data.
-    Much of it is generic, driven by a single schema. In particular, `Collector`
-    extracts the summary statistics, incrementally building a (non-tidy) long
-    data frame; the `predicate`, `get_count`, `aggregates`, `is_categorical`,
-    and `is_duration` functions help access the summary statistics; and
-    `formatted_summary` produces a table with a summary of the summary
-    statistics.
-  - [`shantay.viz`](https://github.com/apparebit/shantay/blob/boss/shantay/viz.py)
-    contains the code for visualizing the summary statistics through its
-    `Visualizer`. It renders text to the console or text and graphs to Jupyter
-    notebooks, while also generating a HTML document. As far as graphs are
-    concerned, the `monthly_statistic` method generates the vast majority of
-    timelines based on `MetricDeclaration` instances in `shantay.schema`. Each
-    instance comprises the information necessary for turning the transparency
-    database's internal values ("`KEYWORD_ONLINE_BULLYING_INTIMIDATION`") into
-    human-readable labels ("Bullying") and to assign colors from [Observable's
-    bright and friendly color
-    palette](https://observablehq.com/blog/crafting-data-colors)
-
+That seeming limitation also is a blessing in disguise. Notably, the [EU's
+official tool](https://code.europa.eu/dsa/transparency-database/dsa-tdb) uses
+the [Apache Spark engine](https://spark.apache.org), which has excellent
+scalability but also very high resource requirements for every cluster node. In
+other words, while the EU's tool does run on individual machines, it also runs
+very slowly. In contrast, Shantay builds on the [Pola.rs](https://pola.rs) data
+frame library, which is much simpler and faster when running on a single
+computer. In addition, Shantay makes the most of available resources and
+supports parallel execution across a (small) number of processes, which does
+make a difference in my experience.
 
 ----
 
