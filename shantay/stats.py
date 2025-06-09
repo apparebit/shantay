@@ -25,9 +25,9 @@ from .framing import (
 )
 from .model import Daily, DateRange, Release
 from .schema import (
-    CanonicalPlatformNames, DurationTransform, humane, KeywordChildSexualAbuseMaterial,
-    StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS, TransformType,
-    ValueCountsPlusTransform, VariantValueType, VariantTooValueType
+    CanonicalPlatformNames, check_stats_platforms, DurationTransform, humane,
+    KeywordChildSexualAbuseMaterial, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS,
+    TransformType, ValueCountsPlusTransform, VariantValueType, VariantTooValueType
 )
 from .util import scale_time
 
@@ -933,15 +933,6 @@ class _Summarizer:
 
 
 # =================================================================================================
-
-
-from ._platform import (
-    MissingPlatformError as MissingPlatformError,
-    check_db_platforms as check_db_platforms,
-    check_stats_platforms as check_stats_platforms,
-    sync_web_platforms as sync_web_platforms,
-    update_platforms as update_platforms,
-)
 
 
 class Statistics:

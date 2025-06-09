@@ -5,8 +5,8 @@ from pathlib import Path
 import shutil
 import unittest
 
+from shantay.__main__ import configure_logging
 from shantay.pool import Future, Pool, Task
-from shantay.tool import configure_logging
 
 
 ROOT = Path(__file__).parent

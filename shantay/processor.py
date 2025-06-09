@@ -18,9 +18,10 @@ from .model import (
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
-from .stats import (
-    check_db_platforms, MissingPlatformError, Statistics, update_platforms
+from .schema import (
+    check_db_platforms, MissingPlatformError, update_platforms
 )
+from .stats import Statistics
 from .util import annotate_error, scale_time
 from .viz import visualize
 

@@ -6,13 +6,13 @@ import unittest
 
 import polars as pl
 
+from shantay.__main__ import configure_logging
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
 from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Collector, Statistics
-from shantay.tool import configure_logging
 
 ROOT = Path(__file__).parent
 FIXTURE = ROOT / "fixture"

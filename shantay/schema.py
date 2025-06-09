@@ -393,7 +393,10 @@ DecisionGround = MetricDeclaration("decision_ground", "Decision Grounds", {
 DecisionGroundAndLegality = MetricDeclaration(
     ["decision_ground", "incompatible_content_illegal"],
     "Decision Grounds",
-    DecisionGround.variants | {"Yes": ("Incompatible & Illegal", RED)}
+    DecisionGround.variants | {
+        "Yes": ("Incompatible & Illegal", RED),
+        None: ("—none—", GRAY),
+    }
 )
 
 
@@ -596,7 +599,12 @@ KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords"
 
 from ._platform import (
     CanonicalPlatformNames as CanonicalPlatformNames,
+    check_db_platforms as check_db_platforms,
+    check_stats_platforms as check_stats_platforms,
+    MissingPlatformError as MissingPlatformError,
     PlatformNames as PlatformNames,
+    sync_web_platforms as sync_web_platforms,
+    update_platforms as update_platforms,
 )
 
 

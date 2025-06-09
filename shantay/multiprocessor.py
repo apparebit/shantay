@@ -15,9 +15,8 @@ from .metadata import Metadata
 from .model import Coverage, Daily, DataFrameType, Dataset, META_FILE, Release, Storage
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_category_exists, Processor
-from .stats import (
-    MissingPlatformError, Collector, Statistics, update_platforms
-)
+from .schema import MissingPlatformError, update_platforms
+from .stats import Collector, Statistics
 
 
 _PID = os.getpid()
