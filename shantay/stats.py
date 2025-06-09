@@ -27,7 +27,7 @@ from .model import Daily, DateRange, Release
 from .schema import (
     CanonicalPlatformNames, check_stats_platforms, DurationTransform, humane,
     KeywordChildSexualAbuseMaterial, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS,
-    TransformType, ValueCountsPlusTransform, VariantValueType, VariantTooValueType
+    TransformType, ValueCountsPlusTransform, VariantValueType
 )
 from .util import scale_time
 
@@ -171,7 +171,6 @@ class Collector:
         column: str,
         entity: None | str = None,
         variant: None | pl.Expr = None,
-        variant_too: None | pl.Expr = None,
         value_counts: None | pl.Expr = None,
         text_value_counts: None | pl.Expr = None,
         frame: None | pl.DataFrame | pl.LazyFrame = None,
@@ -206,18 +205,6 @@ class Collector:
                     .value_counts(sort=True)
                     .list.explode()
                     .struct.unnest()
-            )
-
-        if variant_too is None:
-            effective_values.append(
-                pl.lit(None, dtype=VariantTooValueType).alias("variant_too")
-            )
-        else:
-            effective_values.append(
-                variant_too
-                    .cast(pl.String)
-                    .cast(VariantTooValueType)
-                    .alias("variant_too")
             )
 
         if text_value_counts is None:
@@ -271,7 +258,7 @@ class Collector:
         self._frames.append(frame.select(
             pl.col(
                 "start_date", "end_date", "tag", "platform", "column", "entity",
-                "variant", "variant_too", "text", "count", "min", "mean", "max"
+                "variant", "text", "count", "min", "mean", "max"
             )
         ))
 
@@ -280,7 +267,6 @@ class Collector:
         field: str,
         field_is_list: bool,
         other_field: str,
-        other_is_list: bool,
     ) -> None:
         """
         Collect value counts for a field in isolation and then for the field in
@@ -290,44 +276,17 @@ class Collector:
         values = pl.col(field).list.explode() if field_is_list else pl.col(field)
         self.add_rows(field, value_counts=values)
 
-        if not _is_categorical(other_field):
-            self.add_rows(
-                field,
-                entity=(
-                    "with_end_date" if other_field.startswith("end_date")
-                    else f"with_{other_field}"
-                ),
-                value_counts=values.cast(pl.String),
-                frame=self._source.filter(
-                    pl.col(other_field).is_null().not_()
-                ),
-            )
-            return
-
-        frame = self._source
-        if field_is_list:
-            frame = frame.explode(field)
-        if other_is_list:
-            frame = frame.explode(other_field)
-
-        frame = frame.group_by(
-            field, other_field
-        ).agg(
-            pl.count().cast(pl.Int64).alias("count"),
-        ).sort(
-            ["count", field, other_field], descending=True
-        ).rename({
-            field: "variant",
-            other_field: "variant_too",
-        })
-
+        assert not _is_categorical(other_field)
         self.add_rows(
             field,
-            entity=f"with_{other_field}",
-            variant=pl.col("variant"),
-            variant_too=pl.col("variant_too"),
-            count=pl.col("count"),
-            frame=frame,
+            entity=(
+                "with_end_date" if other_field.startswith("end_date")
+                else f"with_{other_field}"
+            ),
+            value_counts=values.cast(pl.String),
+            frame=self._source.filter(
+                pl.col(other_field).is_null().not_()
+            ),
         )
 
     def collect_decision_type(self) -> None:
@@ -409,9 +368,9 @@ class Collector:
                         entity="null_bc_negative",
                         count=(pl.col(start) > pl.col(end)).sum()
                     )
-                case ValueCountsPlusTransform(self_is_list, other_field, other_is_list):
+                case ValueCountsPlusTransform(self_is_list, other_field):
                     self.collect_value_counts_plus(
-                        key, self_is_list, other_field, other_is_list
+                        key, self_is_list, other_field
                     )
 
     def collect_body(self) -> None:
@@ -473,7 +432,6 @@ class Collector:
             "column": [k for k in pairs.keys()],
             "entity": height * [None],
             "variant": height * [None],
-            "variant_too": height * [None],
             "text": height * [None],
             "count": [v for v in pairs.values()],
             "min": height * [None],
@@ -543,10 +501,11 @@ type _Summary = list[tuple[str | _Tag | _Spacer, Any]]
 class _Summarizer:
     """Summarize analysis results."""
 
-    def __init__(self) -> None:
+    def __init__(self, platform: None | str = None) -> None:
         self._source = pl.DataFrame()
         self._source_by_platform = pl.DataFrame()
         self._tag = None
+        self._platform = platform
         self._summary = []
 
     @contextmanager
@@ -562,19 +521,25 @@ class _Summarizer:
             frame = frame.filter(pl.col("tag").is_null())
         else:
             frame = frame.filter(pl.col("tag").eq(tag))
+
+        if self._platform is not None:
+            if platform is not None and platform != self._platform:
+                raise ValueError(f'platforms "{platform}" and "{self._platform}" differ')
+            platform = self._platform
+
         if platform is not None:
             frame = frame.filter(pl.col("platform").eq(platform))
 
         old_source = self._source
         old_source_by_platform = self._source_by_platform
         self._source_by_platform = frame.group_by(
-            pl.col("platform", "column", "entity", "variant", "variant_too", "text")
+            pl.col("platform", "column", "entity", "variant", "text")
         ).agg(
             pl.col("start_date").min(),
             *aggregates()
         )
         self._source = self._source_by_platform.group_by(
-            pl.col("column", "entity", "variant", "variant_too", "text")
+            pl.col("column", "entity", "variant", "text")
         ).agg(
             *aggregates()
         )
@@ -638,11 +603,11 @@ class _Summarizer:
         for row in self._source.filter(
             predicate(column, entity=entity)
         ).select(
-            pl.col("column", "entity", "variant", "variant_too", "text", "count")
+            pl.col("column", "entity", "variant", "text", "count")
         ).sort(
-            ["count", "variant", "variant_too", "text"], descending=True
+            ["count", "variant", "text"], descending=True
         ).rows():
-            column, entity, variant, variant_too, text, count = row
+            column, entity, variant, text, count = row
             var = column
 
             if entity == "with_end_date":
@@ -658,16 +623,6 @@ class _Summarizer:
                     var = f"{var}.is_null"
                 else:
                     var = f"{var}.{variant}"
-
-            if (
-                entity is not None
-                and entity != "with_end_date"
-                and entity.startswith("with_")
-            ):
-                if variant_too is None:
-                    var = f"{var}.is_null"
-                else:
-                    var = f"{var}.{variant_too}"
 
             self._summary.append((var, count))
 
@@ -729,7 +684,7 @@ class _Summarizer:
                     self.collect1(
                         field_name, entity="null_bc_negative", quantity="count"
                     )
-                case ValueCountsPlusTransform(_, other_field, _):
+                case ValueCountsPlusTransform(_, other_field):
                     self.spacer()
                     self.collect_value_counts(field_name)
 
@@ -945,7 +900,7 @@ class Statistics:
     """
 
     # The file with statistics for the entire database
-    DB_STATS_FILE = "statistics.parquet"
+    DB_STATS_FILE = "full-database.parquet"
 
     """
     The default date range for summary statistics, which start with
@@ -1120,9 +1075,9 @@ class Statistics:
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         )
 
-    def summary(self, markdown: bool = False) -> str:
-        """Create a summary table formatted as Unicode or Markdown."""
-        summarizer = _Summarizer()
+    def summary(self, platform: None | str = None, markdown: bool = False) -> str:
+        """Create a summary table formatted as Unicode text or Markdown."""
+        summarizer = _Summarizer(platform=platform)
         summarizer.summarize(self.frame())
         return summarizer.formatted_summary(markdown)
 

@@ -118,16 +118,15 @@ def predicate(
     column: str | Sequence[str] | NotNull,
     entity: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     variant: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
-    variant_too: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     platform: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
-    Create the predicate over the "tag", "platform", "column", "entity",
-    "variant", and "variant_too" columns. If the argument is a string or list of
-    strings, the predicate tests that column for the literal string value(s). If
-    it is None, the predicate tests for the column being null. If it is
-    `NOT_NULL`, the predicate tests for it being not null. Finally, if it is
+    Create the predicate over the "tag", "platform", "column", "entity", and
+    "variant" columns. If the argument is a string or list of strings, the
+    predicate tests that column for the literal string value(s). If it is None,
+    the predicate tests for the column being null. If it is `NOT_NULL`, the
+    predicate tests for it being not null. Finally, if it is
     `NO_ARGUMENT_PROVIDED`, the predicate does not test that column.
     """
     # The column named "column" is required
@@ -144,7 +143,6 @@ def predicate(
         ("platform", platform),
         ("entity", entity),
         ("variant", variant),
-        ("variant_too", variant_too),
     ):
         if value is None:
             predicate = predicate.and_(pl.col(key).is_null())
@@ -164,7 +162,6 @@ def get_quantity(
     column: str,
     entity: NoArgumentProvided | None | str = NO_ARGUMENT_PROVIDED,
     variant: NoArgumentProvided | None | str = NO_ARGUMENT_PROVIDED,
-    variant_too: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     platform: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     statistic: Quantity = "count",
@@ -175,7 +172,6 @@ def get_quantity(
             column,
             entity=entity,
             variant=variant,
-            variant_too=variant_too,
             tag=tag,
             platform=platform,
         )
@@ -209,7 +205,6 @@ def daily_groupies() -> list[pl.Expr]:
         pl.col("column"),
         pl.col("entity"),
         pl.col("variant"),
-        pl.col("variant_too"),
         pl.col("text"),
     ]
 
@@ -224,7 +219,6 @@ def monthly_groupies() -> list[pl.Expr]:
         pl.col("column"),
         pl.col("entity"),
         pl.col("variant"),
-        pl.col("variant_too"),
         pl.col("text"),
     ]
 

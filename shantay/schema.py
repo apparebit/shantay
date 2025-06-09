@@ -793,7 +793,6 @@ class ValueCountsPlusTransform:
     """Value counts for a field as well as in combination with another one."""
     self_is_list: bool
     other_field: str
-    other_is_list: bool = False
 
 
 # The transforms cover all DSA transparency database entries without unconstrained text.
@@ -942,7 +941,6 @@ def _all_variants() -> list[str]:
 
     for names in (
         Keyword,
-        PlatformNames,
         StatementCategory,
         YesNo,
     ):
@@ -960,9 +958,6 @@ def _all_variants() -> list[str]:
 VariantValueType = pl.Enum(_all_variants())
 
 
-VariantTooValueType = pl.Enum(Keyword)
-
-
 StatisticsSchema = pl.Schema({
     "start_date": pl.Date,
     "end_date": pl.Date,
@@ -971,7 +966,6 @@ StatisticsSchema = pl.Schema({
     "column": ColumnValueType,
     "entity": EntityValueType,
     "variant": VariantValueType,
-    "variant_too": VariantTooValueType,
     "text": pl.String,
     "count": pl.Int64,
     "min": pl.Int64,
