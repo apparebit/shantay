@@ -987,6 +987,14 @@ date/times, shantay may have to correct for negative durations. It tracks the
 number of these corrections as well.
 """
 
+# Columns with arbitrary text included in the statistics
+TextColumns = (
+    "decision_visibility_other",
+    "decision_monetary_other",
+    "category_specification_other",
+    "content_type_other",
+)
+
 
 # ======================================================================================
 
