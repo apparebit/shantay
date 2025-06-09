@@ -47,6 +47,15 @@ from typing import Any, Literal
 from urllib.request import Request, urlopen
 
 
+MetaPlatforms = (
+    "Facebook",
+    "Instagram",
+    "Other Meta Product",
+    "Threads",
+    "WhatsApp",
+)
+
+
 PlatformNames = (
     "ADEO",
     "Adobe Lightroom",

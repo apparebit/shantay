@@ -601,6 +601,7 @@ from ._platform import (
     CanonicalPlatformNames as CanonicalPlatformNames,
     check_db_platforms as check_db_platforms,
     check_stats_platforms as check_stats_platforms,
+    MetaPlatforms as MetaPlatforms,
     MissingPlatformError as MissingPlatformError,
     PlatformNames as PlatformNames,
     sync_web_platforms as sync_web_platforms,
