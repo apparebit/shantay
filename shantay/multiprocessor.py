@@ -12,7 +12,9 @@ from typing import Any
 
 from .framing import collect_release_metadata
 from .metadata import Metadata
-from .model import Coverage, Daily, DataFrameType, Dataset, META_FILE, Release, Storage
+from .model import (
+    Coverage, Daily, DataFrameType, DateRange, Dataset, META_FILE, Release, Storage
+)
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import extracted_category_exists, Processor
 from .schema import MissingPlatformError, update_platforms
@@ -44,7 +46,6 @@ class Multiprocessor:
         self._stats = None
         self._stats_file = stats_file
 
-        # Prepare processes daily releases, whereas analyze processes monthly ones
         self._task = None
         self._iter = None
 
@@ -83,20 +84,26 @@ class Multiprocessor:
         start_time = time.time()
 
         # Determine cursor's first and final values as well as increment
-        if task == "prepare":
-            cover = self._coverage
-        elif task == "analyze":
+        if task == "extract":
+            cover = self._coverage.to_date_range()
+        elif task == "summarize-category":
+            # Intersect desired data range with available date range
             date_cover, metadata = collect_release_metadata(self._metadata.records)
             self._metadata_frame = metadata
             self._stats = Statistics(self._stats_file)
-            cover = date_cover.dailies()
-        elif task == "summarize":
+            cover = self._coverage.to_date_range().intersection(date_cover)
+        elif task == "summarize-all":
             self._stats = Statistics.from_storage(
                 self._stats_file,
                 self._storage.the_staging_root,
                 self._storage.the_archive_root,
             )
+            cover = self._coverage.to_date_range()
+        else:
+            raise ValueError(f"invalid task {task}")
 
+        if task.startswith("summarize"):
+            assert self._stats is not None
             if not self._stats.is_empty():
                 date_range = self._stats.range()
                 _logger.info(
@@ -104,17 +111,14 @@ class Multiprocessor:
                     date_range.first, date_range.last
                 )
 
-            cover = Statistics.DEFAULT_RANGE.dailies()
-        else:
-            raise ValueError(f"invalid task {task}")
-
-        self._iter = iter(cover)
-        _logger.info('    key="iter.first",           value="%s"', cover.first.id)
-        _logger.info('    key="iter.last",            value="%s"', cover.last.id)
+        assert cover is not None
+        self._iter = iter(cover.dailies())
+        _logger.info('    key="iter.first",           value="%s"', cover.first)
+        _logger.info('    key="iter.last",            value="%s"', cover.last)
 
         self._pool.run(self._task_iter(), self._done_with_task)
 
-        if task in ("analyze", "summarize"):
+        if task.startswith("summarize"):
             assert self._stats is not None
 
             _logger.debug(
@@ -123,7 +127,7 @@ class Multiprocessor:
             )
             self._stats.write(self._storage.staging_root, finalize=True)
 
-            if task == "analyze":
+            if self._storage.working_root is not None:
                 persistent = self._storage.the_working_root
             else:
                 persistent = self._storage.the_archive_root
@@ -168,9 +172,8 @@ class Multiprocessor:
         assert self._iter is not None
         release = next(self._iter, None)
 
-        # Skip release, if included in working data for prepare and in summary
-        # statistics for summarize.
-        if self._task == "prepare":
+        # Skip release if extract or summary statistics for that day already exist.
+        if self._task == "extract":
             while (
                 release is not None
                 and release in self._metadata
@@ -181,7 +184,7 @@ class Multiprocessor:
                 )
             ):
                 release = next(self._iter, None)
-        elif self._task == "summarize":
+        elif self._task is not None and self._task.startswith("summarize"):
             assert self._stats is not None
             while release is not None and release.date in self._stats:
                 _logger.debug('summary statistics already cover release="%s"', release)
@@ -209,7 +212,7 @@ class Multiprocessor:
             update_platforms(result[0])
             raise MissingPlatformError(*result)
 
-        if self._task == "prepare":
+        if self._task == "extract":
             release = result["release"]
             del result["release"]
             self._metadata[release] = result
@@ -226,11 +229,11 @@ class Multiprocessor:
             Metadata.copy_json(
                 self._storage.staging_root, self._storage.the_working_root
             )
-        elif self._task in ("analyze", "summarize"):
+        elif self._task is not None and self._task.startswith("summarize"):
             assert self._stats is not None
             self._stats.append(result)
 
-            # By the same logic as for copying the metadata for prepare, we
+            # By the same logic as for copying the metadata for extract, we
             # could also copy the summary statistics to the persistent root.
             # However, that file should be optimized (rechunked), so we only
             # copy upon completion.
@@ -332,11 +335,11 @@ def _run_on_worker(
     release: Daily,
 ) -> Any:
     coverage = Coverage(release, release, category)
-    if task == "prepare":
+    if task == "extract":
         metadata = Metadata(category)
-    elif task == "summarize":
+    elif task == "summarize-all":
         metadata = Metadata()
-    elif task == "analyze":
+    elif task == "summarize-category":
         metadata = Metadata.read_json(storage.the_working_root / META_FILE)
     else:
         raise AssertionError(f"invalid task {task}")
@@ -355,15 +358,15 @@ def _run_on_worker(
         task, category or "", release, _PID
     )
 
-    if task == "prepare":
-        processor.prepare_category_release(release)
+    if task == "extract":
+        processor.extract_category_release(release)
         record = metadata[release]
         result = dict(release=release, **record)
-    elif task == "summarize":
+    elif task == "summarize-all":
         collector = Collector()
         processor.summarize_database_release(release, collector)
         result = collector.frame()
-    elif task == "analyze":
+    elif task == "summarize-category":
         collector = Collector()
         processor.summarize_category_release(release, metadata_frame, collector)
         result = collector.frame()

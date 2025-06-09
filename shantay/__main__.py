@@ -10,26 +10,28 @@ def parse_options(args: list[str]) -> Any:
         prog="shantay",
         formatter_class=RawDescriptionHelpFormatter,
         description="""
-        `recover` scans the working directory to validate contents and
-        restore metadata.
+        `extract` downloads daily distributions and extracts a category-specific
+        subset. It requires `--archive` and `--working` directories. For a newly
+        created subset, it also requires the `--category` to extract. That
+        category and other metadata are stored in `meta.json`.
 
-        `prepare` downloads daily distributions that haven't been
-        downloaded yet and extracts the working subset.
+        `recover` scans the `--working` directory to validate contents and
+        restore (some of the) metadata in `meta.json`.
 
-        `analyze` computes summary statistics about the working
-        subset.
+        `summarize` collects summary statistics either for the full database or
+        a category-specific subset, depending on whether `--archive` only (for
+        the full database) or both `--archive` and `--working` (for a subset)
+        are specified.
 
-        `summarize` downloads daily distributions that haven't been
-        downloaded yet and computes summary statistics about the
-        entire dataset.
+        `visualize` generates an HTML document that visualizes summary
+        statistics. `--archive` and `--working` again determine the scope of the
+        visualization.
 
-        `visualize` visualizes summary statistics derived from
-        working subset or full dataset.
-
-        Since prepare and summarize may download distributions and process
-        the complete dataset, they are slow, taking at least half a day.
-        By contrast, analyze-working is much faster, taking a few minutes
-        only.
+        Summary statistics are stored in `all-data.parquet` for the full
+        database and in a file named after the category, such as
+        `protection-of-minors.parquet`, for category-specific data. The HTML
+        document follows the same naming convention; only the extension is
+        `.html`.
         """
     )
 
@@ -69,14 +71,15 @@ def parse_options(args: list[str]) -> Any:
         dest="frequency",
         action="store_const",
         const="monthly",
-        help="use monthly aggregates for visualizing statistics; precludes --daily",
+        help="use --monthly, not --daily granularity for visualizing statistics "
+        "(the default)"
     )
     group.add_argument(
         "--daily",
         dest="frequency",
         action="store_const",
         const="daily",
-        help="use daily aggregates for visualizing statistics; precludes --monthly",
+        help="use --daily, not --monthly granularity for visualizing statistics"
     )
 
     group = parser.add_argument_group("logging")
@@ -93,30 +96,15 @@ def parse_options(args: list[str]) -> Any:
         help="disable verbose logging, which is the default",
     )
 
-    group = parser.add_argument_group("source statistics for visualization")
-    group.add_argument(
-        "--with-archive",
-        action="store_true",
-        help="visualize the summary statistics stored in the archive root (not working "
-        "root)"
-    )
-    group.add_argument(
-        "--with-working",
-        action="store_true",
-        help="visualize the summary statistics stored in the working root (not archive "
-        "root)"
-    )
-
     parser.add_argument(
         "--multiproc",
         default=1,
         type=int,
         help="use several processes for downloading archives and extracting working data",
     )
-
     parser.add_argument(
         "task",
-        choices=["recover", "prepare", "analyze", "summarize", "visualize"],
+        choices=["extract", "recover", "summarize", "visualize"],
         default="prepare",
         help="select the task to execute",
     )

@@ -79,11 +79,11 @@ class Processor[R: Release]:
         # time.
         start_time = time.time()
         result = None
-        if task == "prepare":
-            self.prepare_category()
-        elif task == "summarize":
+        if task == "extract":
+            result = self.extract_category()
+        if task == "summarize-all":
             result = self.summarize_database()
-        elif task == "analyze":
+        elif task == "summarize-category":
             result = self.summarize_category()
         elif task == "visualize":
             result = self.visualize()
@@ -96,9 +96,9 @@ class Processor[R: Release]:
 
         return result
 
-    def prepare_category(self) -> None:
+    def extract_category(self) -> None:
         for release in self._coverage:
-            self.prepare_category_release(release)
+            self.extract_category_release(release)
             # The staging root's meta.json is created by merging the contents of
             # existing meta.json files in the staging, working, and archive
             # roots. Hence it's safe to copy back the JSON file after each
@@ -108,7 +108,7 @@ class Processor[R: Release]:
             if self._storage.archive_root is not None:
                 Metadata.copy_json(self._storage.staging_root, self._storage.archive_root)
 
-    def prepare_category_release(self, release: Daily) -> None:
+    def extract_category_release(self, release: Daily) -> None:
         if (
             release in self._metadata
             and extracted_category_exists(self._storage.the_working_root, release, self._metadata)
@@ -121,7 +121,7 @@ class Processor[R: Release]:
 
         self.stage_archive(release)
         try:
-            self.extract_category_release(release)
+            self.actually_extract_category_release(release)
         except Exception as x:
             x.add_note(
                 f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
@@ -265,7 +265,7 @@ class Processor[R: Release]:
             / self._dataset.archive_name(release)
         ).exists()
 
-    def extract_category_release(self, release: Daily) -> None:
+    def actually_extract_category_release(self, release: Daily) -> None:
         """Extract the batches for the given release."""
         assert self.is_archive_staged(release)
         assert self._coverage.category is not None
@@ -391,7 +391,7 @@ class Processor[R: Release]:
 
         for index, release in enumerate(range):
             check_not_cancelled()
-            self.prepare_category_release(release)
+            self.extract_category_release(release)
             self.summarize_category_release(release, metadata, stats)
             # The generation of summary statistics creates a large number of
             # data frames (at least as few hundred), many of which have only one
