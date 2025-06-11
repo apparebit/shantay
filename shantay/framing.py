@@ -246,3 +246,17 @@ def aggregates() -> list[pl.Expr]:
 
         pl.col("max").max(),
     ]
+
+
+def finalize(frame: pl.DataFrame) -> pl.DataFrame:
+    """
+    Prepare a data frame for production use. This function regroups, sorts, and
+    rechunks the data frame.
+    """
+    return frame.group_by(
+        *daily_groupies(), maintain_order=True
+    ).agg(
+        *aggregates()
+    ).sort(
+        pl.col("start_date", "platform"), maintain_order=True
+    ).rechunk()

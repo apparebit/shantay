@@ -21,7 +21,7 @@ from typing import Any, ClassVar, Self
 import polars as pl
 
 from .framing import (
-    aggregates, daily_groupies, get_quantity, NOT_NULL, predicate, Quantity
+    aggregates, finalize, get_quantity, NOT_NULL, predicate, Quantity
 )
 from .model import Daily, DateRange, Release
 from .schema import (
@@ -953,9 +953,10 @@ class Statistics:
             pl.col("platform").cast(str).replace(CanonicalPlatformNames)
         )
 
-        # If the platform names are out-of-whack, casting will fail already. But
-        # Pola.rs error messages are rather unhelpful, whereas checking
-        # beforehand also enables automated recovery.
+        # If the platform names are out-of-whack, the cast below will fail. But
+        # Pola.rs error messages tend to be less than helpful. So instead we
+        # check for unknown platform names ourselves. That way, we can initiate
+        # largely automatic recovery as well.
         check_stats_platforms(frame)
 
         return cls(
@@ -1074,7 +1075,7 @@ class Statistics:
         summarizer.summarize(self.frame())
         return summarizer.formatted_summary(markdown)
 
-    def write(self, directory: Path, finalize: bool = False) -> Self:
+    def write(self, directory: Path, should_finalize: bool = False) -> Self:
         """
         Write this statistics frame to the given directory. If `finalize` is
         `True`, this method groups and aggregates the frame at daily
@@ -1082,20 +1083,12 @@ class Statistics:
         by the data frame before writing it out. The updated version also
         replaces the original version.
         """
-        frame = self.frame()
-        if finalize:
-            frame = frame.group_by(
-                *daily_groupies(), maintain_order=True
-            ).agg(
-                *aggregates()
-            ).sort(
-                pl.col("start_date"), maintain_order=True
-            ).rechunk()
-            self._frames = [frame]
+        if should_finalize:
+            self._frames = [finalize(self.frame())]
 
         path = directory / self.file()
         tmp = path.with_suffix(".tmp.parquet")
-        frame.write_parquet(tmp)
+        self.frame().write_parquet(tmp)
         tmp.replace(path)
 
         return self

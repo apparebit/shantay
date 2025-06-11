@@ -127,7 +127,7 @@ class Multiprocessor:
                 'writing rechunked summary statistics to file="%s"',
                 self._storage.staging_root / self.stats_file
             )
-            self._stats.write(self._storage.staging_root, finalize=True)
+            self._stats.write(self._storage.staging_root, should_finalize=True)
 
             if self._storage.extract_root is not None:
                 persistent = self._storage.the_extract_root
