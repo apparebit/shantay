@@ -23,7 +23,7 @@ graphs. In particular:
     enough information for a more humane presentation of enumeration constants
     in graphs.
 """
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import datetime as dt
 import enum
@@ -33,9 +33,47 @@ from typing import Any, get_args, get_origin, Literal, overload
 import polars as pl
 
 from .color import (
-    BLUE, BROWN, CYAN, DARK_PURPLE, GRAY, GREEN, LIGHT_BLUE, ORANGE, PINK,
-    PURPLE, RED, YELLOW_GREEN,
+    BLUE, CYAN, GRAY, GREEN, LIGHT_BLUE, MAGENTA, OLIVE, ORANGE, PALETTE, PINK, PURPLE,
+    RED
 )
+
+
+# ======================================================================================
+# Humanized statement categories and keywords
+
+
+_HUMANIZED_REPLACEMENTS = {
+    " And ": " and ",
+    " Based ": "-Based ",
+    " Eu ": " EU ",
+    " For ": " for ",
+    " Non ": " Non-",
+    " Of ": " of ",
+    " On ": " on ",
+    " Or ": " or ",
+    " Specific ": "-Specific ",
+    " To ": " to ",
+}
+
+
+@overload
+def humanize(tag: None) -> None:
+    ...
+@overload
+def humanize(tag: str) -> str:
+    ...
+def humanize(tag: None | str) -> None | str:
+    """Generate a humane presentation for the given tag."""
+    if tag is None:
+        return None
+    if tag.startswith("STATEMENT_CATEGORY_"):
+        tag = tag[len("STATEMENT_CATEGORY_"):]
+    elif tag.startswith("KEYWORD_"):
+        tag = tag[len("KEYWORD_"):]
+    tag = tag.replace("_", " ").title()
+    for source, target in _HUMANIZED_REPLACEMENTS.items():
+        tag = tag.replace(source, target)
+    return tag
 
 
 # ======================================================================================
@@ -281,7 +319,8 @@ class TerritorialAlias(enum.StrEnum):
 # ======================================================================================
 
 
-type VariantNamesAndColors = dict[None |str, tuple[str, str]]
+type VariantNamesAndColors = dict[None | str, tuple[str, str]]
+
 
 @dataclass(frozen=True, slots=True)
 class MetricDeclaration:
@@ -339,6 +378,24 @@ class MetricDeclaration:
         if self.selector == "variant":
             groupings.append(pl.col("variant"))
         return groupings
+
+
+def make_metric(
+    field: str,
+    label: str,
+    variants: Iterable[str],
+    quant_label: str = "Statements of Reasons",
+) -> MetricDeclaration:
+    color_count = len(PALETTE)
+    return MetricDeclaration(
+        field, label, {
+            v: (humanize(v), PALETTE[i % color_count])
+            for i, v in enumerate(variants)
+        }, quant_label=quant_label
+    )
+
+
+# --------------------------------------------------------------------------------------
 
 
 AccountType = MetricDeclaration("account_type", "Account Types", {
@@ -419,8 +476,8 @@ DecisionProvision = MetricDeclaration("decision_provision", "Service Provision D
 
 DecisionType = MetricDeclaration("decision_type", "Decision Types", {
     "vis": ("Visibility", BLUE),
-    "mon": ("Monetary", YELLOW_GREEN),
-    "vis_mon": ("Visibility & Monetary", DARK_PURPLE),
+    "mon": ("Monetary", OLIVE),
+    "vis_mon": ("Visibility & Monetary", MAGENTA),
     "pro": ("Provision", LIGHT_BLUE),
     "vis_pro": ("Visibility & Provision", ORANGE),
     "mon_pro": ("Monetary & Provision", GREEN),
@@ -459,7 +516,6 @@ InformationSource = MetricDeclaration("source_type", "Information Sources", {
 
 
 KeywordChildSexualAbuseMaterial = "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL"
-
 
 
 Keyword = (
@@ -580,23 +636,6 @@ Keyword = (
 )
 
 
-# Cover all keywords that are utilized in practice
-KeywordsMinorProtection = MetricDeclaration("category_specification", "Keywords", {
-    "KEYWORD_ADULT_SEXUAL_MATERIAL": ("Adult Sexual Material", GREEN),
-    "KEYWORD_AGE_SPECIFIC_RESTRICTIONS_MINORS": ("Age-Restricted", PURPLE),
-    KeywordChildSexualAbuseMaterial: ("CSAM", LIGHT_BLUE),
-    "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL_DEEPFAKE": ("Deepfake", PINK),
-    "KEYWORD_GROOMING_SEXUAL_ENTICEMENT_MINORS": ("Grooming", RED),
-    "KEYWORD_HATE_SPEECH": ("Hate Speech", CYAN),
-    "KEYWORD_HUMAN_TRAFFICKING": ("Trafficking", ORANGE),
-    "KEYWORD_NUDITY": ("Nudity", DARK_PURPLE),
-    "KEYWORD_ONLINE_BULLYING_INTIMIDATION": ("Bullying", GRAY),
-    "KEYWORD_OTHER": ("Other", BLUE),
-    "KEYWORD_REGULATED_GOODS_SERVICES": ("Regulated Goods/Services", BROWN),
-    "KEYWORD_UNSAFE_CHALLENGES": ("Unsafe Challenges", YELLOW_GREEN),
-}, quant_label="SoRs with Keyword")
-
-
 from ._platform import (
     CanonicalPlatformNames as CanonicalPlatformNames,
     check_db_platforms as check_db_platforms,
@@ -626,6 +665,11 @@ ProcessingDelay = MetricDeclaration(
 from ._category import (
     StatementCategoryProtectionOfMinors as StatementCategoryProtectionOfMinors,
     StatementCategory as StatementCategory,
+)
+
+
+CategoryMetric = make_metric(
+    "category", "Category", StatementCategory, quant_label="SoRs with Category"
 )
 
 
@@ -1028,27 +1072,6 @@ def normalize_keyword(keyword: None | str) -> None | str:
     if key not in Keyword:
         raise ValueError(f'"{keyword}" does not match any valid keyword')
     return key
-
-
-_MINOR_WORDS = {
-    " And ": " and ",
-    " For ": " for ",
-    " Of ": " of ",
-    " On ": " on ",
-    " Or ": " or ",
-}
-
-
-def humane(tag: str) -> str:
-    """Generate a humane presentation for the given tag."""
-    if tag.startswith("STATEMENT_CATEGORY_"):
-        tag = tag[len("STATEMENT_CATEGORY_"):]
-    elif tag.startswith("KEYWORD_"):
-        tag = tag[len("KEYWORD_"):]
-    tag = tag.replace("_", " ").title()
-    for source, target in _MINOR_WORDS.items():
-        tag = tag.replace(source, target)
-    return tag
 
 
 KEYWORDS_V1 = frozenset([
