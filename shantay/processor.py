@@ -124,6 +124,9 @@ class Processor[R: Release]:
             emit_pair(f'{dirname}.date-range.first', first)
             emit_pair(f'{dirname}.date-range.last', last)
 
+        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+        # Shantay, its dependencies, Python, and OS
+
         emit_rule(strong=True)
         emit_pair("shantay.version", __version__)
         emit_rule()
@@ -141,7 +144,7 @@ class Processor[R: Release]:
         emit_pair("os.release", platform.release())
         #record("os.version", platform.version())
 
-        # ------------------------------------------------------------------------------
+        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Archive Root
 
         emit_rule(strong=True)
@@ -156,7 +159,7 @@ class Processor[R: Release]:
             stats = None
         emit_range("archive", "db.parquet", None if stats is None else stats.range())
 
-        # ------------------------------------------------------------------------------
+        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Extract Root
 
         if self._storage.extract_root is not None:
@@ -180,7 +183,11 @@ class Processor[R: Release]:
                 stats = None
             emit_range("extract", filename, None if stats is None else stats.range())
 
-        # ------------------------------------------------------------------------------
+        emit_rule(strong=True)
+
+        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+        # Actually emit the output
+
         key_width = max(0 if k is None else len(k) for k in keys)
         value_width = max(0 if v in (1, 2) else len(v) for v in values)
         width = key_width + 3 + value_width + 2
