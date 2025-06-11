@@ -12,7 +12,7 @@ from shantay.metadata import Metadata
 from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
-from shantay.stats import Collector, Statistics
+from shantay.stats import Collector
 
 ROOT = Path(__file__).parent
 FIXTURE = ROOT / "fixture"
@@ -65,7 +65,7 @@ class TestPrepare(unittest.TestCase):
         with self.subTest("set up metadata, runner, and release"):
             dataset = StatementsOfReasons()
             storage = Storage(
-                archive_root=ARCHIVE, working_root=STAGING, staging_root=STAGING
+                archive_root=ARCHIVE, extract_root=STAGING, staging_root=STAGING
             )
             release = Daily(2024, 3, 14)
             coverage = Coverage(release, release, StatementCategoryProtectionOfMinors)
@@ -75,7 +75,6 @@ class TestPrepare(unittest.TestCase):
                 storage=storage,
                 coverage=coverage,
                 metadata=metadata,
-                stats_file="protection-of-minors.parquet"
             )
 
             digest = release.parent_directory / dataset.digest_name(release)
@@ -108,12 +107,12 @@ class TestPrepare(unittest.TestCase):
 
         with self.subTest("determine row counts"):
             glob = f"{STAGING / release.temp_directory}/*.csv"
-            count1, count2 = dataset._extract_row_counts(glob, 0, ZIP_FILES[0])
+            count1, count2 = dataset._distill_row_counts(glob, 0, ZIP_FILES[0])
             self.assertEqual(count1, 100)
             self.assertEqual(count2, 12)
 
         with self.subTest("extract first batch of category data"):
-            frame = dataset._extract_filtered_rows(
+            frame = dataset._distill_filtered_rows(
                 csv_files=glob,
                 release=release,
                 index=0,
@@ -143,7 +142,7 @@ class TestPrepare(unittest.TestCase):
             self.assertFalse(batch1.exists())
 
             processor.unarchive_file(STAGING, release, 1, ZIP_FILES[1])
-            digest, more_counters = dataset.extract_category_data(
+            digest, more_counters = dataset.distill_category_data(
                 root=STAGING,
                 release=release,
                 index=1,
@@ -202,10 +201,7 @@ class TestPrepare(unittest.TestCase):
             self.assertEqual(frame_data, EXPECTED_ANALYSIS)
 
             # Write to parquet
-            frame.write_parquet(
-                STAGING /
-                Statistics.file_name_for(StatementCategoryProtectionOfMinors)
-            )
+            frame.write_parquet(STAGING / f"{coverage.stem()}.parquet")
 
         with self.subTest("check log file"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)

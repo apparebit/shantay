@@ -34,7 +34,10 @@ class TestMetadata(unittest.TestCase):
 
     def test_merge_same_metadata(self) -> None:
         # Merge with identical data
-        metadata = Metadata.merge(METADATA_2000.parent, METADATA_2000.parent)
+        metadata = Metadata.merge(
+            METADATA_2000.parent / META_FILE,
+            METADATA_2000.parent / META_FILE
+        )
         self.check_metadata_2000(metadata)
 
     def test_merge_with_extra_data(self) -> None:
