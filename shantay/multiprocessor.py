@@ -187,11 +187,10 @@ class Multiprocessor:
             )
 
     def _next_release(self) -> None | Daily:
-        # Get the next release, but then...
+        # Keep iterating over the next release if the work has already been done.
         assert self._iter is not None
         release = next(self._iter, None)
 
-        # ... skip downloaded, extracted, or summarized releases
         if self._task == "download":
             while (
                 release is not None
@@ -219,6 +218,20 @@ class Multiprocessor:
             while release is not None and release.date in self._stats:
                 _logger.debug('summary statistics already cover release="%s"', release.id)
                 release = next(self._iter, None)
+
+        # Ensure graceful termination in offline mode.
+        if self._offline and release is not None and not (
+            self._storage.archive_root
+            / release.parent_directory
+            / self._dataset.archive_name(release)
+        ).exists():
+            _logger.debug(
+                'stopping due to missing archive in offline mode '
+                'for task="%s", release="%s"',
+                self._task, release.id
+            )
+            self._iter = iter([])
+            return None
 
         return release
 

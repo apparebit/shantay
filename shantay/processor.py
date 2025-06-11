@@ -206,10 +206,22 @@ class Processor[R: Release]:
 
     def distill_category(self) -> None:
         for release in self._coverage:
+            # Ensure graceful termination in offline mode
+            if self._offline and not self.is_archive_downloaded(release):
+                _logger.debug(
+                    'stopping due to missing archive in offline mode '
+                    'for task="distill", release="%s"',
+                    release.id
+                )
+                break
+
+            # Do the distillation work
             self.distill_category_release(release)
+
             # The staging root's category-specific metadata was merged with the
             # extract's metadata during startup. Hence writing it back to the
-            # extract directory is safe.
+            # extract directory won't lead to data loss---as long as there are
+            # no concurrent writers!
             Metadata.copy_json(
                 self._storage.staging_root / f"{self._coverage.stem()}.json",
                 self._storage.the_extract_root / META_FILE
@@ -520,6 +532,15 @@ class Processor[R: Release]:
         stats = Statistics(self.stats_file)
 
         for index, release in enumerate(range):
+            # Ensure graceful termination in offline mode
+            if self._offline and not self.is_archive_downloaded(release):
+                _logger.debug(
+                    'stopping due to missing archive in offline mode '
+                    'for task="summarize-category", release="%s"',
+                    release.id
+                )
+                break
+
             check_not_cancelled()
             self.distill_category_release(release)
             self.summarize_category_release(release, metadata, stats)
@@ -583,6 +604,16 @@ class Processor[R: Release]:
             if cast(Daily, release) in stats:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 continue
+
+            # Ensure graceful termination in offline mode
+            if self._offline and not self.is_archive_downloaded(release):
+                _logger.debug(
+                    'stopping due to missing archive in offline mode '
+                    'for task="summarize-all", release="%s"',
+                    release.id
+                )
+                break
+
             try:
                 self.summarize_database_release(release, stats)
             except MissingPlatformError as x:
