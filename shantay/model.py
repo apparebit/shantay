@@ -6,7 +6,7 @@ import datetime as dt
 from pathlib import Path
 import re
 from typing import (
-    cast, Literal, Optional, overload, Protocol, Required, Self, TypedDict
+    Callable, cast, Literal, Optional, overload, Protocol, Required, Self, TypedDict
 )
 
 from .progress import NO_PROGRESS, Progress
@@ -471,6 +471,11 @@ META_FILE = "meta.json"
 DIGEST_FILE = "sha256.txt"
 
 
+def file_stem_for(category: str) -> str:
+    assert category.startswith("STATEMENT_CATEGORY_")
+    return category[len("STATEMENT_CATEGORY_"):].lower().replace("_", "-")
+
+
 class MetadataEntry(TypedDict, total=False):
     batch_count: Required[int]
     total_rows: Optional[int]
@@ -520,6 +525,9 @@ class Coverage[R: Release]:
     def to_date_range(self) -> DateRange:
         return DateRange(self.first.start_date, self.last.end_date)
 
+    def stem(self) -> str:
+        return "db" if self.category is None else file_stem_for(self.category)
+
 
 class CollectorProtocol(Protocol):
     """The protocol for incremental data frame generation."""
@@ -538,11 +546,10 @@ class CollectorProtocol(Protocol):
         Collect summary statistics for the data frame.
 
         This method should collect the standard statistics for the given data
-        frame. If the tag is none, it should also collect statistics about the
-        relationship between the data frame and the complete data set. In
-        particular, if no metadata is provided, this method should assume that
-        the frame is part of the complete data set. If, however, metadata is
-        provided, the frame contains working data only.
+        frame. For a frame with data from the full database, the tag and
+        metadata should be omitted. For a frame with category-specific data,
+        the tag should be the category and the metadata should be the result
+        of extracting the category-specific data.
         """
 
     def frame(self, validate: bool = False) -> DataFrameType:
@@ -588,7 +595,7 @@ class Dataset(metaclass=ABCMeta):
         """Ingest unfiltered, uncompressed data."""
 
     @abstractmethod
-    def extract_category_data(
+    def distill_category_data(
         self,
         *,
         root: Path,
@@ -598,7 +605,7 @@ class Dataset(metaclass=ABCMeta):
         category: str,
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
-        """Extract working data from an uncompressed data."""
+        """Extract category-specific data from uncompressed data."""
 
     @abstractmethod
     def summarize_release(
@@ -631,49 +638,103 @@ class Dataset(metaclass=ABCMeta):
 # Storage
 
 
+_TWO_DIGITS = re.compile(r"^[0-9]{2}$")
+_FOUR_DIGITS = re.compile(r"^[0-9]{4}$")
+_ARCHIVE = re.compile(r"^sor-global-[0-9]{4}-[0-9]{2}-[0-9]{2}-full\.zip$")
+
+
+def _archive_as_number(path: Path) -> int:
+    return int(path.name[-11:-9])
+
+
+def _file_as_number(path: Path) -> int:
+    return int(path.name)
+
+
+def _select_dir_entries(
+    directory: Path, pattern: re.Pattern, key: Callable[[Path], int]
+) -> list[Path]:
+    return sorted(
+        (p for p in directory.glob("*") if pattern.match(p.name)),
+        key=key
+    )
+
+
+def _find_coverage_date(
+    directory: Path,
+    position: Literal["first", "last"],
+    day_pattern: re.Pattern,
+    day_key: Callable[[Path], int],
+) -> None | dt.date:
+    index = 0 if position == "first" else -1
+
+    years = _select_dir_entries(directory, _FOUR_DIGITS, _file_as_number)
+    if len(years) == 0:
+        return None
+    months = _select_dir_entries(years[index], _TWO_DIGITS, _file_as_number)
+    if len(months) == 0:
+        return None
+    days = _select_dir_entries(months[index], day_pattern, day_key)
+    if len(days) == 0:
+        return None
+
+    return dt.date(
+        _file_as_number(years[index]),
+        _file_as_number(months[index]),
+        day_key(days[index]),
+    )
+
+
+def _find_coverage(directory: Path, is_extract: bool) -> None | DateRange:
+    pattern = _TWO_DIGITS if is_extract else _ARCHIVE
+    key = _file_as_number if is_extract else _archive_as_number
+
+    first = _find_coverage_date(directory, "first", pattern, key)
+    if first is None:
+        return None
+
+    last = _find_coverage_date(directory, "last", pattern, key)
+    if last is None:
+        return None
+
+    return DateRange(first, last)
+
+
 @dataclass(frozen=True, slots=True)
 class Storage:
     """The current storage locations."""
 
-    archive_root: None | Path
-    working_root: None | Path
+    archive_root: Path
+    extract_root: None | Path
     staging_root: Path
 
     def isolate(self, worker: int) -> Self:
         """Isolate the work by assigning a unique staging root."""
         return type(self)(
             self.archive_root,
-            self.working_root,
+            self.extract_root,
             self.staging_root.with_suffix(f".{worker}")
         )
 
     @property
-    def the_archive_root(self) -> Path:
+    def the_extract_root(self) -> Path:
         """
-        The non-null archive root. If the working root is null, the
+        The non-null extract root. If the extract root is null, the
         implementation throws an exception.
         """
-        if self.archive_root is None:
-            raise ValueError('no archive root available')
-        return self.archive_root
+        if self.extract_root is None:
+            raise ValueError('no extract root available')
+        return self.extract_root
 
-    @property
-    def the_working_root(self) -> Path:
-        """
-        The non-null working root. If the working root is null, the
-        implementation throws an exception.
-        """
-        if self.working_root is None:
-            raise ValueError('no working root available')
-        return self.working_root
+    def coverage_of_archive(self) -> None | DateRange:
+        """Determine the date coverage of the archive based on directory names."""
+        return _find_coverage(self.archive_root, False)
 
-    @property
-    def the_staging_root(self) -> Path:
-        """
-        The non-null staging root. The staging root cannot be null, so this
-        property exists solely for interface uniformity.
-        """
-        return self.staging_root
+    def coverage_of_extract(self) -> None | DateRange:
+        """Determine the date coverage of the extract based on directory names."""
+        if self.extract_root is None:
+            return None
+        return _find_coverage(self.the_extract_root, True)
 
 
 # ================================================================================================

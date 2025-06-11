@@ -33,7 +33,7 @@ class Metadata[R: Release]:
 
     @property
     def category(self) -> None | str:
-        """Get the category for the working set."""
+        """Get the category for the corresponding extract."""
         return self._category
 
     @property
@@ -104,13 +104,13 @@ class Metadata[R: Release]:
 
     @classmethod
     def merge(cls, *sources: None | Path, not_exist_ok: bool = False) -> Self:
-        """Merge the metadata from the given directories."""
+        """Merge the metadata from the given metadata files."""
         merged = cls()
         for source in sources:
             if source is None:
                 continue
             try:
-                source_data = cls.read_json(source / META_FILE)
+                source_data = cls.read_json(source)
             except FileNotFoundError:
                 if not_exist_ok:
                     continue
@@ -184,11 +184,10 @@ class Metadata[R: Release]:
 
     @classmethod
     def copy_json(cls, source: Path, target: Path) -> None:
-        """Copy the metadata in JSON format from source to target directory."""
-        path = target / META_FILE
-        tmp = path.with_suffix(".tmp.json")
-        shutil.copy(source / META_FILE, tmp)
-        tmp.replace(path)
+        """Copy the metadata from source to target files."""
+        tmp = target.with_suffix(".tmp.json")
+        shutil.copy(source, tmp)
+        tmp.replace(target)
 
     def __repr__(self) -> str:
         return f"Metadata({self._category}, {len(self._releases):,} releases)"
@@ -339,7 +338,7 @@ class _Fsck:
         print()
 
         raise ExceptionGroup(
-            f'working data in "{self._root}" has problems', self._errors
+            f'category-specific extract in "{self._root}" has problems', self._errors
         )
 
     def scandir(self, path: Path, glob: str, pattern: re.Pattern) -> list[Path]:
@@ -440,8 +439,8 @@ class _Fsck:
         Scan data frames matching glob to extract only category name. If the
         frames do not have a unique category name, do nothing.
         """
-        from .framing import extract_category_from_parquet
-        category = extract_category_from_parquet(glob)
+        from .framing import distill_category_from_parquet
+        category = distill_category_from_parquet(glob)
         if category:
             self._metadata._category = category
 

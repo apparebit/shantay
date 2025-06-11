@@ -2,29 +2,37 @@ from argparse import ArgumentParser, RawDescriptionHelpFormatter
 import logging
 from pathlib import Path
 import sys
-from typing import Any
 
 
-def parse_options(args: list[str]) -> Any:
+def get_parser() -> ArgumentParser:
     parser = ArgumentParser(
         prog="shantay",
         formatter_class=RawDescriptionHelpFormatter,
         description="""
-        `extract` downloads daily distributions and extracts a category-specific
-        subset. It requires `--archive` and `--working` directories. For a newly
-        created subset, it also requires the `--category` to extract. That
-        category and other metadata are stored in `meta.json`.
+        `download` makes sure that daily distributions are locally available,
+        retrieving them as necessary. This task lets your prepare for future
+        `--offline` operation by downloading archives as expediently as possible
+        and not performing any other processing.
 
-        `recover` scans the `--working` directory to validate contents and
+        `extract` extracts a category-specific subset from the full database. It
+        requires `--archive` and `--extract` directories. For a newly created
+        extract directory, it also requires a `--category`. That category and
+        other metadata are stored in `meta.json`.
+
+        `recover` scans the `--extract` directory to validate contents and
         restore (some of the) metadata in `meta.json`.
 
-        `summarize` collects summary statistics either for the full database or
-        a category-specific subset, depending on whether `--archive` only (for
-        the full database) or both `--archive` and `--working` (for a subset)
-        are specified.
+        `summarize` collects summary statistics for the full database or a
+        category-specific subset, depending on whether only `--archive` (for the
+        full database) or both `--archive` and `--extract` (for a subset) are
+        specified.
+
+        `info` displays helpful information about Shantay, critical
+        dependencies, the Python interpreter, the operating system, as well as
+        the contents of the `--archive` and `--extract` directories.
 
         `visualize` generates an HTML document that visualizes summary
-        statistics. `--archive` and `--working` again determine the scope of the
+        statistics. `--archive` and `--extract` again determine the scope of the
         visualization.
 
         Summary statistics are stored in `all-data.parquet` for the full
@@ -39,47 +47,46 @@ def parse_options(args: list[str]) -> Any:
     group.add_argument(
         "--archive",
         type=Path,
-        help="set directory for downloaded archives",
+        required=True,
+        help="set directory for downloaded archives (required)",
     )
     group.add_argument(
-        "--working",
+        "--extract",
         type=Path,
-        help="set directory for parquet files with category-specific data"
+        help="set directory for parquet files with category-specific data (optional)"
     )
     group.add_argument(
         "--staging",
         type=Path,
-        help="set directory for temporary files (`./dsa_db-staging` by default)"
+        help="set directory for temporary files (default: `./dsa_db-staging`)"
     )
 
     group = parser.add_argument_group("data coverage")
     group.add_argument(
         "--first",
-        help="set the start date (2023-09-25 by default)"
+        help="set the start date (default: 2023-09-25)"
     )
     group.add_argument(
         "--last",
-        help="set the stop date (three days before Greenwhich's day by default)",
+        help="set the stop date (default: three days before today)",
     )
     group.add_argument(
         "--category",
-        help="select subset category (may omit the STATEMENT_CATEGORY_ prefix and/or"
-        "use lower case); precludes --all-data",
+        help="select subset category (optional; may omit the STATEMENT_CATEGORY_ "
+        "prefix and/or use lower case)",
+    )
+
+    group = parser.add_argument_group("resource requirements")
+    group.add_argument(
+        "--offline",
+        action="store_true",
+        help="make do with already downloaded database releases (optional)",
     )
     group.add_argument(
-        "--monthly",
-        dest="frequency",
-        action="store_const",
-        const="monthly",
-        help="use --monthly, not --daily granularity for visualizing statistics "
-        "(the default)"
-    )
-    group.add_argument(
-        "--daily",
-        dest="frequency",
-        action="store_const",
-        const="daily",
-        help="use --daily, not --monthly granularity for visualizing statistics"
+        "--workers",
+        default=1,
+        type=int,
+        help="use the given number of worker processes (default: 1)",
     )
 
     group = parser.add_argument_group("logging")
@@ -87,29 +94,22 @@ def parse_options(args: list[str]) -> Any:
         "--logfile",
         default="shantay.log",
         type=Path,
-        help="set file receiving log output (`./shantay.log` by default)",
+        help="set file receiving log output (default: `./shantay.log`)",
     )
     group.add_argument(
         "--quiet",
         dest="verbose",
         action="store_false",
-        help="disable verbose logging, which is the default",
+        help="disable verbose logging (optional)",
     )
 
     parser.add_argument(
-        "--multiproc",
-        default=1,
-        type=int,
-        help="use several processes for downloading archives and extracting working data",
-    )
-    parser.add_argument(
         "task",
-        choices=["extract", "recover", "summarize", "visualize"],
-        default="prepare",
+        choices=["info", "download", "distill", "recover", "summarize", "visualize"],
         help="select the task to execute",
     )
 
-    return parser.parse_args(args)
+    return parser
 
 
 def configure_logging(logfile: str, *, verbose: bool) -> None:
@@ -123,8 +123,14 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
 
 
 if __name__ == "__main__":
-    # Make sure logging is configured before dealing with platform names.
-    options = parse_options(sys.argv[1:])
+    # Handle command line options
+    parser = get_parser()
+    options = parser.parse_args(sys.argv[1:])
+    if options.task is None:
+        parser.print_help()
+        sys.exit(1)
+
+    # Configure logging, since sync_web_platforms writes to the log
     configure_logging(options.logfile, verbose=options.verbose)
     logger = logging.getLogger(__package__)
     logger.info(
@@ -138,8 +144,8 @@ if __name__ == "__main__":
     action = sync_web_platforms()
     if action == "disk":
         raise AssertionError(
-            "Syncing the platform names only updated the on-disk shantay._platform\n"
-            "module, but somehow couldn't update the in-memory representation.\n"
+            "Updated the platform names in `~/.shantay/platforms.json`,\n"
+            "but could not update their in-memory representation.\n"
             "Please file a bug report at\n"
             "    https://github.com/apparebit/shantay/issues/new/choose\n\n"
         )

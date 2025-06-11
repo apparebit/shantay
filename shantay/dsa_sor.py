@@ -48,7 +48,7 @@ class StatementsOfReasons(Dataset):
         path = root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
-        frame = self._extract_filtered_rows(
+        frame = self._distill_filtered_rows(
             csv_files=csv_files,
             release=release,
             index=index,
@@ -60,7 +60,7 @@ class StatementsOfReasons(Dataset):
         return frame
 
     @annotate_error(filename_arg="root")
-    def extract_category_data(
+    def distill_category_data(
         self,
         *,
         root: Path,
@@ -74,11 +74,11 @@ class StatementsOfReasons(Dataset):
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
         progress.step(index, extra="count rows")
-        total_rows, total_rows_with_keywords = self._extract_row_counts(
+        total_rows, total_rows_with_keywords = self._distill_row_counts(
             csv_files, index, name
         )
 
-        frame = self._extract_filtered_rows(
+        frame = self._distill_filtered_rows(
             csv_files=csv_files,
             release=release,
             index=index,
@@ -101,7 +101,7 @@ class StatementsOfReasons(Dataset):
 
         return digest, self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
 
-    def _extract_row_counts(self, csv_files: str, index: int, name: str) -> tuple[int, int]:
+    def _distill_row_counts(self, csv_files: str, index: int, name: str) -> tuple[int, int]:
         """
         Determine number of rows and rows with keywords across all CSV files in
         the batch.
@@ -123,7 +123,7 @@ class StatementsOfReasons(Dataset):
         )
         return rows, rows_with_keywords
 
-    def _extract_filtered_rows(
+    def _distill_filtered_rows(
         self,
         *,
         csv_files: str,
@@ -141,7 +141,7 @@ class StatementsOfReasons(Dataset):
         standard library.
         """
         # Fast path: Process several CSV files in one lazy Polars operation
-        progress.step(index, extra="extracting working data")
+        progress.step(index, extra="distilling data extract")
         try:
             frame = self.finish_frame(
                 release,
@@ -418,19 +418,19 @@ class StatementsOfReasons(Dataset):
         # progress analyzing the data, only to get stuck at the 100% mark
         # executing collect(). Even if eager processing is a bit slower, it
         # provides a more consistent appearance of progress.
-        working_data = pl.read_parquet(glob).with_columns(
+        extract = pl.read_parquet(glob).with_columns(
             pl.col("platform_name").replace(CanonicalPlatformNames)
         )
 
         collector.collect(
             release,
-            working_data,
+            extract,
             metadata=metadata,
             tag=category,
         )
 
         if category == StatementCategoryProtectionOfMinors:
-            csam = working_data.filter(
+            csam = extract.filter(
                 pl.col("category_specification").list.contains(
                     KeywordChildSexualAbuseMaterial
                 )

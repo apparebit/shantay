@@ -8,8 +8,8 @@ import polars as pl
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DateRange, DownloadFailed, META_FILE, MetadataConflict,
-    Storage
+    ConfigError, Coverage, DateRange, DownloadFailed, file_stem_for, META_FILE,
+    MetadataConflict, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -19,53 +19,83 @@ from .stats import Statistics
 from .util import scale_time
 
 
-def get_storage(options: Any) -> Storage:
-    return Storage(
+def get_configuration(
+    options: Any
+) -> tuple[Storage, Coverage, Metadata]:
+    # Handle --archive, --extract, and --staging options
+    storage = Storage(
         archive_root=options.archive,
-        working_root=options.working,
+        extract_root=options.extract,
         staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
     )
 
-
-def get_configuration(
-    options: Any
-) -> tuple[Storage, Coverage, Metadata, str]:
-    # Handle --archive, --working, and --staging options
-    storage = get_storage(options)
+    # Check task-specific conditions
+    if options.task == "download":
+        if storage.extract_root is not None:
+            raise ConfigError(
+                "please do not specify --extract directory for `download` task"
+            )
+        if options.offline:
+            raise ConfigError(
+                "cannot `download` daily distributions when --offline"
+            )
+    elif options.task in ("distill", "recover"):
+        if storage.extract_root is None:
+            raise ConfigError(
+                f"please specify --extract directory for `{options.task}` task"
+            )
 
     # Handle --category option
     category = normalize_category(options.category)
 
-    # Prepare metadata
-    metadata = Metadata.merge(
-        storage.staging_root, storage.working_root, storage.archive_root,
-        not_exist_ok=True
-    )
+    # Handle metadata
+    if storage.extract_root is None:
+        if category is not None:
+            raise ConfigError(
+                "please do not specify --category without --extract directory"
+            )
 
-    if metadata.category is None:
-        if category is None and storage.working_root is not None:
-            raise ConfigError("metadata lacks --category; please specify option")
-        metadata.set_category(category)
-    elif category is None:
-        category = metadata.category
-    elif metadata.category != category:
-        raise ConfigError(
-            f'metadata has --category {metadata.category} but option is {category}'
+        metadata = Metadata.merge(
+            storage.staging_root / META_FILE, storage.archive_root / META_FILE
         )
 
-    storage.staging_root.mkdir(parents=True, exist_ok=True)
-    metadata.write_json(storage.staging_root / META_FILE)
-
-    # Determine name of file with summary statistics
-    if storage.working_root is None:
-        stats_file = Statistics.DB_STATS_FILE
-    elif category is None:
-        raise ConfigError("metadata lacks --category; please specify option")
+        filestem = "db"
     else:
-        stats_file = Statistics.file_name_for(category)
+        try:
+            metadata = Metadata.read_json(storage.extract_root / META_FILE)
+        except FileNotFoundError:
+            metadata = Metadata()
 
-    # Handle --first and --last. The last date allows for GMT to be a day ahead
-    # and two days delay to post data.
+        if metadata.category is None:
+            if category is None:
+                raise ConfigError(
+                    "please specify --category for --extract directory"
+                )
+            metadata.set_category(category)
+        elif category is None:
+            category = metadata.category
+        elif category != metadata.category:
+            raise ConfigError(
+                f"--category {category} differs from {metadata.category} "
+                "in --extract directory's meta.json"
+            )
+
+        filestem = file_stem_for(category)
+
+        try:
+            metadata = metadata.merge_with(
+                Metadata.read_json(storage.staging_root / f"{filestem}.json")
+            )
+        except FileNotFoundError:
+            pass
+
+    # Make sure staging directory exists and store latest metadata in it
+    storage.staging_root.mkdir(parents=True, exist_ok=True)
+    metadata.write_json(storage.staging_root / f"{filestem}.json")
+
+    # Handle --first and --last, with the latter including one day for the
+    # Americas being a day behind Europe for several hours every day and another
+    # two days for posting delays
     earliest = dt.date(2023, 9, 25)
     latest = dt.date.today() - dt.timedelta(days=3)
 
@@ -87,26 +117,21 @@ def get_configuration(
     else:
         last = latest
 
-    # Handle daily/monthly
-    if options.frequency is not None and options.task != "visualize":
-        raise ConfigError(
-            f"--{options.frequency} can only be used with the `visualize` task"
-        )
-
-    if options.frequency == "daily" or options.task != "visualize":
-        range = DateRange(first, last).dailies()
+    range = DateRange(first, last)
+    if options.task == "visualize":
+        range = range.monthlies()
     else:
-        range = DateRange(first, last).monthlies()
+        range = range.dailies()
     coverage = Coverage.of(range, category)
 
-    # Handle --multiproc
-    if options.multiproc < 1:
-        raise ConfigError(f"process number must be positive but is {options.multiproc}")
-    if options.multiproc != 1 and options.task not in ("extract", "summarize"):
-        raise ConfigError("--multiproc works only with the extract and summarize tasks")
+    # Handle --workers
+    if options.workers < 1:
+        raise ConfigError(f"worker number must be positive but is {options.workers}")
+    if options.task in ("info", "recover", "visualize"):
+        options.workers = 1
 
     # Finish it all up
-    return storage, coverage, metadata, stats_file
+    return storage, coverage, metadata
 
 
 def configure_printing() -> None:
@@ -122,27 +147,22 @@ def configure_printing() -> None:
 
 
 def _run(options: Any) -> None:
+    storage, coverage, metadata = get_configuration(options)
     configure_printing()
 
-    # Handle recovery task before getting configuration
     if options.task == "recover":
-        storage = get_storage(options)
-        if storage.working_root is None:
-            raise ConfigError("cannot recover --working root without its path")
-        fsck(storage.working_root, progress=Progress())
+        fsck(storage.the_extract_root, progress=Progress())
         return
-
-    storage, coverage, metadata, stats_file = get_configuration(options)
 
     # Internally, we distinguish between two versions of summarize
     task = options.task
     if task == "summarize":
-        if storage.working_root is None:
+        if storage.extract_root is None:
             task = "summarize-all"
         else:
             task = "summarize-category"
 
-    if 1 < options.multiproc:
+    if 1 < options.workers:
         dataset = StatementsOfReasons()
         # Since the multiprocessor doesn't do `visualize`, there is no need for
         # stat_source either
@@ -151,8 +171,8 @@ def _run(options: Any) -> None:
             storage=storage,
             coverage=coverage,
             metadata=metadata,
-            stats_file=stats_file,
-            size=options.multiproc,
+            offline=options.offline,
+            size=options.workers,
         )
         frame = processor.run(task)
     else:
@@ -162,14 +182,14 @@ def _run(options: Any) -> None:
             storage=storage,
             coverage=coverage,
             metadata=metadata,
-            stats_file=stats_file,
+            offline=options.offline,
             progress=Progress(),
         )
         frame = processor.run(task)
 
     if options.task == "summarize":
         assert frame is not None
-        stats = Statistics(stats_file, frame)
+        stats = Statistics(f"{coverage.stem()}.parquet", frame)
         print("\n")
         print(stats.summary())
 
@@ -177,11 +197,11 @@ def _run(options: Any) -> None:
     print(f"\nCompleted task {task} in {v:,.1f} {u}")
 
 
-def run(args: list[str]) -> int:
+def run(options: Any) -> int:
     # Hide cursor
     print("\x1b[?25l", end="", flush=True)
     try:
-        _run(args)
+        _run(options)
         return 0
     except KeyboardInterrupt as x:
         print("".join(traceback.format_exception(x)))

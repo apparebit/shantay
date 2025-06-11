@@ -56,7 +56,7 @@ def collect_release_metadata(
     return DateRange(start_date, end_date), frame
 
 
-def extract_category_from_parquet(glob: str) -> None | str:
+def distill_category_from_parquet(glob: str) -> None | str:
     """
     Return the category, if the parquet files matching the glob have a
     consistent value for that column. Otherwise, return `None`.

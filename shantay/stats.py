@@ -25,7 +25,7 @@ from .framing import (
 )
 from .model import Daily, DateRange, Release
 from .schema import (
-    CanonicalPlatformNames, check_stats_platforms, DurationTransform, humane,
+    CanonicalPlatformNames, check_stats_platforms, DurationTransform, humanize,
     KeywordChildSexualAbuseMaterial, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS,
     TransformType, ValueCountsPlusTransform, VariantValueType
 )
@@ -42,7 +42,7 @@ _DECISION_TYPES = (
 )
 
 
-def _range_of(frame: pl.DataFrame) -> DateRange:
+def date_range_of(frame: pl.DataFrame) -> DateRange:
     return DateRange(*frame.select(
         pl.col("start_date").min(),
         pl.col("end_date").max(),
@@ -807,7 +807,7 @@ class _Summarizer:
                     # so that we can center it
                     assert isinstance(val, _Tag)
                     svar = (
-                        f"***—————————— {humane(str(var))} ——————————***"
+                        f"***—————————— {humanize(str(var))} ——————————***"
                         if markdown else var
                     )
                 elif var is _SPACER:
@@ -871,7 +871,7 @@ class _Summarizer:
         bar = "|" if markdown else "\u2502"
         for var, val in formatted_pairs:
             if isinstance(var, _Tag) and not markdown:
-                var = f" {humane(str(var))} ".center(var_width + 2, "═")
+                var = f" {humanize(str(var))} ".center(var_width + 2, "═")
                 val = "═" * (val_width + 2)
                 lines.append(
                     f"╞{var}╪{val}╡"
@@ -899,13 +899,6 @@ class Statistics:
     frame only on demand.
     """
 
-    # The file with statistics for the entire database
-    DB_STATS_FILE = "full-database.parquet"
-
-    """
-    The default date range for summary statistics, which start with
-    2023-09-25 and end two days before today.
-    """
     DEFAULT_RANGE: ClassVar[DateRange] = DateRange(
         dt.date(2023, 9, 25), dt.date.today() - dt.timedelta(days=3)
     )
@@ -919,7 +912,7 @@ class Statistics:
     def builtin(cls) -> Self:
         """Get the pre-computed statistics for the entire DSA database."""
         # Per spec, __package__ is the same as __spec__.parent, which
-        source = files(__spec__.parent).joinpath(cls.DB_STATS_FILE)
+        source = files(__spec__.parent).joinpath("db.parquet")
         with as_file(source) as path:
             return cls.read(path)
 
@@ -927,7 +920,7 @@ class Statistics:
     def from_storage(cls, file: str, staging: Path, persistent: Path) -> Self:
         """
         Pick the more complete statistics from staging and the persistent root
-        directory, i.e., archive or working. This method assumes that if both
+        directory, i.e., archive or extract. This method assumes that if both
         files exist, they also start on the same date.
         """
         s1 = cls.read(staging / file) if (staging / file).exists() else None
@@ -957,7 +950,7 @@ class Statistics:
             path
         ).with_columns(
             # Cast to string so that replace matches platform names
-            pl.col("variant").cast(str).replace(CanonicalPlatformNames)
+            pl.col("platform").cast(str).replace(CanonicalPlatformNames)
         )
 
         # If the platform names are out-of-whack, casting will fail already. But
@@ -1048,7 +1041,7 @@ class Statistics:
         frame = self.frame()
         if frame.height == 0:
             raise ValueError("no statistics available")
-        return _range_of(frame)
+        return date_range_of(frame)
 
     def collect(
         self,
@@ -1117,17 +1110,3 @@ class Statistics:
         tmp = (target / file).with_suffix(".tmp.parquet")
         shutil.copy(source / file, tmp)
         tmp.replace(target / file)
-
-    @classmethod
-    def file_name_for(cls, category: None | str) -> str:
-        if category is None:
-            return cls.DB_STATS_FILE
-        if category.startswith("STATEMENT_CATEGORY_"):
-            category = category[len("STATEMENT_CATEGORY_"):]
-        elif category.startswith("KEYWORD_"):
-            category = category[len("KEYWORD_"):]
-        else:
-            raise ValueError(f'invalid category "{category}"')
-
-        return f'{category.lower().replace("_", "-")}.parquet'
-

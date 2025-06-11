@@ -9,7 +9,7 @@
             "type": "debugpy",
             "request": "launch",
             "module": "shantay",
-            "args": ["--archive", "/Volumes/dsa-sor-db/archive", "--working", "/Volumes/dsa-sor-db/data", "--multiproc", "2", "prepare"]
+            "args": ["--archive", "/Volumes/dsa-sor-db/archive", "--extract", "/Volumes/dsa-sor-db/data", "--workers", "2", "distill"]
         }
     ]
 }

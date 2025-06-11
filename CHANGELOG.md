@@ -10,26 +10,24 @@ supported by the database.
 
 ### Simpler Command Line Interface
 
-Shantay now supports three primary tasks:
+Shantay now has only two primary tasks, `summarize` to collect statistics about
+the full database or some category-specific subset and `visualize` to illustrate
+previously collected statistics in HTML reports. The `summarize` task also
+downloads daily distributions and distills category-specific data as needed.
 
-  - `extract` to prepare category-specific subsets of the transparency database.
-  - `summarize` to collect statistics about the full database or
-    category-specific subset.
-  - `visualize` to prepare helpful charts illustrating previously collected
-    statistics.
+Shantay now stores daily distributions in the `--archive` directory and
+category-specific data in the `--extract` directory.
 
-When processing the entire database, you provide the `--archive` directory for
-storing original daily releases and global statistics. When processing a
-category-specific subset, you provide the `--archive` as well as `--working`
-directories, with the latter storing data and statistics for the subset. The
-first invocation of `extract` requires the `--category`, too.
+For fine-grained control and data recovery, Shantay also supports the `download`
+(new), `distill` (née `extract`), `info` (new), and `recover` tasks. The
+`--offline` (new) and `--workers` (née `--multiproc`) options control resource
+consumption. The `--first` and `--last` options restrict date coverage. See the
+[project readme](https://github.com/apparebit/shantay/blob/boss/README.md) or
+the `--help` output for further details.
 
-Shantay covers all available data by default. You can also restrict the date
-range with `--first` and `--last`.
-
-The `--filter`, `--root`, `--with-archive`, and `--with-working` options have
-been removed. The `prepare` task is now called `extract` and the `analyze` task
-has been subsumed by the `summarize` task.
+The `--daily`, `--filter`, `--monthly`, `--root`, `--with-archive`, and
+`--with-working` options have been removed. The`analyze` task has been subsumed
+by the `summarize` task.
 
 
 ### More compelling visualization
@@ -67,7 +65,6 @@ module, but should be accessed through the
 module. The file with the up-to-date platform names is
 `~/.shantay/platforms.json` on Linux/macOS and uses an equivalent path on
 Windows.
-
 
 Shantay's Python package ships with a copy of the **summary statistics for the
 entire DSA transparency database**. This version covers the database from its

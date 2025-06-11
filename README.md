@@ -79,48 +79,69 @@ default staging directory `dsa-db-staging`.
 
 ## 2. Using Shantay
 
-As illustrated above, each invocation of *shantay* performs a single task. In
-addition to the *summarize* and *visualize* tasks already introduced above,
-*shantay* supports two more tasks:
+The `summarize` and `visualize` tasks cover almost all of Shantay's
+functionality. Nonetheless, Shantay supports a few more tasks for fine-grained
+control and data recovery. Here are all of them:
 
-  - **extract** downloads daily distributions and extracts a category-specific
-    subset. It requires `--archive` and `--working` directories. For a newly
-    created subset, it also requires the `--category` to extract. That category
-    and other metadata are stored in `meta.json`.
+  - **download** makes sure that daily distributions are locally available,
+    retrieving them as necessary. This task lets your prepare for future
+    `--offline` operation by downloading archives as expediently as possible and
+    not performing any other processing.
 
-  - **recover** scans the `--working` directory to validate the files and
+  - **distill** extracts a category-specific subset from daily distributions. It
+    requires both the `--archive` and `--extract` directories. For a new extract
+    directory, it also requires a `--category`. That category and other metadata
+    are stored in `meta.json`.
+
+  - **recover** scans the `--extract` directory to validate the files and
     restore (some of the) metadata in `meta.json`.
 
   - **summarize** collects summary statistics either for the full database or a
     category-specific subset, depending on whether `--archive` only (for the
-    full database) or both `--archive` and `--working` (for a subset) are
-    specified. For the full database, it also downloads daily distributions.
+    full database) or both `--archive` and `--extract` (for a subset) are
+    specified.
+
+  - **info** prints helpful information about Shantay, key dependencies, the
+    Python runtime, and operating system, as well as the `--archive` and
+    `--extract` directories and their contents.
 
   - **visualize** generates an HTML document that visualizes summary statistics.
-    `--archive` and `--working` determine the scope of the visualization, just
+    `--archive` and `--extract` determine the scope of the visualization, just
     as for `summarize`.
 
-Summary statistics are stored in `all-data.parquet` for the full database and in
-a file named after the category, such as `protection-of-minors.parquet`, for
+Unless the `--offline` option is specified, the `distill` and `summarize` tasks
+download daily distributions as needed.
+
+Unless the date range is restricted with `--first` and `--last`, the `distill`
+task also extracts category-specific data as needed. By default, the `--first`
+date is 2023-09-25, the day the DSA transparency database became operational,
+and the `--last` date is three days before today—one day to allow for the
+Americas being a day behind Europe for several hours every day and another two
+days to allow for some posting delay.
+
+Summary statistics are stored in `db.parquet` for the full database and in a
+file named after the category, such as `protection-of-minors.parquet`, for
 category-specific data. The HTML documents follow the same naming convention.
 
-Shantay covers all available data from 2023-09-25 to three days before today by
-default. You can also restrict the range with `--first` and `--last`.
+Shantay's log distinguishes between `summarize-all` and `summarize-category`
+when identifying tasks. Furthermore, even when executing a category-specific
+`summarize` task, Shantay's log distinguishes `distill` from
+`summarize-category`. For multiprocessing, it schedules both tasks separately.
 
 
 ## 3. Organization of Storage
 
-The screenshot below shows an example directory hierarchy under the `--working`
+The screenshot below shows an example directory hierarchy under the `--extract`
 root. It illustrates the directory levels discussed in 3.2 as well as the files
 with digests and summary statistics discussed in 3.3.
 
-![The working root hierarchy](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/screenshot/hierarchy.png)
+![The extract root hierarchy](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/screenshot/hierarchy.png)
 
 
-### 3.1 Three Root Directories: Staging, Archive, Working
+### 3.1 Three Root Directories: Staging, Archive, Extract
 
 *Shantay* distinguishes between three primary directories, `--staging` as
-temporary storage, `--archive` for the original distributions, and `--working`
+temporary storage, `--archive` for the original distributions, and `--extract`
 for a category-specific subset:
 
   - **Staging** stores data currently being processed, e.g., by uncompressing,
@@ -131,12 +152,12 @@ for a category-specific subset:
   - **Archive** stores the original, daily ZIP files and their SHA1 digests. It
     is treated as append-only storage and holds the ground truth. This directory
     must be on a large file system, e.g., 2 TB just about holds all data from
-    2023-09-25 into May 2025. It may be on an external drive (such as the T7
-    mentioned before).
-  - **Working** stores parquet files with a (much) smaller subset of the
-    database. Like *archive*, *working* is treated as append-only storage.
+    2023-09-25 into May 2025. This directory may be on an external drive (such
+    as the already mentioned T7).
+  - **Extract** stores parquet files with a (much) smaller subset of the
+    database. Like *archive*, *extract* is treated as append-only storage.
     Unlike *archive*, which is unique, different runs of *shantay* may use
-    different *working* directories representing different subsets of the
+    different *extract* directories representing different subsets of the
     database.
 
 
@@ -150,7 +171,7 @@ level down. Finally, daily archive files have their original names, whereas
 files with category-specific data are named after the date and a zero-based
 five-digit index (as illustrated earlier in this paragraph).
 
-For the working root, *shantay* maintains a per-day digest file named
+For the extract root, *shantay* maintains a per-day digest file named
 `sha256.txt`. It contains the SHA-256 digests for every parquet file in the
 directory: Each line contains one hexadecimal ASCII digest, a space,and the
 file's name.
@@ -162,7 +183,7 @@ In addition to yearly directories, *shantay* also stores the following two files
 inside root directories.
 
   - `meta.json` contains an object with the `category` used for selecting the
-    working data and some statistics about `releases`. `batch_count` must be the
+    data extract and some statistics about `releases`. `batch_count` must be the
     number of daily data files and `sha256` must be the (recursive) digest of
     the digests in the `sha256.txt` file.
 
