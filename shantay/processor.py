@@ -215,7 +215,7 @@ class Processor[R: Release]:
                 )
                 break
 
-            # Do the distillation work
+            # Do the distillation
             self.distill_category_release(release)
 
             # The staging root's category-specific metadata was merged with the
