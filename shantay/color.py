@@ -18,8 +18,8 @@ LIGHT_BLUE = "#97bbf5"
 BROWN = "#a57356"
 GRAY = "#9498a0"
 
-MAGENTA = "#b457ae"
-OLIVE = "#bac83b"
+MAGENTA = "#b955a6"
+OLIVE = "#b1b747"
 
 PALETTE = [
     BLUE,
