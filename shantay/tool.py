@@ -56,7 +56,9 @@ def get_configuration(
             )
 
         metadata = Metadata.merge(
-            storage.staging_root / META_FILE, storage.archive_root / META_FILE
+            storage.staging_root / META_FILE,
+            storage.archive_root / META_FILE,
+            not_exist_ok=True,
         )
 
         filestem = "db"
