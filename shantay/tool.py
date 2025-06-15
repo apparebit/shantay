@@ -1,14 +1,17 @@
+import atexit
 import datetime as dt
+import errno
+import os
 from pathlib import Path
 import traceback
-from typing import Any
+from typing import Any, cast
 
 import polars as pl
 
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DateRange, DownloadFailed, file_stem_for, META_FILE,
+    ConfigError, Coverage, DateRange, DownloadFailed, file_stem_for,
     MetadataConflict, Storage
 )
 from .multiprocessor import Multiprocessor
@@ -17,6 +20,36 @@ from .progress import Progress
 from .schema import MissingPlatformError, normalize_category, StatementCategory
 from .stats import Statistics
 from .util import scale_time
+
+
+_LOCK_FILE = None
+
+
+def acquire_staging_lock(staging: Path) -> None:
+    global _LOCK_FILE
+
+    # Acquire lock file for staging
+    _LOCK_FILE = staging / f"staging.lock"
+    try:
+        fd = os.open(str(_LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        with os.fdopen(fd, "a") as file:
+            file.write(f"{os.getpid()}@{dt.datetime.now().isoformat()}")
+    except OSError as x:
+        if x.errno != errno.EEXIST:
+            raise
+
+        with open(_LOCK_FILE, mode="r", encoding="utf8") as file:
+            provenance = file.read()
+        pid, _, ts = provenance.partition("@")
+        x.add_note(f"""\
+The staging root "{staging}" already contains a lock file "staging.lock".
+It was created by process {pid} at {ts}. If that process is still
+running Shantay, please use a different staging directory. If not,
+you can safely delete the lock file and run Shantay again.
+""")
+        raise x
+
+    atexit.register(lambda: cast(Path, _LOCK_FILE).unlink(missing_ok=True))
 
 
 def get_configuration(
@@ -28,6 +61,9 @@ def get_configuration(
         extract_root=options.extract,
         staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
     )
+
+    # Acquire lock file
+    acquire_staging_lock(storage.staging_root)
 
     # Check task-specific conditions
     if options.task == "download":
@@ -207,7 +243,7 @@ def _run(options: Any) -> None:
         print("\n")
         print(stats.summary())
 
-    v, u = scale_time(processor.runtime)
+    v, u = scale_time(processor.latency)
     print(f"\nCompleted task {task} in {v:,.1f} {u}")
 
 
@@ -256,5 +292,9 @@ def run(options: Any) -> int:
         print("".join(traceback.format_tb(x.__traceback__)))
         return 1
     finally:
+        # Always delete lock file
+        assert _LOCK_FILE is not None
+        _LOCK_FILE.unlink(missing_ok=True)
+
         # Show cursor again
         print("\x1b[?25h", end="", flush=True)
