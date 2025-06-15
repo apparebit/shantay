@@ -14,7 +14,6 @@ also are a few places that need to mediate between API surface and data frames.
 This module collects the functions necessary for the latter.
 """
 from collections.abc import Iterator, Sequence
-from importlib import import_module
 from typing import Literal
 
 import polars as pl
@@ -24,36 +23,6 @@ from .model import DateRange, Period
 
 
 CSAM_TAG = "CSAM"
-
-
-def collect_release_metadata(
-    records: Iterator[FullMetadataEntry]
-) -> tuple[DateRange, pl.DataFrame]:
-    """
-    Collect metadata release records into a data frame.
-
-    This function does *not* depend on the particulars of the DSA SoR DB schema.
-
-    The data frame uses `i64` for columns containing counts. The corresponding
-    resolution is barely sufficient for the current use case and hence switching
-    to `i128` is highly desirable. However, for now, that is impossible because
-    Pola.rs does not yet support writing parquet files with the larger integers.
-    """
-    frame = pl.json_normalize([*records]).with_columns(
-        pl.col("release").str.to_date("%Y-%m-%d"),
-        pl.selectors.integer().as_expr().exclude("batch_count").cast(pl.Int64),
-    ).select(
-        pl.col("release").alias("start_date"),
-        pl.col("release").alias("end_date"),
-        pl.exclude("release"),
-    )
-
-    start_date, end_date = frame.select(
-        pl.col("start_date").min().alias("start_date"),
-        pl.col("end_date").max().alias("end_date"),
-    ).row(0)
-
-    return DateRange(start_date, end_date), frame
 
 
 def distill_category_from_parquet(glob: str) -> None | str:

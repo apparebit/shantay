@@ -10,10 +10,11 @@ from typing import Callable, cast, Self
 
 # from .framing import below within method
 from .model import (
-    Coverage, DateRange, DIGEST_FILE, FullMetadataEntry, META_FILE, MetadataConflict,
+    Coverage, DateRange, DIGEST_FILE, FullMetadataEntry, MetadataConflict,
     MetadataEntry, Release
 )
 from .progress import NO_PROGRESS, Progress
+from .schema import normalize_category
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -85,7 +86,7 @@ class Metadata[R: Release]:
         """Get the number of releases covered."""
         return len(self._releases)
 
-    def unfiltered(self) -> Self:
+    def without_category(self) -> Self:
         """Create a stripped down version suitable for the archive root."""
         def strip(data: MetadataEntry) -> MetadataEntry:
             return {
@@ -162,6 +163,35 @@ class Metadata[R: Release]:
 
             if mismatch:
                 raise MetadataConflict(f"divergent metadata for release {release}")
+
+    @classmethod
+    def find_file(cls, directory: Path) -> Path:
+        """
+        Find the JSON file with metadata. This method considers all files that
+        are named after a statement category, ignoring case and allowing dashes
+        or spaces instead of underscores, followed by the ".json" extension. It
+        does *not* recognize "db.json". It is an error if the directory contains
+        more or less than one file matching the criteria.
+        """
+        files = []
+        for file in directory.glob("*.json"):
+            try:
+                normalize_category(file.stem)
+                files.append(file)
+            except ValueError:
+                pass
+
+        if len(files) == 0:
+            raise FileNotFoundError(
+                f'directory "{directory}" does not contain metadata file'
+            )
+        if len(files) != 1:
+            raise FileNotFoundError(
+                f'directory "{directory}" contains more than one metadata file:\n'
+                f'{", ".join(f.stem for f in files)}'
+            )
+
+        return files[0]
 
     @classmethod
     def read_json(cls, file: Path) -> Self:
@@ -285,10 +315,12 @@ class _Fsck:
     def run(self) -> Metadata:
         """Run the file system analysis."""
         try:
-            self._metadata = Metadata.read_json(self._root / META_FILE)
+            path = Metadata.find_file(self._root)
+            self._metadata = Metadata.read_json(path)
         except FileNotFoundError:
             self._metadata = Metadata()
 
+        _logger.info('scanning root directory="%s"', self._root)
         years = self.scandir(self._root, "????", _FOUR_DIGITS)
         self.check_children(self._root, years, 1800, 3000, int)
 
@@ -318,22 +350,25 @@ class _Fsck:
 
         # If there were no errors, save metadata and be done.
         if len(self._errors) == 0:
-            self._metadata.write_json(self._root / META_FILE)
+            path = self._root / "fsck.json"
+            _logger.info('wrote result of successful scan to file="%s"', path)
+            self._metadata.write_json(path)
             self._progress.perform(
-                f'wrote "meta.json" with updated metadata to "{self._root}"'
+                f'wrote "fsck.json" with updated metadata to "{self._root}"'
             )
             print()
             return self._metadata
 
         # There were errors. Metadata may still be useful, so save under another name.
-        with open(Path.cwd() / "fsck.json", mode="w", encoding="utf8") as file:
+
+        with open(Path.cwd() / "bad-fsck.json", mode="w", encoding="utf8") as file:
             json.dump({
                 "category": self._metadata._category,
                 "releases": self._metadata._releases
             }, file, indent=2)
 
         self._progress.perform(
-            'wrote "fsck.json" with recovered metadata to current directory'
+            'wrote "bad-fsck.json" with recovered metadata to current directory'
         )
         print()
 

@@ -544,7 +544,7 @@ def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
     except BaseException as x:
         _logger.error('failed reading from queue="cancel", worker=%d', _PID, exc_info=x)
     else:
-        _logger.debug("cancellation signal received by worker=%d", _PID)
+        _logger.info("cancellation signal received by worker=%d", _PID)
         _is_cancelled.set()
 
 

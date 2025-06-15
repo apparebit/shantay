@@ -11,9 +11,8 @@ import traceback
 from types import FrameType
 from typing import Any
 
-from .framing import collect_release_metadata
 from .metadata import Metadata
-from .model import Coverage, Daily, DataFrameType, Dataset, META_FILE, Storage
+from .model import Coverage, Daily, DataFrameType, Dataset, MetadataEntry, Storage
 from .pool import Cancelled, Pool, Task, WorkerProgress
 from .processor import distilled_category_exists, Processor
 from .schema import MissingPlatformError, update_platforms
@@ -41,7 +40,6 @@ class Multiprocessor:
         self._storage = storage
         self._coverage = coverage
         self._metadata = metadata
-        self._metadata_frame = None
         self._stats = None
         self._offline = offline
 
@@ -54,15 +52,15 @@ class Multiprocessor:
         # Use the same level as the root logger
         self._pool = Pool(size=size, log_level=logging.getLogger().level)
 
-        self._runtime = 0
+        self._running_time = 0
 
     @property
     def stats_file(self) -> str:
         return f"{self._coverage.stem()}.parquet"
 
     @property
-    def runtime(self) -> float:
-        return self._runtime
+    def latency(self) -> float:
+        return self._running_time
 
     def run(self, task: str) -> None | DataFrameType:
         assert self._pool is not None
@@ -77,7 +75,7 @@ class Multiprocessor:
         _logger.info('    key="coverage.category",    value="%s"', self._coverage.category)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
-        _logger.info('    key="coverage.frequency"    value="%s"', self._coverage.frequency())
+        _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency())
         _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
         _logger.info('    key="network.offline",      value="%s"', self._offline)
         _logger.info('    key="pool.size",            value=%d', self._pool.size)
@@ -92,10 +90,10 @@ class Multiprocessor:
             cover = self._coverage.to_date_range()
         elif task == "summarize-category":
             # Intersect desired data range with available date range
-            date_cover, metadata = collect_release_metadata(self._metadata.records)
-            self._metadata_frame = metadata
             self._stats = Statistics(self.stats_file)
-            cover = self._coverage.to_date_range().intersection(date_cover)
+            cover = self._coverage.to_date_range()
+            if self._offline:
+                cover = cover.intersection(self._metadata.range)
         elif task == "summarize-all":
             self._stats = Statistics.from_storage(
                 self.stats_file, self._storage.staging_root, self._storage.archive_root,
@@ -123,7 +121,7 @@ class Multiprocessor:
         if task.startswith("summarize"):
             assert self._stats is not None
 
-            _logger.debug(
+            _logger.info(
                 'writing rechunked summary statistics to file="%s"',
                 self._storage.staging_root / self.stats_file
             )
@@ -133,13 +131,13 @@ class Multiprocessor:
                 persistent = self._storage.the_extract_root
             else:
                 persistent = self._storage.archive_root
-            _logger.debug(
+            _logger.info(
                 'copying summary statistics to persistent file="%s"',
                 persistent / self.stats_file
             )
             Statistics.copy(self.stats_file, self._storage.staging_root, persistent)
 
-        self._runtime = time.time() - start_time
+        self._running_time = time.time() - start_time
         return None if self._stats is None else self._stats.frame()
 
     def _task_iter(self) -> Iterator[Task]:
@@ -167,6 +165,11 @@ class Multiprocessor:
                     else:
                         effective_task = "summarize-category"
 
+            if effective_task == "summarize-category":
+                metadata_entry = self._metadata[release]
+            else:
+                metadata_entry = None
+
             _logger.info(
                 'submitting task="%s", release="%s", pool="%s"',
                 effective_task, release, self._pool.id
@@ -179,8 +182,8 @@ class Multiprocessor:
                     task=effective_task,
                     dataset=self._dataset,
                     storage=self._storage,
-                    category=self._metadata.category,
-                    metadata_frame=self._metadata_frame,
+                    category=self._coverage.category,
+                    metadata_entry=metadata_entry,
                     release=release,
                     offline=self._offline,
                 )
@@ -260,20 +263,18 @@ class Multiprocessor:
             release = result["release"]
             del result["release"]
             self._metadata[release] = result
-            self._metadata.write_json(
-                self._storage.staging_root / f"{self._coverage.stem()}.json",
-                sort_keys=True,
-            )
 
-            # If the extract root contains a meta.json, then the tool module
-            # instantiates _metadata with that file's data. Since copy_json()
-            # first writes to a temporary file and then atomically replaces the
-            # original, it's ok to update that file here. In fact, it's more
-            # than ok because we just updated the metadata with a new release.
-            Metadata.copy_json(
-                self._storage.staging_root / f"{self._coverage.stem()}.json",
-                self._storage.the_extract_root / META_FILE
-            )
+            # Since distillation starts out with the extract root's metadata,
+            # it's ok to write back the extended metadata. We protect against
+            # concurrent updates by first writing to a temporay file and then
+            # atomically replace the old file with newly written one. While that
+            # ensures the integrity of the file, it cannot prevent dataloss if
+            # multiple Shantay instance are running concurrently and clobber
+            # each others' updates.
+            meta_json = f"{self._coverage.stem()}.json"
+            meta_staging = self._storage.staging_root / meta_json
+            self._metadata.write_json(meta_staging, sort_keys=True)
+            Metadata.copy_json(meta_staging, self._storage.the_extract_root / meta_json)
 
             # If distill was scheduled as part of summarize, schedule summarization
             if self._task == "summarize-category":
@@ -330,45 +331,47 @@ def run_on_worker(
     dataset: Dataset,
     storage: Storage,
     category: None | str,
-    metadata_frame: DataFrameType,
+    metadata_entry: None | MetadataEntry,
     release: Daily,
     offline: bool,
 ) -> Any:
     """Run a task in a worker process."""
-    # As a major WTF, the process pool executor unpickles all worker exceptions
-    # as instances of the same type. So we instead communicate critical
-    # exceptions as tagged values.
+    # For reasons unbeknownst to man, the process pool executor unpickles all
+    # worker exceptions as instances of the same type. To work around this
+    # madness, we turn exceptions that require special handling in the
+    # coordinator into tagged values. We still raise unexpected, arbitrary
+    # exceptions, which trigger the coordinator to fail fast.
     try:
         result = _run_on_worker(
             task,
             dataset,
             storage,
             category,
-            metadata_frame,
+            metadata_entry,
             release,
             offline,
         )
-        _logger.debug(
-            'returning result for task="%s", release="%s", worker=%d',
-            task, release, _PID
+        _logger.info(
+            'returning result for task="%s", release="%s", category="%s", worker=%d',
+            task, release, category or None, _PID
         )
         return "value", result
     except Cancelled as x:
-        _logger.debug(
-            'cancelled task="%s", release="%s", worker=%d',
-            task, release, _PID
+        _logger.warning(
+            'cancelled task="%s", release="%s", category="%s", worker=%d',
+            task, release, category or None, _PID
         )
         return "cancel", x.args
     except MissingPlatformError as x:
-        _logger.debug(
-            'missing platform names in task="%s", release="%s", worker=%d',
-            task, release, _PID
+        _logger.warning(
+            'missing platform names in task="%s", release="%s", category="%s", worker=%d',
+            task, release, category or None, _PID
         )
         return "platforms", x.args
     except Exception as x:
         _logger.error(
-            'unexpected error in task="%s", release="%s", worker=%d',
-            task, release, _PID, exc_info=x
+            'unexpected error in task="%s", release="%s", category="%s", worker=%d',
+            task, release, category or None, _PID, exc_info=x
         )
         print(f"unexpected exception thrown by worker with pid={_PID}:")
         traceback.format_exception(x)
@@ -379,11 +382,14 @@ def _run_on_worker(
     dataset: Dataset,
     storage: Storage,
     category: None | str,
-    metadata_frame: DataFrameType,
+    metadata_entry: None | MetadataEntry,
     release: Daily,
     offline: bool,
 ) -> Any:
+    # Create a minimal coverage object necessary for the task
     coverage = Coverage(release, release, category)
+
+    # Create a minimal metadata object necessary for the task
     if task == "download":
         metadata = Metadata()
     elif task == "distill":
@@ -391,10 +397,12 @@ def _run_on_worker(
     elif task == "summarize-all":
         metadata = Metadata()
     elif task == "summarize-category":
-        metadata = Metadata.read_json(storage.the_extract_root / META_FILE)
+        assert metadata_entry is not None
+        metadata = Metadata(category, {str(release): metadata_entry})
     else:
         raise AssertionError(f"invalid task {task}")
 
+    # Instantiate a processor
     processor = Processor(
         dataset=dataset,
         storage=storage.isolate(_PID),
@@ -404,25 +412,26 @@ def _run_on_worker(
         progress=WorkerProgress(),
     )
 
+    # Actually run the task
     _logger.debug(
-        'running task=%s, category="%s", release="%s", worker=%d',
-        task, category or "", release, _PID
+        'running task=%s, release="%s", category="%s", worker=%d',
+        task, release, category or "", _PID
     )
-
     if task == "download":
         processor.download_archive(release)
         result = None
     if task == "distill":
         processor.distill_category_release(release)
         record = metadata[release]
-        result = dict(release=release, **record)
+        result = dict(**record, release=release)
     elif task == "summarize-all":
         collector = Collector()
         processor.summarize_database_release(release, collector)
         result = collector.frame()
     elif task == "summarize-category":
+        assert metadata_entry is not None
         collector = Collector()
-        processor.summarize_category_release(release, metadata_frame, collector)
+        processor.summarize_category_release(release, metadata_entry, collector)
         result = collector.frame()
     else:
         raise AssertionError(f"invalid task {task}")

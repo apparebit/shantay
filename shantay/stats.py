@@ -15,15 +15,16 @@ import datetime as dt
 from importlib.resources import files, as_file
 import math
 from pathlib import Path
+import re
 import shutil
-from typing import Any, ClassVar, Self
+from typing import Any, cast, ClassVar, Self
 
 import polars as pl
 
 from .framing import (
     aggregates, finalize, get_quantity, NOT_NULL, predicate, Quantity
 )
-from .model import Daily, DateRange, Release
+from .model import Daily, DateRange, MetadataEntry, Release
 from .schema import (
     CanonicalPlatformNames, check_stats_platforms, DurationTransform, humanize,
     KeywordChildSexualAbuseMaterial, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS,
@@ -385,43 +386,29 @@ class Collector:
                 this.collect_platform_data()
 
     def collect_header(
-        self, metadata: None | pl.DataFrame = None, tag: None | str = None
+        self, metadata_entry: None | MetadataEntry = None, tag: None | str = None
     ) -> None:
         """Create a header frame with the given statistics."""
         pairs = {}
-        if metadata is None:
-            if isinstance(self._source, pl.LazyFrame):
-                self._source = self._source.collect()
+        md = cast(dict, metadata_entry or {})
 
-            pairs["batch_count"] = 1
-            pairs["batch_rows"] = self._source.height
-            pairs["batch_rows_with_keywords"] = (
-                self._source.select(
-                    pl.col("category_specification").is_null().not_().sum()
-                ).item()
-            )
-            pairs["batch_memory"] = self._source.estimated_size()
-            pairs["total_rows"] = pairs["batch_rows"]
-            pairs["total_rows_with_keywords"] = pairs["batch_rows_with_keywords"]
-        else:
-            for name in (
-                "batch_count", "batch_rows", "batch_rows_with_keywords",
-                "batch_memory", "total_rows", "total_rows_with_keywords",
-            ):
-                if name in metadata.columns:
-                    value = metadata.select(pl.col(name).sum()).item()
-                else:
-                    value = None
+        if isinstance(self._source, pl.LazyFrame):
+            self._source = self._source.collect()
 
-                pairs[name] = value
-
-        assert self._release is not None
+        pairs["batch_count"] = md.get("batch_count")
+        pairs["batch_rows"] = self._source.height
+        pairs["batch_rows_with_keywords"] = (
+            self._source.select(
+                pl.col("category_specification").is_null().not_().sum()
+            ).item()
+        )
+        pairs["batch_memory"] = self._source.estimated_size()
+        pairs["total_rows"] = md.get("total_rows")
+        pairs["total_rows_with_keywords"] = md.get("total_rows_with_keywords")
         height = len(pairs)
 
-        # Pola.rs uses different code paths for pl.concat depending on whether
-        # the first frame is lazy or not. Let's use the right one.
-        Frame = pl.LazyFrame if isinstance(self._source, pl.LazyFrame) else pl.DataFrame
-        header = Frame({
+        assert self._release is not None
+        header = pl.DataFrame({
             "start_date": height * [self._release.start_date],
             "end_date": height * [self._release.end_date],
             "tag": [
@@ -446,12 +433,12 @@ class Collector:
         release: Release,
         frame: pl.DataFrame | pl.LazyFrame,
         tag: None | str = None,
-        metadata: None | pl.DataFrame = None,
+        metadata_entry: None | MetadataEntry = None,
     ) -> None:
         """Collect all necessary data in partial data frames."""
         if tag is None or tag.startswith("STATEMENT_CATEGORY_"):
             with self.source_data(frame=frame, release=release, tag=tag) as this:
-                this.collect_header(metadata, tag)
+                this.collect_header(metadata_entry, tag)
                 this.collect_body()
         else:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
@@ -493,6 +480,9 @@ class _Spacer:
         return ""
 
 _SPACER = _Spacer()
+
+
+_WHITESPACE = re.compile(r"\s+", re.UNICODE)
 
 
 type _Summary = list[tuple[str | _Tag | _Spacer, Any]]
@@ -617,7 +607,10 @@ class _Summarizer:
                 if text is None:
                     var = f"{var}.is_null"
                 else:
-                    var = f"{var}.{text}"
+                    text = _WHITESPACE.sub(" ", text).replace("|", "")
+                    var = f"{var}.{text[:70]}"
+                    if 70 < len(text):
+                        var += "…"
             else:
                 if variant is None:
                     var = f"{var}.is_null"
@@ -1049,7 +1042,7 @@ class Statistics:
         release: Release,
         frame: pl.DataFrame | pl.LazyFrame,
         tag: None | str = None,
-        metadata: None | pl.DataFrame = None,
+        metadata_entry: None | MetadataEntry = None,
     ) -> None:
         """
         Add summary statistics for the frame with transparency database data.
@@ -1058,7 +1051,7 @@ class Statistics:
         """
         if self._collector is None:
             self._collector = Collector()
-        self._collector.collect(release, frame, tag=tag, metadata=metadata)
+        self._collector.collect(release, frame, tag=tag, metadata_entry=metadata_entry)
 
     def append(self, frame: pl.DataFrame) -> None:
         """

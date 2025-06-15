@@ -11,11 +11,10 @@ from urllib.request import Request, urlopen
 import zipfile
 
 from .__init__ import __version__
-from .framing import collect_release_metadata, filter_period
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
-    DownloadFailed, META_FILE, MetadataEntry, Release, Storage
+    DownloadFailed, MetadataEntry, Release, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -50,16 +49,16 @@ class Processor[R: Release]:
         self._metadata = metadata
         self._offline = offline
         self._progress = progress
-        self._runtime = 0.0
+        self._running_time = 0.0
 
     @property
     def stats_file(self) -> str:
         return f"{self._coverage.stem()}.parquet"
 
     @property
-    def runtime(self) -> float:
+    def latency(self) -> float:
         """The latency of the most recent invocation of run()."""
-        return self._runtime
+        return self._running_time
 
     def run(self, task: str) -> None | DataFrameType:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
@@ -71,7 +70,7 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.category",    value="%s"', self._coverage.category)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
-        _logger.info('    key="coverage.frequency"    value="%s"', self._coverage.frequency())
+        _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency())
         _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
         _logger.info('    key="network.offline",      value="%s"', self._offline)
         _logger.info('    key="pool.size",            value=1')
@@ -98,8 +97,8 @@ class Processor[R: Release]:
         else:
             raise ValueError(f'invalid task "{task}"')
 
-        self._runtime = time.time() - start_time
-        value, unit = scale_time(self._runtime)
+        self._running_time = time.time() - start_time
+        value, unit = scale_time(self._running_time)
         _logger.info('processing took time=%.3f, unit="%s"', value, unit)
 
         return result
@@ -170,10 +169,16 @@ class Processor[R: Release]:
 
             emit_rule()
             try:
-                meta = Metadata.read_json(self._storage.extract_root / META_FILE)
+                metapath = Metadata.find_file(self._storage.extract_root)
+                metadata = Metadata.read_json(metapath)
             except FileNotFoundError:
-                meta = None
-            emit_range("extract", "meta.json", None if meta is None else meta.range)
+                metapath = None
+                metadata = None
+            emit_range(
+                "extract",
+                "n/a" if metapath is None else metapath.name,
+                None if metadata is None else metadata.range
+            )
 
             emit_rule()
             filename = f"{self._coverage.stem()}.parquet"
@@ -222,9 +227,10 @@ class Processor[R: Release]:
             # extract's metadata during startup. Hence writing it back to the
             # extract directory won't lead to data loss---as long as there are
             # no concurrent writers!
+            meta_json = f"{self._coverage.stem()}.json"
             Metadata.copy_json(
-                self._storage.staging_root / f"{self._coverage.stem()}.json",
-                self._storage.the_extract_root / META_FILE
+                self._storage.staging_root / meta_json,
+                self._storage.the_extract_root / meta_json
             )
 
     def distill_category_release(self, release: Daily) -> None:
@@ -328,6 +334,7 @@ class Processor[R: Release]:
             with open(path / archive, mode="wb") as file:
                 self._progress.start(content_length)
                 while True:
+                    check_not_cancelled()
                     chunk = response.read(self.CHUNK_SIZE)
                     if not chunk:
                         break
@@ -422,6 +429,8 @@ class Processor[R: Release]:
         batch_digests = []
         full_counters = Counter(batch_count=batch_count)
         for index, name in enumerate(filenames):
+            check_not_cancelled()
+
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
             digest, counters = self._dataset.distill_category_data(
@@ -518,8 +527,7 @@ class Processor[R: Release]:
     def summarize_category(self) -> DataFrameType:
         """Analyze the data extracted into the extract root."""
         # Prepare metadata for analysis
-        range, metadata = collect_release_metadata(self._metadata.records)
-        range = range.intersection(
+        range = self._metadata.range.intersection(
             self._coverage.to_date_range(), empty_ok=False
         ).dailies()
 
@@ -541,9 +549,8 @@ class Processor[R: Release]:
                 )
                 break
 
-            check_not_cancelled()
             self.distill_category_release(release)
-            self.summarize_category_release(release, metadata, stats)
+            self.summarize_category_release(release, self._metadata[release], stats)
             # The generation of summary statistics creates a large number of
             # data frames (at least as few hundred), many of which have only one
             # row. That ensures that even daily statistics easily fit into
@@ -564,18 +571,16 @@ class Processor[R: Release]:
     def summarize_category_release(
         self,
         release: Daily,
-        metadata: DataFrameType,
+        metadata_entry: MetadataEntry,
         collector: CollectorProtocol,
     ) -> None:
         """Analyze the category-specific data for the given release."""
-        release_metadata = filter_period(metadata, release)
-
         assert isinstance(self._coverage.category, str)
         self._dataset.summarize_release(
             root=self._storage.the_extract_root,
             release=release,
             category=self._coverage.category,
-            metadata=release_metadata,
+            metadata_entry=metadata_entry,
             collector=collector
         )
 
@@ -625,10 +630,10 @@ class Processor[R: Release]:
             stats.write(self._storage.staging_root)
 
         # Rewrite saved statistics after rechunking and copy to persistent root
-        _logger.debug('writing rechunked summary statistics to file="%s"', staged)
+        _logger.info('writing rechunked summary statistics to file="%s"', staged)
         stats.write(self._storage.staging_root, should_finalize=True)
 
-        _logger.debug('copying summary statistics to archive file="%s"', archive)
+        _logger.info('copying summary statistics to archive file="%s"', archive)
         Statistics.copy(
             self.stats_file, self._storage.staging_root, self._storage.archive_root
         )

@@ -2,12 +2,12 @@ from pathlib import Path
 import unittest
 
 from shantay.metadata import Metadata
-from shantay.model import META_FILE, MetadataConflict
+from shantay.model import MetadataConflict
 from shantay.schema import normalize_category, StatementCategoryProtectionOfMinors
 
 ROOT = Path(__file__).parent
 FIXTURE = ROOT / "fixture"
-METADATA_2000 = FIXTURE / "metadata" / "2000" / META_FILE
+METADATA_2000 = FIXTURE / "metadata" / "2000" / "meta.json"
 
 CATEGORY = "protection_of_minors"
 
@@ -35,8 +35,8 @@ class TestMetadata(unittest.TestCase):
     def test_merge_same_metadata(self) -> None:
         # Merge with identical data
         metadata = Metadata.merge(
-            METADATA_2000.parent / META_FILE,
-            METADATA_2000.parent / META_FILE
+            METADATA_2000.parent / "meta.json",
+            METADATA_2000.parent / "meta.json"
         )
         self.check_metadata_2000(metadata)
 

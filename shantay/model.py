@@ -467,7 +467,6 @@ def _days_in_month(year: int, month: int) -> int:
 # Dataset, Coverage
 
 
-META_FILE = "meta.json"
 DIGEST_FILE = "sha256.txt"
 
 
@@ -540,7 +539,7 @@ class CollectorProtocol(Protocol):
         release: Release,
         frame: DataFrameType | LazyFrameType,
         tag: None | str = None,
-        metadata: None | DataFrameType = None,
+        metadata_entry: None | MetadataEntry = None,
     ) -> None:
         """
         Collect summary statistics for the data frame.
@@ -613,7 +612,7 @@ class Dataset(metaclass=ABCMeta):
         root: Path,
         release: Daily,
         category: str,
-        metadata: DataFrameType,
+        metadata_entry: MetadataEntry,
         collector: CollectorProtocol
     ) -> None:
         """

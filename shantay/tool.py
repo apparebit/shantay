@@ -56,16 +56,22 @@ def get_configuration(
             )
 
         metadata = Metadata.merge(
-            storage.staging_root / META_FILE,
-            storage.archive_root / META_FILE,
+            storage.staging_root / "db.json",
+            storage.archive_root / "db.json",
             not_exist_ok=True,
         )
+        if metadata.category is not None:
+            raise ConfigError(
+                f'archive metadata really is for category {metadata.category}'
+            )
 
         filestem = "db"
     else:
         try:
-            metadata = Metadata.read_json(storage.extract_root / META_FILE)
+            metapath = Metadata.find_file(storage.extract_root)
+            metadata = Metadata.read_json(metapath)
         except FileNotFoundError:
+            metapath = None
             metadata = Metadata()
 
         if metadata.category is None:
@@ -83,6 +89,12 @@ def get_configuration(
             )
 
         filestem = file_stem_for(category)
+
+        if metapath is not None and filestem != metapath.stem:
+            raise ConfigError(
+                f'metadata category {category} does not match '
+                f'file name "{metapath.name}"'
+            )
 
         try:
             metadata = metadata.merge_with(

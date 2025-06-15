@@ -6,9 +6,7 @@ from pathlib import Path
 
 import polars as pl
 
-from .model import (
-    CollectorProtocol, Daily, DataFrameType, Dataset
-)
+from .model import CollectorProtocol, Daily, Dataset, MetadataEntry
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, CanonicalPlatformNames, KeywordChildSexualAbuseMaterial,
@@ -405,7 +403,7 @@ class StatementsOfReasons(Dataset):
         root: Path,
         release: Daily,
         category: str,
-        metadata: DataFrameType,
+        metadata_entry: MetadataEntry,
         collector: CollectorProtocol,
     ) -> None:
         count = sum(1 for _ in root.glob(release.batch_glob))
@@ -425,7 +423,7 @@ class StatementsOfReasons(Dataset):
         collector.collect(
             release,
             extract,
-            metadata=metadata,
+            metadata_entry=metadata_entry,
             tag=category,
         )
 
