@@ -28,7 +28,7 @@ from dataclasses import dataclass
 import datetime as dt
 import enum
 from types import GenericAlias, MappingProxyType
-from typing import Any, get_args, get_origin, Literal, overload
+from typing import Any, cast, get_args, get_origin, Literal, overload, Self
 
 import polars as pl
 
@@ -56,16 +56,10 @@ _HUMANIZED_REPLACEMENTS = {
 }
 
 
-@overload
-def humanize(tag: None) -> None:
-    ...
-@overload
-def humanize(tag: str) -> str:
-    ...
-def humanize(tag: None | str) -> None | str:
+def humanize(tag: None | str) -> str:
     """Generate a humane presentation for the given tag."""
     if tag is None:
-        return None
+        return "—none—"
     if tag.startswith("STATEMENT_CATEGORY_"):
         tag = tag[len("STATEMENT_CATEGORY_"):]
     elif tag.startswith("KEYWORD_"):
@@ -321,6 +315,8 @@ class TerritorialAlias(enum.StrEnum):
 
 type VariantNamesAndColors = dict[None | str, tuple[str, str]]
 
+_POISON = object()
+
 
 @dataclass(frozen=True, slots=True)
 class MetricDeclaration:
@@ -353,6 +349,9 @@ class MetricDeclaration:
     def has_variants(self) -> bool:
         return 0 < len(self.variants)
 
+    def has_many_variants(self) -> bool:
+        return 10 <= len(self.variants)
+
     def has_null_variant(self) -> bool:
         return None in self.variants
 
@@ -361,6 +360,12 @@ class MetricDeclaration:
 
     def enum(self) -> pl.Enum:
         return pl.Enum(self.variant_names())
+
+    def replace(self, key: None | str) -> None | str:
+        value = self.variants.get(key, _POISON)
+        if value is _POISON:
+            return None
+        return cast(tuple[None | str, str], value)[0]
 
     def replacements(self) -> dict[None | str, str]:
         return {k: v[0] for k, v in self.variants.items()}
@@ -379,6 +384,37 @@ class MetricDeclaration:
             groupings.append(pl.col("variant"))
         return groupings
 
+    def with_variants(
+        self,
+        names: Iterable[None | str],
+        use_palette: bool = False,
+    ) -> Self:
+        """
+        Create a new metric declaration that has the same fields as this one,
+        except that the variants only include the names, in that order, with
+        colors from the standard palette.
+        """
+        if use_palette:
+            color_count = len(PALETTE) - 1
+            variants = {
+                key: (
+                    self.variants[key][0],
+                    GRAY if key is None else PALETTE[index % color_count]
+                )
+                for index, key in enumerate(names)
+            }
+        else:
+            variants = {key: self.variants[key] for key in names}
+
+        return type(self)(
+            self.field,
+            self.label,
+            variants,
+            selector=self.selector,
+            quantity=self.quantity,
+            quant_label=self.quant_label,
+        )
+
 
 def make_metric(
     field: str,
@@ -386,13 +422,12 @@ def make_metric(
     variants: Iterable[str],
     quant_label: str = "Statements of Reasons",
 ) -> MetricDeclaration:
-    color_count = len(PALETTE)
-    return MetricDeclaration(
-        field, label, {
-            v: (humanize(v), PALETTE[i % color_count])
-            for i, v in enumerate(variants)
-        }, quant_label=quant_label
-    )
+    color_count = len(PALETTE) - 1
+    variant_decl = cast(VariantNamesAndColors, {
+        v: (humanize(v), GRAY if v is None else PALETTE[i % color_count])
+        for i, v in enumerate(variants)
+    })
+    return MetricDeclaration(field, label, variant_decl, quant_label=quant_label)
 
 
 # --------------------------------------------------------------------------------------
@@ -441,20 +476,9 @@ DecisionAccount = MetricDeclaration("decision_account", "Account Decisions", {
 
 
 DecisionGround = MetricDeclaration("decision_ground", "Decision Grounds", {
-    "DECISION_GROUND_ILLEGAL_CONTENT": ("Illegal", ORANGE),
-    "DECISION_GROUND_INCOMPATIBLE_CONTENT": ("Incompatible", GREEN),
+    "DECISION_GROUND_ILLEGAL_CONTENT": ("Illegal", RED),
+    "DECISION_GROUND_INCOMPATIBLE_CONTENT": ("Incompatible", ORANGE),
 })
-
-
-# Combine decision_ground and incompatible_content_illegal
-DecisionGroundAndLegality = MetricDeclaration(
-    ["decision_ground", "incompatible_content_illegal"],
-    "Decision Grounds",
-    DecisionGround.variants | {
-        "Yes": ("Incompatible & Illegal", RED),
-        None: ("—none—", GRAY),
-    }
-)
 
 
 DecisionMonetary = MetricDeclaration("decision_monetary", "Monetary Decisions", {
@@ -490,7 +514,7 @@ DecisionType = MetricDeclaration("decision_type", "Decision Types", {
     "vis_pro_acc": ("Visibility, Provision, Account", RED),
     "mon_pro_acc": ("Monetary, Provision, Account", CYAN),
     "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", GREEN),
-    None: ("—none—", GRAY),
+    "is_null": ("—none—", GRAY),
 }, selector="entity")
 
 
@@ -504,6 +528,16 @@ DecisionVisibility = MetricDeclaration("decision_visibility", "Visibility Decisi
     "DECISION_VISIBILITY_OTHER": ("Other", BLUE),
     None: ("—none—", GRAY),
 })
+
+
+IncompatibleContentIllegal = MetricDeclaration(
+    "incompatible_content_illegal",
+    "Incompatible Is Illegal", {
+        "Yes": ("Yes", RED),
+        "No": ("No", GREEN),
+        None: ("—none—", GRAY),
+    }
+)
 
 
 InformationSource = MetricDeclaration("source_type", "Information Sources", {
@@ -968,7 +1002,7 @@ def _all_variants() -> list[str]:
     releases to address this churn is not very nimble. Instead, shantay checks
     transparency database releases and automatically updates its internal list.
     """
-    variants = []
+    variants = ["—none—"]
 
     for decl in (
         AccountType,
@@ -1047,7 +1081,7 @@ def normalize_category(category: None | str) -> None | str:
     """Normalize the given category to a schema-approved one."""
     if category is None:
         return None
-    cat = category.upper()
+    cat = category.upper().replace("-", "_").replace(" ", "_")
     if cat.startswith("CATEGORY_"):
         cat = f"STATEMENT_{cat}"
     elif not cat.startswith("STATEMENT_CATEGORY_"):
@@ -1066,7 +1100,7 @@ def normalize_keyword(keyword: str) -> str: ...
 def normalize_keyword(keyword: None | str) -> None | str:
     if keyword is None:
         return None
-    key = keyword.upper()
+    key = keyword.upper().replace("-", "_").replace(" ", "_")
     if not key.startswith("KEYWORD_"):
         key = f"KEYWORD_{key}"
     if key not in Keyword:
