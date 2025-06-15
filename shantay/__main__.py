@@ -89,7 +89,7 @@ def get_parser() -> ArgumentParser:
         help="use the given number of worker processes (default: 1)",
     )
 
-    group = parser.add_argument_group("logging")
+    group = parser.add_argument_group("output")
     group.add_argument(
         "--logfile",
         default="shantay.log",
