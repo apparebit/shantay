@@ -18,10 +18,11 @@ from .framing import (
 from .model import ConfigError, Coverage, Storage
 from .schema import (
     AutomatedDecision, AutomatedDetection, CategoryMetric, ContentType, DecisionAccount,
-    DecisionGroundAndLegality, DecisionMonetary, DecisionProvision, DecisionType,
-    DecisionVisibility, humanize, KeywordChildSexualAbuseMaterial,
-    make_metric, MetaPlatforms, MetricDeclaration, PlatformValueType, ProcessingDelay,
-    SCHEMA, StatementCategoryProtectionOfMinors, StatementCount, TextColumns
+    DecisionGround, DecisionMonetary, DecisionProvision, DecisionType,
+    DecisionVisibility, humanize, IncompatibleContentIllegal,
+    KeywordChildSexualAbuseMaterial, make_metric, MetaPlatforms, MetricDeclaration,
+    PlatformValueType, ProcessingDelay, SCHEMA, StatementCategoryProtectionOfMinors,
+    StatementCount, TextColumns
 )
 from .stats import get_tags, Statistics
 from .util import minify, to_markdown_table
@@ -74,11 +75,19 @@ DOC_HEADER_TOO = """\
 body {
     margin: 3rem;
 }
-main {
+
+svg {
+    display: block;
+}
+
+main > :where(h1, h2, ol, p, svg, div:has(table), table, details) {
     margin-left: auto;
     margin-right: auto;
-    max-width: 60rem;
 }
+
+main > :where(h1, h2, ol, p, table, details, div:has(table)) { max-width:  75rch; }
+main > :where(svg) { max-width: 100rch; }
+
 h2 {
     margin-top: 3rem;
 }
@@ -87,6 +96,10 @@ svg + :where(div, svg, table) {
 }
 
 /* ----------------------------------- Table ----------------------------------- */
+div > table {
+    max-width: 100%;
+}
+
 table {
     border-collapse: separate;
     border-spacing: 0;
@@ -522,7 +535,10 @@ class Visualizer:
             )
         )
 
-        top_num = 3 # The targeted number of non-Meta platforms
+        # We want to show top_num platforms in addition to Meta's and selected ones
+        top_num = 5
+        select_platforms = ("YouTube", "Amazon", "Amazon Store")
+
         top = self._statistics.frame().filter(
             predicate("rows", entity=None)
         ).group_by(
@@ -532,20 +548,22 @@ class Visualizer:
         ).sort(
             "count", descending=True, maintain_order=True
         ).head(
-            # Thanks to the len(MetaPlatforms) term, this selection must contain
-            # at least top_num non-Meta platforms
-            top_num + len(MetaPlatforms)
+            # Thanks to the len(...) terms, this selection must contain at least
+            # top_num platforms in addition to Meta's and select platforms.
+            top_num + len(MetaPlatforms) + len(select_platforms)
         ).get_column(
             "platform"
         ).to_list()
 
         # Remove Meta's platforms, leaving at least top_num non-Meta platforms
-        for platform in meta_platforms:
+        for platform in [*meta_platforms, *select_platforms]:
             if platform in top:
                 del top[top.index(platform)]
 
         # Compose complete list
-        self._top_platforms = top[:top_num] + ["Meta", *meta_platforms]
+        self._top_platforms = (
+            top[:top_num] + ["Meta", *meta_platforms, *select_platforms]
+        )
 
     def render_heading(self) -> None:
         _logger.debug('render heading')
@@ -559,7 +577,7 @@ class Visualizer:
             for t in self._tags[1:]
         )
         platform_toc = "\n            ".join(
-            f'<li><a href="#{p.lower().replace(" ", "_")}">Focus on {p}</a></li>'
+            f'<li><a href="#{p.lower().replace(" ", "_")}">{p}</a></li>'
             for p in self._top_platforms
         )
         self.html(
@@ -575,31 +593,34 @@ class Visualizer:
             <li><a href="#keyword-ranking">Keyword Ranking</a></li>
             <li><a href="#schemas">Schemas</a></li>
             </ol>
-            """
-        )
 
-        self.html(
-            """
-            <p><strong>Platform-focused sections</strong> comprise the top-three
-            non-Meta platforms by SoR volume, all of Meta's platforms together,
-            and Meta's platforms individually. Meta platforms that have
-            submitted SoRs to the DSA transparency database are Facebook,
-            Instagram, Threads, WhatsApp, and some other Meta product(s).
-            Seriously, the database entries for the latter are attributed to
-            "Other Meta Platforms Ireland Limited-offered Products". For
-            category-specific data, not all of Meta's platforms may be included
-            in this report.</p>
-            """
-        )
-        self.html(
-            """
+            <p><strong>Platform-focused sections</strong> include a manually
+            curated selection of platforms, i.e., all of Meta's platforms
+            together, Meta's platforms individually, YouTube, and Amazon
+            (Store). They also include the top five platforms by SoR volume that
+            aren't already included.</p>
+
+            <p><strong>Meta's platforms</strong> are Facebook, Instagram,
+            Threads, WhatsApp, and some other Meta product(s). Seriously, the
+            database entries for the latter are attributed to "Other Meta
+            Platforms Ireland Limited-offered Products". For category-specific
+            data, not all of Meta's platforms may be included in this
+            report.</p>
+
+            <p><strong>Bars are stacked</strong> from the category with the most
+            SoRs at the bottom to the category with the least SoRs at the top.
+            The legend has the opposite order from category with the most SoRs
+            downwards.</p>
+
+            <p><strong>Only categories with counts greater zero</strong> are
+            included in a timeline. If categories listed in the legend are not
+            visible, then that is because they represent too few SoRs.</p>
+
             <p><strong>Bars marked ⚠️</strong> represent outliers that go beyond
-            the coordinate grid. Thusly clamping the y-axis enures that even
-            subcategories remain easily distinguishable in other bars.</p>
-            """
-        )
-        self.html(
-            f"""
+            the coordinate grid. Shantay clamps the y-axis under certain
+            circumstances so that subcategories remain discernible for most
+            bars.</p>
+
             <p><strong><a
             href="https://github.com/apparebit/shantay">Shantay</a></strong>
             created this document on {self._timestamp.date().isoformat()} at
@@ -739,7 +760,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         platform_id = platform.lower().replace(" ", "_")
-        self.html(f"<h2 id={platform_id}>{self.secno()}. Focus on {platform}</h2>")
+        self.html(f"<h2 id={platform_id}>{self.secno()}. {platform}</h2>")
 
         # Meta stands for combination of Facebook, Instagram, Other Meta
         # Product, Threads, and WhatsApp.
@@ -804,9 +825,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             caption="Content Type: Other"
         )
 
-        dg = self.decision_ground(tag, platform)
         self.chart(f"{prefix}d-sor-attributes", alt.vconcat(
-            self.timeline_chart(dg, DecisionGroundAndLegality, tag, platform),
+            self.render_timeline(DecisionGround, tag, platform),
+            self.render_timeline(IncompatibleContentIllegal, tag, platform),
             self.render_timeline(DecisionType, tag, platform),
             self.render_timeline(DecisionVisibility, tag, platform),
             spacing=SPACING,
@@ -1138,7 +1159,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if platform is not None:
             filters["platform"] = platform
 
-        table = self._statistics.frame().filter(
+        table = self._statistics.frame().lazy().filter(
             predicate(**filters)
         )
 
@@ -1163,13 +1184,52 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if spec.has_variants():
             table = table.with_columns(
-                pl.col(spec.selector).cast(pl.String).replace(spec.replacements())
+                pl.col(spec.selector)
+                .cast(pl.String)
+                .replace(spec.replacements())
+                .alias("label")
             )
+
         if spec.quantity != "count" and spec.label == "Delays":
             table = table.with_columns(
                 pl.col(spec.quantity) / (24 * 60 * 60)
             )
-        return table
+
+        return table.collect()
+
+    def timeline_variants(
+        self,
+        table: pl.DataFrame,
+        spec: MetricDeclaration,
+    ) -> tuple[MetricDeclaration, pl.DataFrame]:
+        assert spec.quantity == "count"
+
+        ranking = table.lazy().group_by(
+            spec.selector
+        ).agg(
+            pl.col("label").first(),
+            pl.col("count").sum(),
+        ).filter(
+            pl.col("count").gt(0)
+        ).sort(
+            "count", descending=True
+        ).with_columns(
+            pl.col("count").sum().alias("total"),
+        ).with_columns(
+            (pl.col("count") / pl.col("total") * 100).alias("pct"),
+        ).with_columns(
+            pl.col("pct").cum_sum().alias("cum_pct")
+        ).collect()
+
+        names = ranking.get_column(spec.selector)
+        filtered_spec = spec.with_variants(names, use_palette=spec.has_many_variants())
+
+        filter = pl.col(spec.selector).is_in(names)
+        if filtered_spec.has_null_variant():
+            filter = filter.or_(pl.col(spec.selector).is_null())
+        filtered_table = table.filter(filter)
+
+        return filtered_spec, filtered_table
 
     def timeline_chart(
         self,
@@ -1205,7 +1265,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             if spec is StatementCount:
                 table = self.data_signage(table, encoding)
 
-        yaxis = alt.Y(f"sum({spec.quantity}):Q").title(spec.quant_label)
+        order = alt.Undefined
+        if spec.has_variants() and spec.quantity == "count":
+            spec, table = self.timeline_variants(table, spec)
+            order = spec.variant_labels()
+
+        yaxis = alt.Y(f"sum({spec.quantity}):Q", sort=order).title(spec.quant_label)
 
         cutoff = None
         signage = None
@@ -1226,10 +1291,13 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if spec.has_variants():
             encoding.append(
-                alt.Color(f"{spec.selector}:N").scale(
+                alt.Color(f"label:N", sort=order).scale(
                     domain=spec.variant_labels(),
                     range=spec.variant_colors(),
                 ).title(spec.label),
+            )
+            encoding.append(
+                alt.Order("color_label_sort_index:Q")
             )
 
         title = spec.label
@@ -1397,34 +1465,6 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         return (
             disclosure_rule + disclosure_label + moderation_rule + moderation_label
-        )
-
-    def decision_ground(
-        self, tag: None | str = None, platform: None | str = None
-    ) -> pl.DataFrame:
-        frame = self.timeline_data(
-            DecisionGroundAndLegality, tag, platform
-        ).pivot(
-            on="variant",
-            values="count",
-            index=["start_date"] + (["end_date"] if self.is_monthly() else [])
-        )
-
-        # Some platforms do not report all three quantities, so we add them here
-        for column in ("Incompatible", "Illegal", "Incompatible & Illegal"):
-            if column not in frame.columns:
-                frame = frame.with_columns(
-                    pl.lit(0).alias(column)
-                )
-
-        return frame.with_columns(
-            # Subtract incompatible & illegal from incompatible
-            pl.col("Incompatible") - pl.col("Incompatible & Illegal")
-        ).unpivot(
-            on=["Incompatible", "Illegal", "Incompatible & Illegal"],
-            variable_name="variant",
-            value_name="count",
-            index=["start_date"] + (["end_date"] if self.is_monthly() else [])
         )
 
     # ----------------------------------------------------------------------------------
