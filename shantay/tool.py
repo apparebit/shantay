@@ -211,34 +211,49 @@ def _run(options: Any) -> None:
     print(f"\nCompleted task {task} in {v:,.1f} {u}")
 
 
+_HAPPY_STYLE = "\x1b[1;32m"
+_ERROR_STYLE = "\x1b[1;41;38;5;255m"
+_WARN_STYLE = "\x1b[1;48;5;220;30m"
+_RESET_STYLE = "\x1b[m"
+
+
 def run(options: Any) -> int:
+    no_color = os.getenv("NO_COLOR")
+    happy = "" if no_color else _HAPPY_STYLE
+    error = "" if no_color else _ERROR_STYLE
+    warning = "" if no_color else _WARN_STYLE
+    reset = "" if no_color else _RESET_STYLE
+
     # Hide cursor
     print("\x1b[?25l", end="", flush=True)
     try:
         _run(options)
+        print(f'\x1b[999;999H\n{happy}Happy, happy, joy, joy!{reset}')
         return 0
     except KeyboardInterrupt as x:
         print("".join(traceback.format_exception(x)))
         # Put cursor into bottom right corner of terminal before printing
-        print('\x1b[999;999H\n\ninterrupted by user; terminating...')
+        print(f'\x1b[999;999H\n\n{warning} Terminated by user {reset}')
         return 1
     except MissingPlatformError as x:
         platforms = "platform" if len(x.args[0]) == 1 else "platforms"
         names = ", ".join(f'"{n}"' for n in x.args[0])
-        print(f"\x1b[999;999H\n\nSource data contains new {platforms} {names}")
+        print(
+            f"\x1b[999;999H\n\n{error} Source data contains "
+            f"new {platforms} {names} {reset}"
+        )
         print("Please rerun shantay with the same command line arguments!")
         return 1
-    except (ConfigError, DownloadFailed, MetadataConflict, MissingPlatformError) as x:
+    except (ConfigError, DownloadFailed, MetadataConflict) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
-        print("\x1b[999;999H\n")
-        print(str(x))
+        print(f"\x1b[999;999H\n{error} {x} {reset}")
         return 1
     except Exception as x:
         # For all other exceptions, that most certainly doesn't hold. They are
         # surprising and we need as much information about them as we can get.
-        print("\x1b[999;999H\n")
-        print("".join(traceback.format_exception(x)))
+        print(f"\x1b[999;999H\n{error} {x} {reset}")
+        print("".join(traceback.format_tb(x.__traceback__)))
         return 1
     finally:
         # Show cursor again
