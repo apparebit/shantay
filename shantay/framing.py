@@ -52,21 +52,7 @@ def is_row_within_period(period: Period) -> pl.Expr:
     )
 
 
-def filter_period(frame: pl.DataFrame, period: Period) -> pl.DataFrame:
-    """Filter the data frame for rows that fall within the given period."""
-    return frame.filter(is_row_within_period(period))
-
-
 # --------------------------------------------------------------------------------------
-
-
-def get_frequency(frame: pl.DataFrame) -> Literal["daily", "monthly"]:
-    """
-    Determine the frequency for summary statistics, which can be daily or
-    monthly
-    """
-    start_date, end_date, *_ = frame.row(0)
-    return "daily" if start_date == end_date else "monthly"
 
 
 class NoArgumentProvided:
@@ -84,11 +70,13 @@ NOT_NULL = NotNull()
 
 
 def predicate(
-    column: str | Sequence[str] | NotNull,
+    column: str | Sequence[str] | NotNull | None,
     entity: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     variant: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
-    platform: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    platform: (
+        NoArgumentProvided | NotNull | None | str | Sequence[str]
+    ) = NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
     Create the predicate over the "tag", "platform", "column", "entity", and
@@ -98,29 +86,33 @@ def predicate(
     predicate tests for it being not null. Finally, if it is
     `NO_ARGUMENT_PROVIDED`, the predicate does not test that column.
     """
-    # The column named "column" is required
-    if isinstance(column, str):
-        predicate = pl.col("column").eq(column)
-    elif isinstance(column, NotNull):
-        predicate = pl.col("column").is_null().not_()
-    else:
-        predicate = pl.col("column").is_in(column)
+    result = None
 
-    # All other columns are optional
+    def filter(clause: pl.Expr) -> None:
+        nonlocal result
+        if result is None:
+            result = clause
+        else:
+            result = result.and_(clause)
+
     for key, value in (
         ("tag", tag),
         ("platform", platform),
+        ("column", column),
         ("entity", entity),
         ("variant", variant),
     ):
         if value is None:
-            predicate = predicate.and_(pl.col(key).is_null())
+            filter(pl.col(key).is_null())
         elif isinstance(value, NotNull):
-            predicate = predicate.and_(pl.col(key).is_null().not_())
-        elif value is not NO_ARGUMENT_PROVIDED:
-            predicate = predicate.and_(pl.col(key).eq(value))
+            filter(pl.col(key).is_null().not_())
+        elif isinstance(value, str):
+            filter(pl.col(key).eq(value))
+        elif isinstance(value, Sequence):
+            filter(pl.col(key).is_in(value))
 
-    return predicate
+    assert result is not None
+    return result
 
 
 type Quantity = Literal["count", "min", "mean", "max"]
@@ -206,7 +198,9 @@ def aggregates() -> list[pl.Expr]:
         # significant changes: First, we refactored the division of a sum into a
         # sum of divisions. Second, we changed the resolution of duration from
         # milliseconds to seconds. We also rewrote the formula using Pola.rs
-        # expressions instead of Python operators.
+        # expressions instead of Python operators. Note that the first change,
+        # by distributing the division, makes the expression more expensive to
+        # compute.
 
         pl.col("mean")
         .mul(pl.col("count"))
