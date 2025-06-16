@@ -2,7 +2,7 @@
 
 ## v0.3.0 (TBD)
 
-Shantay now collects richer statistics and produces more compelling
+Shantay now collects richer statistics and produces far more compelling
 visualizations with a simpler interface. It can either process the full
 transparency database or a category-specific subset for all the categories
 supported by the database.
@@ -34,15 +34,18 @@ by the `summarize` task.
 
 Amongst other changes, the HTML document produced by `visualize` is now named
 after the category, e.g., `protection-of-minors.html`, when covering a subset
-and `all-data.html` when covering the full database. It now starts with an
-outline, includes graphs tracking the volume of daily statements of reasons
-(SoRs) and breaking down the various attributes for (by default) monthly SoRs.
-Where needed, bars are annotated with their numeric quantities and means; others
-cut off outliers (clearly marked with ⚠️) to ensure good readability of the
-majority of (stacked) bar graphs. Each summary repeats the same set of timelines
-for overall SoRs, the top-three non-Meta platforms by SoRs, and Meta's platforms
-(both in aggregate and individually). The visual appearance of the document has
-also been improved.
+and `db.html` when covering the full database. It now starts with an outline,
+includes graphs tracking the volume of daily statements of reasons (SoRs) and
+breaking down the various attributes for (by default) monthly SoRs. Where
+needed, bars are annotated with their numeric quantities and means; others cut
+off outliers (clearly marked with ⚠️) to ensure good readability of the majority
+of (stacked) bar graphs. Each timeline only includes categories that are
+actually present in the data and they are always ordered from category with the
+most SoRs to least SoRs. Each summary repeats the same set of timelines for
+overall SoRs, Meta's platforms, YouTube, as well as the top-five platforms by
+SoRs not already mentioned. The appearance of the document has also been
+improved. Alas, all that goodness adds quite a bit of heft to the self-contained
+HTML document, which weighs in at 6-10 MB.
 
 
 ### Richer statistics
@@ -68,8 +71,8 @@ Windows.
 
 Shantay's Python package ships with a copy of the **summary statistics for the
 entire DSA transparency database**. This version covers the database from its
-first day, 2023-09-25, through 2025-06-04, inclusive. Likewise, platform names
-are current as of that last date, 2025-06-04.
+first day, 2023-09-25, through 2025-06-09, inclusive. Likewise, platform names
+are current as of that last date, 2025-06-09.
 
 
 ## v0.2.0 (May 1, 2025)

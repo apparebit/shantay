@@ -65,16 +65,25 @@ log entries to a file, by default `shantay.log` in the current working
 directory.
 
 Once *shantay* is done downloading and summarizing the daily releases for 2023,
-you'll find a `all-data.parquet` file in the archive's root directory. It
-contains the summary statistics at day-granularity. To visualize that same data,
-execute:
+you'll find a `db.parquet` file in the archive's root directory. It contains the
+summary statistics at day-granularity. To visualize that same data, execute:
 
 ```
 $ uvx shantay --archive <directory> visualize
 ```
 
-Once finished, you'll find an `all-data.html` document with all charts in the
-default staging directory `dsa-db-staging`.
+Once finished, you'll find an `db.html` document with all charts in the default
+staging directory `dsa-db-staging`.
+
+Alas, three months of data from the beginning of the DSA transparency database
+aren't particularly satisfying. Shantay ships with a copy of the summary
+statistics for the entire database. To visualize them, execute:
+
+```
+$ uvx shantay visualize
+```
+
+Now look at the `db.html` again: Much better!
 
 
 ## 2. Using Shantay
@@ -99,15 +108,18 @@ control and data recovery. Here are all of them:
   - **summarize** collects summary statistics either for the full database or a
     category-specific subset, depending on whether `--archive` only (for the
     full database) or both `--archive` and `--extract` (for a subset) are
-    specified.
+    specified. If you specify neither, Shantay materializes the builtin copy of
+    the summary statistics in staging.
 
   - **info** prints helpful information about Shantay, key dependencies, the
     Python runtime, and operating system, as well as the `--archive` and
-    `--extract` directories and their contents.
+    `--extract` directories and their contents. If you specify neither, Shantay
+    prints information about the builtin copy of the summary statistics.
 
   - **visualize** generates an HTML document that visualizes summary statistics.
     `--archive` and `--extract` determine the scope of the visualization, just
-    as for `summarize`.
+    as for `summarize`. If you specify neither, Shantay visualizes the builtin
+    copy of the summary statistics.
 
 Unless the `--offline` option is specified, the `distill` and `summarize` tasks
 download daily distributions as needed.
@@ -123,9 +135,9 @@ Summary statistics are stored in `db.parquet` for the full database and in a
 file named after the category, such as `protection-of-minors.parquet`, for
 category-specific data. The HTML documents follow the same naming convention.
 
-Shantay's log distinguishes between `summarize-all` and `summarize-category`
-when identifying tasks. Furthermore, even when executing a category-specific
-`summarize` task, Shantay's log distinguishes `distill` from
+Shantay's log distinguishes between `summarize-all`, `summarize-category`, and
+`summarize-builtin` when identifying tasks. Furthermore, even when executing a
+category-specific `summarize` task, Shantay's log distinguishes `distill` from
 `summarize-category`. For multiprocessing, it schedules both tasks separately.
 
 
@@ -177,24 +189,25 @@ directory: Each line contains one hexadecimal ASCII digest, a space,and the
 file's name.
 
 
-### 3.3 Summary Statistics: `meta.json`, `all-data.parquet`, etc
+### 3.3 Summary Statistics
 
 In addition to yearly directories, *shantay* also stores the following two files
 inside root directories.
 
-  - `meta.json` contains an object with the `category` used for selecting the
-    data extract and some statistics about `releases`. `batch_count` must be the
-    number of daily data files and `sha256` must be the (recursive) digest of
-    the digests in the `sha256.txt` file.
+  - A JSON file named after the category, e.g., `protection-of-minors.json`
+    contains an object with the `category` used for selecting the data extract
+    and some statistics about `releases`. `batch_count` must be the number of
+    daily data files and `sha256` must be the (recursive) digest of the digests
+    in the `sha256.txt` file.
 
-  - `all-data.parquet` contains the summary statistics about the full database.
+  - `db.parquet` contains the summary statistics about the full database.
     Statistics for category-specific subsets are named after their categories.
     Each file basically is a non-tidy, long data frame that uses up to seven
     columns for identifying variables and up to four columns for identifying
     values. While an encoding with fewer columns is eminently feasible, the
     schema is optimized for being easy to work with (e.g., aggregations are
-    trivial) and compact to store (e.g., a column of nulls requires almost no
-    space).
+    trivial) and compact to store (e.g., a column with mostly nulls requires
+    almost no space).
 
     The individual columns are:
 
