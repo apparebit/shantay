@@ -10,12 +10,12 @@ import mistune
 import polars as pl
 
 from .color import (
-    BLUE, GRAY, GREEN, ORANGE, PINK, PURPLE, RED
+    BLUE, GRAY, GREEN, LIGHT_BLUE, ORANGE, PINK, PURPLE, RED
 )
 from .framing import (
     aggregates, is_row_within_period, NOT_NULL, predicate
 )
-from .model import ConfigError, Coverage, Storage
+from .model import ConfigError, Coverage, file_stem_for, Storage
 from .schema import (
     AutomatedDecision, AutomatedDetection, CategoryMetric, ContentType, DecisionAccount,
     DecisionGround, DecisionMonetary, DecisionProvision, DecisionType,
@@ -248,7 +248,7 @@ class PlainTextRenderer(Renderer):
         print()
 
     def chart(self, name: str, chart: Chart) -> None:
-        chart.save(self._charts / f"{name}.svg")
+        chart.save(self._charts / name)
 
 
 try:
@@ -276,7 +276,7 @@ else:
 
         def chart(self, name: str, chart: Chart) -> None:
             display(chart) # pyright: ignore[reportOptionalCall]
-            chart.save(self._charts / f"{name}.svg")
+            chart.save(self._charts / name)
 
 
 # --------------------------------------------------------------------------------------
@@ -300,6 +300,7 @@ class Visualizer:
         self._timelines = False
         self._timestamp = dt.datetime.now()
         self._section_num = 0
+        self._chart_num = 0
         self._is_meta = False
 
     def has_all_sors(self) -> bool:
@@ -331,6 +332,10 @@ class Visualizer:
     def secno(self) -> int:
         self._section_num += 1
         return self._section_num
+
+    def chartno(self) -> str:
+        self._chart_num += 1
+        return f"{self._chart_num:03d}"
 
     def html(self, markup: str) -> None:
         if self._renderer.plain and (hn := HTML_HEADLINE.fullmatch(markup)) is not None:
@@ -400,10 +405,10 @@ class Visualizer:
         self._document.write("\n\n\n")
 
     def chart(self, name: str, chart: Chart) -> None:
-        self._renderer.chart(name, chart)
+        filename = f"{self.chartno()}-{name}.svg"
+        self._renderer.chart(filename, chart)
 
-        path = self._renderer.charts / f"{name}.svg"
-        with open(path, mode="r", encoding="utf8") as file:
+        with open(self._renderer.charts / filename, mode="r", encoding="utf8") as file:
             svg = file.read()
 
         if name != "keyword-pie":
@@ -572,6 +577,22 @@ class Visualizer:
         description = "All Data" if main_tag is None else humanize(main_tag)
         self.html(f'<h1>The DSA Transparency Database: {description}</h1>')
 
+        row = self._statistics.frame().select(
+            pl.col("count").filter(predicate("batch_rows", tag=main_tag)).sum()
+            .alias("batch_rows"),
+            pl.col("count").filter(predicate("total_rows", tag=main_tag)).sum()
+            .alias("total_rows"),
+            pl.col("platform").n_unique(),
+            pl.col("end_date").max() - pl.col("start_date").min() + dt.timedelta(days=1),
+            pl.col("text").filter(predicate(tag=main_tag)).is_null().not_().sum()
+            .alias("other_entries"),
+            pl.col("text").filter(predicate(tag=main_tag)).n_unique()
+            .alias("unique_other_entries"),
+        ).row(0)
+        batch_rows, total_rows, platform, days, other_entries, unique_other_entries = (
+            row
+        )
+
         tag_toc = "\n            ".join(
             f'<li><a href="#{t}">{humanize(cast(str, t))}</a></li>'
             for t in self._tags[1:]
@@ -593,6 +614,15 @@ class Visualizer:
             <li><a href="#keyword-ranking">Keyword Ranking</a></li>
             <li><a href="#schemas">Schemas</a></li>
             </ol>
+
+            <p><em style="font-size: 1.2em;">{batch_rows:,} out of
+            {total_rows:,} statements of reasons<br>
+            submitted by {platform} platforms<br>
+            over {days.days:,} days</em>!</p>
+
+            <p><em style="font-size: 1.2em;">Also, {other_entries:,} free-text
+            entries describing "other" with {unique_other_entries:,} unique
+            values!</em></p>
 
             <p><strong>Platform-focused sections</strong> include a manually
             curated selection of platforms, i.e., all of Meta's platforms
@@ -689,8 +719,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 f"{humanize(main_tag)}</h2>"
             )
         self.html(title)
-        self.chart("01a-daily-sors", alt.vconcat(
-            self.daily_statements_of_reasons(tag=main_tag),
+        self.chart("daily-sors", self.daily_statements_of_reasons(tag=main_tag))
+        self.chart(
+            "daily-and-monthly-sors",
+            self.daily_statements_of_reasons(tag=main_tag, with_monthly_sum=True),
+        )
+        self.chart("daily-sors-rolling-mean", alt.vconcat(
             self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=7),
             self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=30),
             spacing=SPACING,
@@ -699,7 +733,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             color="independent",
         ))
 
-        self.chart("01b-daily-sors-with-keywords", alt.vconcat(
+        self.chart("daily-sors-with-keywords", alt.vconcat(
             self.chart_sor_fraction_with_keywords(
                 tag=main_tag, with_total=main_tag is not None
             ),
@@ -713,9 +747,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ))
 
         self.html(f"<h2 id=platforms>{self.secno()}. The Platforms Filing SoRs</h2>")
-        self.chart("02a-platforms", self.cumulative_platform_counts())
+        self.chart("platforms", self.cumulative_platform_counts())
 
-        self.chart("02b-sors-by-platform", alt.vconcat(
+        self.chart("sors-by-platform", alt.vconcat(
             self.overall_statements_by_platform(tag=main_tag),
             self.overall_statements_by_platform(
                 tag=main_tag,
@@ -729,29 +763,27 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ))
 
         if not self.has_all_sors():
-            self.chart("02c-keywords-by-platform", alt.vconcat(
+            self.chart("keywords-by-platform", alt.vconcat(
                 self.overall_keyword_usage_by_platform(percent=True, tag=main_tag),
                 self.overall_keyword_usage_by_platform(percent=False, tag=main_tag),
                 spacing=SPACING,
             ).resolve_scale(color='independent'))
 
         self.html(f"<h2 id=sors>{self.secno()}. The Statements of Reasons</h2>")
-        self.render_standard_timelines("03", tag=main_tag)
+        self.render_standard_timelines(None, tag=main_tag)
 
-        base = 4
-        for index, tag in enumerate(self._tags[1:]):
+        for tag in self._tags[1:]:
             assert tag is not None
             _logger.debug('render charts tag="%s"', tag)
             self.html(f"<h2 id={tag}>{self.secno()}. Focus on {humanize(tag)}</h2>")
             self.render_standard_timelines(
-                f"{base + index:02d}", tag=tag
+                file_stem_for(tag), tag=tag
             )
 
-        base += len(self._tags) - 1
-        for index, platform in enumerate(self._top_platforms):
-            self.render_platform(base + index, platform)
+        for platform in self._top_platforms:
+            self.render_platform(platform)
 
-    def render_platform(self, index, platform: str) -> None:
+    def render_platform(self, platform: str) -> None:
         main_tag = self._tags[0]
         _logger.debug(
             'render charts tag="%s", platform="%s"',
@@ -777,14 +809,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if effective_platform is not None:
             filter["platform"] = effective_platform
 
-        if self._statistics.frame().filter(**filter).height == 0:
+        if self._statistics.frame().filter(predicate(**filter)).height == 0:
             _logger.debug('due to lack of data, skipping platform="%s"', platform)
             self.html("<p>No data available for platform</p>")
             return
 
         try:
             self.chart(
-                f"{index:02d}a",
+                f"{file_stem_for(platform)}-daily-sors",
                 self.daily_statements_of_reasons(
                     tag=main_tag,
                     platform=platform,
@@ -792,7 +824,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 )
             )
             self.render_standard_timelines(
-                f"{index:02d}b", tag=main_tag, platform=effective_platform
+                file_stem_for(platform), tag=main_tag, platform=effective_platform
             )
         finally:
             if platform == "Meta":
@@ -802,17 +834,20 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 self._is_meta = False
 
     def render_standard_timelines(
-        self, prefix: str, tag: None | str = None, platform: None | str = None
+        self, prefix: None | str, tag: None | str = None, platform: None | str = None
     ) -> None:
-        self.chart(f"{prefix}a-sor-attributes", alt.vconcat(
-            self.render_timeline(StatementCount, tag, platform),
-            self.render_timeline(self._keyword_metric, tag, platform),
-            spacing=SPACING,
-        ).resolve_scale(
-            x="shared",
-            color="independent",
-        ))
+        def with_prefix(name: str) -> str:
+            return name if prefix is None else f"{prefix}-{name}"
 
+        self.chart(
+            with_prefix("statements"),
+            self.render_timeline(StatementCount, tag, platform),
+        )
+
+        self.chart(
+            with_prefix("keywords"),
+            self.render_timeline(self._keyword_metric, tag, platform),
+        )
         self.frame(
             self.text_usage("category_specification_other", tag, platform),
             caption="Keyword: Other"
@@ -820,23 +855,28 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if tag is None:
             self.chart(
-                f"{prefix}b-sor-attributes",
+                with_prefix("categories"),
                 self.render_timeline(CategoryMetric, tag, platform)
             )
 
         self.chart(
-            f"{prefix}c-sor-attributes",
+            with_prefix("content-type"),
             self.render_timeline(ContentType, tag, platform)
         )
-
         self.frame(
             self.text_usage("content_type_other", tag, platform),
             caption="Content Type: Other"
         )
 
-        self.chart(f"{prefix}d-sor-attributes", alt.vconcat(
+        self.chart(with_prefix("decision-ground"), alt.vconcat(
             self.render_timeline(DecisionGround, tag, platform),
             self.render_timeline(IncompatibleContentIllegal, tag, platform),
+        ).resolve_scale(
+            x="shared",
+            color="independent",
+        ))
+
+        self.chart(with_prefix("decision-type-and-visibility"), alt.vconcat(
             self.render_timeline(DecisionType, tag, platform),
             self.render_timeline(DecisionVisibility, tag, platform),
             spacing=SPACING,
@@ -844,13 +884,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             x="shared",
             color="independent",
         ))
-
         self.frame(
             self.text_usage("decision_visibility_other", tag, platform),
             caption="Visibility Decision: Other"
         )
 
-        self.chart(f"{prefix}e-sor-attributes", alt.vconcat(
+        self.chart(with_prefix("decision-provision-and-monetary"), alt.vconcat(
             self.render_timeline(DecisionProvision, tag, platform),
             self.render_timeline(DecisionMonetary, tag, platform),
             spacing=SPACING,
@@ -858,14 +897,18 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             x="shared",
             color="independent",
         ))
-
         self.frame(
             self.text_usage("decision_monetary_other", tag, platform),
             caption="Monetary Decision: Other"
         )
 
-        self.chart(f"{prefix}f-sor-attributes", alt.vconcat(
+        self.chart(
+            with_prefix("decision-account-automation-delay"),
             self.render_timeline(DecisionAccount, tag, platform),
+        )
+
+        self.chart(
+            with_prefix("automation-and-delay"), alt.vconcat(
             self.render_timeline(AutomatedDetection, tag, platform),
             self.render_timeline(AutomatedDecision, tag, platform),
             self.render_timeline(ProcessingDelay, tag, platform),
@@ -885,6 +928,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         tag: None | str = None,
         platform: None | str = None,
         use_rows_as_source: bool = False,
+        with_monthly_sum: bool = False,
     ) -> alt.Chart:
         if use_rows_as_source:
             source = "rows"
@@ -897,12 +941,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             filter = predicate("total_rows", tag=tag)
         else:
             source = "batch_rows"
-            filter = pl.col("column").eq("total_rows").and_(
-                pl.col("tag").is_null()
-            ).or_(
-                pl.col("column").eq("batch_rows").and_(
-                    pl.col("tag").eq(tag)
-                )
+            filter = predicate("total_rows", tag=None).or_(
+                predicate("batch_rows", tag=tag)
             )
 
         table = self._statistics.frame().filter(
@@ -924,35 +964,62 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 )
             )
 
+        monthly_table = None
+        if with_monthly_sum:
+            monthly_table = table.group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+            ).agg(
+                pl.col("start_date").first().dt.month_start().dt.offset_by("5d"),
+                pl.col("start_date").first().dt.month_end().dt.offset_by("-5d").alias("end_date"),
+                pl.col(source).sum(),
+            )
+
         title = "Statements of Reasons — "
         if platform is not None:
             title = f"{platform}: {title}"
         if rolling_mean_days is None:
-            title += "Daily Percentage" if percentage else "Daily Counts"
+            if percentage:
+                title += "Daily Percentage"
+            elif with_monthly_sum:
+                title += "Daily and Monthly Counts"
+            else:
+                title += "Daily Counts"
         else:
             title += f"{rolling_mean_days}-Day Rolling "
             title += "Percentage" if percentage else "Mean"
 
         if rolling_mean_days is None:
-            chart = alt.Chart(table, title=title).mark_bar(
-                tooltip=True,
-                color=GREEN,
-                size=1.3,
-            )
+            chart = alt.Chart(table, title=title).mark_bar(color=GREEN, size=1.3)
         else:
-            chart = alt.Chart(table, title=title).mark_line(
-                tooltip=True,
-                color=GREEN,
-                size=1.5,
-            )
+            chart = alt.Chart(table, title=title).mark_line(color=GREEN, size=1.5)
 
-        return chart.encode(
+        daily_axis = "Statements of Reasons (Thousands)"
+        if with_monthly_sum:
+            daily_axis = "Daily " + daily_axis
+        chart = chart.encode(
             alt.X("start_date:T").scale(domain=self._date_range.to_tuple()).title("Date"),
-            alt.Y(f"{source}:Q").title("Statements of Reasons (Thousands)"),
+            alt.Y(f"{source}:Q").title(daily_axis),
         ).properties(
             height=TIMELINE_HEIGHT,
             width=TIMELINE_WIDTH,
-        ).interactive()
+        )
+
+        if with_monthly_sum:
+            monthly = alt.Chart(monthly_table, title=title).mark_bar(
+                color=LIGHT_BLUE,
+            ).encode(
+                alt.X("start_date:T"),
+                alt.X2("end_date:T"),
+                alt.Y(f"sum({source}):Q").title("Monthly Statements of Reasons (Thousands)"),
+            )
+
+            chart = alt.layer(monthly, chart).resolve_scale(
+                y="independent",
+                color="independent"
+            )
+
+        return chart
 
     def sor_fraction_with_keywords_data(
         self,
@@ -1091,7 +1158,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.Y("pct:Q").title("Percent"),
             alt.Color("Kind:N").scale(
                 domain=column_names,
-                range=[PINK, BLUE],
+                range=[f"{PINK}A0" if with_monthly_mean else PINK, BLUE],
             ),
         ).properties(
             height=TIMELINE_HEIGHT,
@@ -1111,7 +1178,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             monthly_frame,
         ).mark_bar(
             tooltip=True,
-            color=f"{PURPLE}50",
+            color=f"{PURPLE}80",
         ).encode(
             alt.X("start_date:T"),
             alt.X2("end_date:T"),

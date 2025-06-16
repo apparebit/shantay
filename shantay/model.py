@@ -470,9 +470,10 @@ def _days_in_month(year: int, month: int) -> int:
 DIGEST_FILE = "sha256.txt"
 
 
-def file_stem_for(category: str) -> str:
-    assert category.startswith("STATEMENT_CATEGORY_")
-    return category[len("STATEMENT_CATEGORY_"):].lower().replace("_", "-")
+def file_stem_for(entity: str) -> str:
+    if entity.startswith("STATEMENT_CATEGORY_"):
+        entity = entity[len("STATEMENT_CATEGORY_"):]
+    return entity.lower().replace("_", "-").replace(" ", "-")
 
 
 class MetadataEntry(TypedDict, total=False):

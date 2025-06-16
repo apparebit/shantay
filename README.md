@@ -119,7 +119,8 @@ control and data recovery. Here are all of them:
   - **visualize** generates an HTML document that visualizes summary statistics.
     `--archive` and `--extract` determine the scope of the visualization, just
     as for `summarize`. If you specify neither, Shantay visualizes the builtin
-    copy of the summary statistics.
+    copy of the summary statistics. In addition to generating an HTML report,
+    Shantay also saves all charts as SVG graphics.
 
 Unless the `--offline` option is specified, the `distill` and `summarize` tasks
 download daily distributions as needed.
