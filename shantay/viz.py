@@ -773,6 +773,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             self._is_meta = True
             effective_platform = None
 
+        filter = {"tag": main_tag}
+        if effective_platform is not None:
+            filter["platform"] = effective_platform
+
+        if self._statistics.frame().filter(**filter).height == 0:
+            _logger.debug('due to lack of data, skipping platform="%s"', platform)
+            self.html("<p>No data available for platform</p>")
+            return
+
         try:
             self.chart(
                 f"{index:02d}a",
