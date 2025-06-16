@@ -80,13 +80,14 @@ svg {
     display: block;
 }
 
-main > :where(h1, h2, ol, p, svg, div:has(table), table, details) {
+main > :where(h1, h2, ol, p, svg, table, details) {
     margin-left: auto;
     margin-right: auto;
 }
 
-main > :where(h1, h2, ol, p, table, details, div:has(table)) { max-width:  75rch; }
-main > :where(svg) { max-width: 100rch; }
+main > :where(h1, h2, ol, p, details) { max-width:  75rch; }
+main > :where(table)                  { max-width:  90rch; }
+main > :where(svg)                    { max-width: 100rch; }
 
 h2 {
     margin-top: 3rem;
@@ -96,9 +97,6 @@ svg + :where(div, svg, table) {
 }
 
 /* ----------------------------------- Table ----------------------------------- */
-div > table {
-    max-width: 100%;
-}
 
 table {
     border-collapse: separate;
@@ -388,7 +386,9 @@ class Visualizer:
         self._renderer.frame(frame)
 
         assert self._document is not None
-        html = frame._repr_html_()
+        html = frame._repr_html_().strip()
+        if html.startswith("<div>") and html.endswith("</div>"):
+            html = html[len("<div>"): -len("</div>")]
         html = FRAME_BORDER.sub("", html)
         table_head = '<table>' if klass is None else f'<table class="{klass}">\n'
         if caption is not None:
@@ -929,7 +929,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         platform: None | str = None,
         use_rows_as_source: bool = False,
         with_monthly_sum: bool = False,
-    ) -> alt.Chart:
+    ) -> alt.Chart | alt.LayerChart:
         if use_rows_as_source:
             source = "rows"
             filter = predicate("rows", tag=tag)
@@ -1006,6 +1006,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         if with_monthly_sum:
+            assert monthly_table is not None
             monthly = alt.Chart(monthly_table, title=title).mark_bar(
                 color=LIGHT_BLUE,
             ).encode(
