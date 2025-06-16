@@ -13,13 +13,12 @@ Currently, there are a few method signatures that require data frames. There
 also are a few places that need to mediate between API surface and data frames.
 This module collects the functions necessary for the latter.
 """
-from collections.abc import Iterator, Sequence
+from collections.abc import Sequence
 from typing import Literal
 
 import polars as pl
 
-from .metadata import FullMetadataEntry
-from .model import DateRange, Period
+from .model import Period
 
 
 CSAM_TAG = "CSAM"
@@ -70,7 +69,7 @@ NOT_NULL = NotNull()
 
 
 def predicate(
-    column: str | Sequence[str] | NotNull | None,
+    column: NoArgumentProvided | NotNull | None | str | Sequence[str] = NO_ARGUMENT_PROVIDED,
     entity: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     variant: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
     tag: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
@@ -110,6 +109,10 @@ def predicate(
             filter(pl.col(key).eq(value))
         elif isinstance(value, Sequence):
             filter(pl.col(key).is_in(value))
+        elif isinstance(value, NoArgumentProvided):
+            pass
+        else:
+            raise AssertionError("unreachable")
 
     assert result is not None
     return result
