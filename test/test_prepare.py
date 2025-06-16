@@ -10,7 +10,7 @@ from shantay.__main__ import configure_logging
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
 from shantay.metadata import Metadata
-from shantay.model import Coverage, Daily, Storage
+from shantay.model import Coverage, Daily, MetadataEntry, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Collector
@@ -176,19 +176,17 @@ class TestPrepare(unittest.TestCase):
 
         with self.subTest("analyze release data"):
             collector = Collector()
-            release_metadata = pl.DataFrame(
-                {
-                    "batch_count": [2],
-                    "total_rows": [665],
-                    "total_rows_with_keywords": [212],
-                }
-            )
+            metadata_entry: MetadataEntry = {
+                "batch_count": 2,
+                "total_rows": 665,
+                "total_rows_with_keywords": 212,
+            }
             dataset.summarize_release(
                 STAGING,
                 release,
                 StatementCategoryProtectionOfMinors,
-                release_metadata,
-                collector
+                metadata_entry,
+                collector,
             )
 
             frame = finalize(collector.frame())
@@ -539,9 +537,9 @@ EXPECTED_ANALYSIS = {
     ],
     "count": [
         2,
-        0,
-        0,
-        0,
+        17,
+        2,
+        21127,
         665,
         212,
         1,
