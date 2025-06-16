@@ -47,7 +47,6 @@ def get_parser() -> ArgumentParser:
     group.add_argument(
         "--archive",
         type=Path,
-        required=True,
         help="set directory for downloaded archives (required)",
     )
     group.add_argument(

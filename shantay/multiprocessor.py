@@ -96,7 +96,9 @@ class Multiprocessor:
                 cover = cover.intersection(self._metadata.range)
         elif task == "summarize-all":
             self._stats = Statistics.from_storage(
-                self.stats_file, self._storage.staging_root, self._storage.archive_root,
+                self.stats_file,
+                self._storage.staging_root,
+                self._storage.the_archive_root,
             )
             cover = self._coverage.to_date_range()
         else:
@@ -130,7 +132,7 @@ class Multiprocessor:
             if self._storage.extract_root is not None:
                 persistent = self._storage.the_extract_root
             else:
-                persistent = self._storage.archive_root
+                persistent = self._storage.the_archive_root
             _logger.info(
                 'copying summary statistics to persistent file="%s"',
                 persistent / self.stats_file
@@ -198,7 +200,7 @@ class Multiprocessor:
             while (
                 release is not None
                 and (
-                    self._storage.archive_root
+                    self._storage.the_archive_root
                     / release.parent_directory
                     / self._dataset.archive_name(release)
                 ).exists()
@@ -224,7 +226,7 @@ class Multiprocessor:
 
         # Ensure graceful termination in offline mode.
         if self._offline and release is not None and not (
-            self._storage.archive_root
+            self._storage.the_archive_root
             / release.parent_directory
             / self._dataset.archive_name(release)
         ).exists():

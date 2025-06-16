@@ -63,7 +63,8 @@ class Processor[R: Release]:
     def run(self, task: str) -> None | DataFrameType:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
-        _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
+        _logger.info('    key="storage.archive_root", value="%s"',
+            "" if self._storage.archive_root is None else self._storage.archive_root)
         _logger.info('    key="storage.extract_root", value="%s"',
             "" if self._storage.extract_root is None else self._storage.extract_root)
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
@@ -88,6 +89,10 @@ class Processor[R: Release]:
             result = self.download()
         elif task == "distill":
             result = self.distill_category()
+        elif task == "summarize-builtin":
+            stats = Statistics.builtin()
+            stats.write(self._storage.staging_root / self.stats_file)
+            result = stats.frame()
         elif task == "summarize-all":
             result = self.summarize_database()
         elif task == "summarize-category":
@@ -147,16 +152,21 @@ class Processor[R: Release]:
         # Archive Root
 
         emit_rule(strong=True)
-        emit_pair("archive.path", str(self._storage.archive_root))
-        emit_rule()
-        emit_range("archive", "file system", self._storage.coverage_of_archive())
+        if self._storage.archive_root is None:
+            emit_pair("archive.path", "<builtin>")
+            emit_rule()
+            emit_range("archive", "<builtin>", Statistics.builtin().range())
+        else:
+            emit_pair("archive.path", str(self._storage.archive_root))
+            emit_rule()
+            emit_range("archive", "file system", self._storage.coverage_of_archive())
 
-        emit_rule()
-        try:
-            stats = Statistics.read(self._storage.archive_root / "db.parquet")
-        except FileNotFoundError:
-            stats = None
-        emit_range("archive", "db.parquet", None if stats is None else stats.range())
+            emit_rule()
+            try:
+                stats = Statistics.read(self._storage.the_archive_root / "db.parquet")
+            except FileNotFoundError:
+                stats = None
+            emit_range("archive", "db.parquet", None if stats is None else stats.range())
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Extract Root
@@ -290,13 +300,15 @@ class Processor[R: Release]:
         self.validate_archive(self._storage.staging_root, release)
         _logger.info('validated file="%s"', archive)
         self._progress.perform(f"copying release {release.id} to archive")
-        self.copy_archive(self._storage.staging_root, self._storage.archive_root, release)
+        self.copy_archive(
+            self._storage.staging_root, self._storage.the_archive_root, release
+        )
         _logger.info('archived file="%s"', archive)
 
     def is_archive_downloaded(self, release: Daily) -> bool:
         """Determine whether the archive for the release has been downloaded."""
         return (
-            self._storage.archive_root
+            self._storage.the_archive_root
             / release.parent_directory
             / self._dataset.archive_name(release)
         ).exists()
@@ -398,7 +410,9 @@ class Processor[R: Release]:
 
         archive = self._dataset.archive_name(release)
         self._progress.perform(f"copying release {release.id} from archive to staging")
-        self.copy_archive(self._storage.archive_root, self._storage.staging_root, release)
+        self.copy_archive(
+            self._storage.the_archive_root, self._storage.staging_root, release
+        )
         _logger.info('staged file="%s"', archive)
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
@@ -587,11 +601,11 @@ class Processor[R: Release]:
     def summarize_database(self) -> DataFrameType:
         """Analyze the full data set."""
         stats = Statistics.from_storage(
-            self.stats_file, self._storage.staging_root, self._storage.archive_root
+            self.stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
 
         staged = self._storage.staging_root / self.stats_file
-        archive = self._storage.archive_root / self.stats_file
+        archive = self._storage.the_archive_root / self.stats_file
 
         if not stats.is_empty():
             range = stats.range()
@@ -635,7 +649,7 @@ class Processor[R: Release]:
 
         _logger.info('copying summary statistics to archive file="%s"', archive)
         Statistics.copy(
-            self.stats_file, self._storage.staging_root, self._storage.archive_root
+            self.stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
         return stats.frame()
 

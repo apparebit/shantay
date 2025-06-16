@@ -703,7 +703,7 @@ def _find_coverage(directory: Path, is_extract: bool) -> None | DateRange:
 class Storage:
     """The current storage locations."""
 
-    archive_root: Path
+    archive_root: None | Path
     extract_root: None | Path
     staging_root: Path
 
@@ -714,6 +714,16 @@ class Storage:
             self.extract_root,
             self.staging_root.with_suffix(f".{worker}")
         )
+
+    @property
+    def the_archive_root(self) -> Path:
+        """
+        The non-null archive root. If the archive root is null, the
+        implementation throws an exception.
+        """
+        if self.archive_root is None:
+            raise ValueError('no extract root available')
+        return self.archive_root
 
     @property
     def the_extract_root(self) -> Path:
@@ -727,13 +737,15 @@ class Storage:
 
     def coverage_of_archive(self) -> None | DateRange:
         """Determine the date coverage of the archive based on directory names."""
+        if self.archive_root is None:
+            return None
         return _find_coverage(self.archive_root, False)
 
     def coverage_of_extract(self) -> None | DateRange:
         """Determine the date coverage of the extract based on directory names."""
         if self.extract_root is None:
             return None
-        return _find_coverage(self.the_extract_root, True)
+        return _find_coverage(self.extract_root, True)
 
 
 # ================================================================================================

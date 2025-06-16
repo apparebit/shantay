@@ -85,7 +85,14 @@ def get_configuration(
     category = normalize_category(options.category)
 
     # Handle metadata
-    if storage.extract_root is None:
+    if storage.archive_root is None and storage.extract_root is None:
+        if options.task not in ("info", "summarize", "visualize"):
+            raise ConfigError(
+                f"please specify --archive for `{options.task}` task"
+            )
+        metadata = Metadata()
+        filestem = None
+    elif storage.extract_root is None:
         if category is not None:
             raise ConfigError(
                 "please do not specify --category without --extract directory"
@@ -93,7 +100,7 @@ def get_configuration(
 
         metadata = Metadata.merge(
             storage.staging_root / "db.json",
-            storage.archive_root / "db.json",
+            storage.the_archive_root / "db.json",
             not_exist_ok=True,
         )
         if metadata.category is not None:
@@ -141,7 +148,8 @@ def get_configuration(
 
     # Make sure staging directory exists and store latest metadata in it
     storage.staging_root.mkdir(parents=True, exist_ok=True)
-    metadata.write_json(storage.staging_root / f"{filestem}.json")
+    if storage.archive_root is not None:
+        metadata.write_json(storage.staging_root / f"{filestem}.json")
 
     # Handle --first and --last, with the latter including one day for the
     # Americas being a day behind Europe for several hours every day and another
@@ -177,7 +185,7 @@ def get_configuration(
     # Handle --workers
     if options.workers < 1:
         raise ConfigError(f"worker number must be positive but is {options.workers}")
-    if options.task in ("info", "recover", "visualize"):
+    if options.task in ("info", "recover", "visualize") or storage.archive_root is None:
         options.workers = 1
 
     # Finish it all up
@@ -204,10 +212,12 @@ def _run(options: Any) -> None:
         fsck(storage.the_extract_root, progress=Progress())
         return
 
-    # Internally, we distinguish between two versions of summarize
+    # Internally, we distinguish between two plus versions of summarize
     task = options.task
     if task == "summarize":
-        if storage.extract_root is None:
+        if storage.archive_root is None:
+            task = "summarize-builtin"
+        elif storage.extract_root is None:
             task = "summarize-all"
         else:
             task = "summarize-category"
