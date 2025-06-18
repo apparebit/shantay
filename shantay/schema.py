@@ -27,6 +27,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 import datetime as dt
 import enum
+import itertools
 from types import GenericAlias, MappingProxyType
 from typing import Any, cast, get_args, get_origin, Literal, overload, Self
 
@@ -64,9 +65,11 @@ def humanize(tag: None | str) -> str:
         tag = tag[len("STATEMENT_CATEGORY_"):]
     elif tag.startswith("KEYWORD_"):
         tag = tag[len("KEYWORD_"):]
-    tag = tag.replace("_", " ").title()
-    for source, target in _HUMANIZED_REPLACEMENTS.items():
-        tag = tag.replace(source, target)
+    tag = tag.replace("_", " ")
+    if len(tag) != 2 or tag != tag.upper():
+        tag = tag.title()
+        for source, target in _HUMANIZED_REPLACEMENTS.items():
+            tag = tag.replace(source, target)
     return tag
 
 
@@ -361,12 +364,6 @@ class MetricDeclaration:
     def enum(self) -> pl.Enum:
         return pl.Enum(self.variant_names())
 
-    def replace(self, key: None | str) -> None | str:
-        value = self.variants.get(key, _POISON)
-        if value is _POISON:
-            return None
-        return cast(tuple[None | str, str], value)[0]
-
     def replacements(self) -> dict[None | str, str]:
         return {k: v[0] for k, v in self.variants.items()}
 
@@ -384,6 +381,17 @@ class MetricDeclaration:
             groupings.append(pl.col("variant"))
         return groupings
 
+    def without_null(self) -> Self:
+        """Recreate the metric without a null variant."""
+        return type(self)(
+            self.field,
+            self.label,
+            {k: v for k, v in self.variants.items() if k is not None},
+            selector=self.selector,
+            quantity=self.quantity,
+            quant_label=self.quant_label,
+        )
+
     def with_variants(
         self,
         names: Iterable[None | str],
@@ -391,8 +399,8 @@ class MetricDeclaration:
     ) -> Self:
         """
         Create a new metric declaration that has the same fields as this one,
-        except that the variants only include the names, in that order, with
-        colors from the standard palette.
+        except that the variants only include the names, in that order. The
+        colors can be the original ones or be drawn from the standard palette.
         """
         if use_palette:
             color_count = len(PALETTE) - 1
@@ -419,7 +427,7 @@ class MetricDeclaration:
 def make_metric(
     field: str,
     label: str,
-    variants: Iterable[str],
+    variants: Iterable[None | str],
     quant_label: str = "Statements of Reasons",
 ) -> MetricDeclaration:
     color_count = len(PALETTE) - 1
@@ -433,29 +441,37 @@ def make_metric(
 # --------------------------------------------------------------------------------------
 
 
-AccountType = MetricDeclaration("account_type", "Account Types", {
+AccountTypeMetric = MetricDeclaration("account_type", "Account Types", {
     "ACCOUNT_TYPE_BUSINESS": ("Business", ORANGE),
     "ACCOUNT_TYPE_PRIVATE": ("Individual", BLUE),
-    None: ("—none—", RED),
+    None: ("—none—", GRAY),
 })
 
 
-AutomatedDecision = MetricDeclaration("automated_decision", "Automated Decisions", {
+AutomatedDecisionMetric = MetricDeclaration("automated_decision", "Automated Decisions", {
     "AUTOMATED_DECISION_FULLY": ("Fully Automated", CYAN),
     "AUTOMATED_DECISION_PARTIALLY": ("Partially Automated", BLUE),
     "AUTOMATED_DECISION_NOT_AUTOMATED": ("Not Automated", GREEN),
-    None: ("—none—", RED),
+    None: ("—none—", GRAY),
 })
 
 
-AutomatedDetection = MetricDeclaration("automated_detection", "Automated Detection", {
+AutomatedDetectionMetric = MetricDeclaration("automated_detection", "Automated Detection", {
     "Yes": ("Automated", LIGHT_BLUE),
     "No": ("Not Automated", PURPLE),
-    None: ("—none—", RED),
+    None: ("—none—", GRAY),
 })
 
 
-ContentType = MetricDeclaration("content_type", "Content Types", {
+ContentLanguageMetric = make_metric("content_language", "Content Language",
+    itertools.chain(
+        (item.name for item in ContentLanguage),
+        [None],
+    ),
+)
+
+
+ContentTypeMetric = MetricDeclaration("content_type", "Content Types", {
     "CONTENT_TYPE_APP": ("App", CYAN),
     "CONTENT_TYPE_AUDIO": ("Audio", GREEN),
     "CONTENT_TYPE_IMAGE": ("Image", BLUE),
@@ -468,20 +484,20 @@ ContentType = MetricDeclaration("content_type", "Content Types", {
 })
 
 
-DecisionAccount = MetricDeclaration("decision_account", "Account Decisions", {
+DecisionAccountMetric = MetricDeclaration("decision_account", "Account Decisions", {
     "DECISION_ACCOUNT_SUSPENDED": ("Suspended", ORANGE),
     "DECISION_ACCOUNT_TERMINATED": ("Terminated", RED),
     None: ("—none—", GRAY),
 })
 
 
-DecisionGround = MetricDeclaration("decision_ground", "Decision Grounds", {
+DecisionGroundMetric = MetricDeclaration("decision_ground", "Decision Grounds", {
     "DECISION_GROUND_ILLEGAL_CONTENT": ("Illegal", RED),
     "DECISION_GROUND_INCOMPATIBLE_CONTENT": ("Incompatible", ORANGE),
 })
 
 
-DecisionMonetary = MetricDeclaration("decision_monetary", "Monetary Decisions", {
+DecisionMonetaryMetric = MetricDeclaration("decision_monetary", "Monetary Decisions", {
    "DECISION_MONETARY_SUSPENSION": ("Suspended", ORANGE),
    "DECISION_MONETARY_TERMINATION": ("Terminated", RED),
    "DECISION_MONETARY_OTHER": ("Other", PINK),
@@ -489,7 +505,7 @@ DecisionMonetary = MetricDeclaration("decision_monetary", "Monetary Decisions", 
 })
 
 
-DecisionProvision = MetricDeclaration("decision_provision", "Service Provision Decisions", {
+DecisionProvisionMetric = MetricDeclaration("decision_provision", "Service Provision Decisions", {
     "DECISION_PROVISION_PARTIAL_SUSPENSION": ("Partially Suspended", LIGHT_BLUE),
     "DECISION_PROVISION_TOTAL_SUSPENSION": ("Suspended", BLUE),
     "DECISION_PROVISION_PARTIAL_TERMINATION": ("Partially Terminated", ORANGE),
@@ -498,7 +514,7 @@ DecisionProvision = MetricDeclaration("decision_provision", "Service Provision D
 })
 
 
-DecisionType = MetricDeclaration("decision_type", "Decision Types", {
+DecisionTypeMetric = MetricDeclaration("decision_type", "Decision Types", {
     "vis": ("Visibility", BLUE),
     "mon": ("Monetary", OLIVE),
     "vis_mon": ("Visibility & Monetary", MAGENTA),
@@ -518,7 +534,7 @@ DecisionType = MetricDeclaration("decision_type", "Decision Types", {
 }, selector="entity")
 
 
-DecisionVisibility = MetricDeclaration("decision_visibility", "Visibility Decisions", {
+DecisionVisibilityMetric = MetricDeclaration("decision_visibility", "Visibility Decisions", {
     "DECISION_VISIBILITY_CONTENT_REMOVED": ("Removed", LIGHT_BLUE),
     "DECISION_VISIBILITY_CONTENT_DISABLED": ("Disabled", RED),
     "DECISION_VISIBILITY_CONTENT_DEMOTED": ("Demoted", ORANGE),
@@ -530,7 +546,7 @@ DecisionVisibility = MetricDeclaration("decision_visibility", "Visibility Decisi
 })
 
 
-IncompatibleContentIllegal = MetricDeclaration(
+IncompatibleContentIllegalMetric = MetricDeclaration(
     "incompatible_content_illegal",
     "Incompatible Is Illegal", {
         "Yes": ("Yes", RED),
@@ -540,7 +556,7 @@ IncompatibleContentIllegal = MetricDeclaration(
 )
 
 
-InformationSource = MetricDeclaration("source_type", "Information Sources", {
+InformationSourceMetric = MetricDeclaration("source_type", "Information Sources", {
     "SOURCE_ARTICLE_16": ("Article 16", LIGHT_BLUE),
     "SOURCE_TRUSTED_FLAGGER": ("Trusted Flagger", BLUE),
     "SOURCE_TYPE_OTHER_NOTIFICATION": ("Other Notification", ORANGE),
@@ -682,7 +698,7 @@ from ._platform import (
 )
 
 
-ProcessingDelay = MetricDeclaration(
+ProcessingDelayMetric = MetricDeclaration(
     ["moderation_delay", "disclosure_delay"],
     "Delays",
     {
@@ -707,11 +723,19 @@ CategoryMetric = make_metric(
 )
 
 
-StatementCount = MetricDeclaration(
+StatementCountMetric = MetricDeclaration(
     "rows",
     "Statement Counts",
     {},
     selector="column",
+)
+
+
+TerritorialScopeMetric = make_metric("territorial_scope", "Territorial Scope",
+    itertools.chain(
+        (item.name for item in TerritorialScope),
+        [None],
+    ),
 )
 
 
@@ -728,23 +752,23 @@ YesNo = (
 FIELDS = MappingProxyType({
     "uuid": str,
 
-    "decision_visibility": list[DecisionVisibility],
+    "decision_visibility": list[DecisionVisibilityMetric],
     "decision_visibility_other": str,
     "end_date_visibility_restriction": dt.datetime,
 
-    "decision_monetary": DecisionMonetary,
+    "decision_monetary": DecisionMonetaryMetric,
     "decision_monetary_other": str,
     "end_date_monetary_restriction": dt.datetime,
 
-    "decision_provision": DecisionProvision,
+    "decision_provision": DecisionProvisionMetric,
     "end_date_service_restriction": dt.datetime,
 
-    "decision_account": DecisionAccount,
+    "decision_account": DecisionAccountMetric,
     "end_date_account_restriction": dt.datetime,
 
-    "account_type": AccountType,
+    "account_type": AccountTypeMetric,
 
-    "decision_ground": DecisionGround,
+    "decision_ground": DecisionGroundMetric,
     "decision_ground_reference_url": str,
 
     "illegal_content_legal_ground": str,
@@ -759,7 +783,7 @@ FIELDS = MappingProxyType({
     "category_specification": list[Keyword],
     "category_specification_other": str,
 
-    "content_type": list[ContentType],
+    "content_type": list[ContentTypeMetric],
     "content_type_other": str,
     "content_language": tuple(v.name for v in ContentLanguage),
     "content_date": dt.datetime,
@@ -768,10 +792,10 @@ FIELDS = MappingProxyType({
     "application_date": dt.datetime,
     "decision_facts": str,
 
-    "source_type": InformationSource,
+    "source_type": InformationSourceMetric,
     "source_identity": str,
     "automated_detection": YesNo,
-    "automated_decision": AutomatedDecision,
+    "automated_decision": AutomatedDecisionMetric,
 
     "platform_name": str,
     "platform_uid": str,
@@ -916,6 +940,7 @@ TRANSFORMS = {
     "content_type_other": TransformType.TEXT_VALUE_COUNTS,
     "content_language": TransformType.VALUE_COUNTS,
     "moderation_delay": DurationTransform("content_date", "application_date"),
+    "territorial_scope": TransformType.VALUE_COUNTS,
     "disclosure_delay": DurationTransform("application_date", "created_at"),
     "source_type": TransformType.VALUE_COUNTS,
     "automated_detection": TransformType.VALUE_COUNTS,
@@ -1005,15 +1030,15 @@ def _all_variants() -> list[str]:
     variants = ["—none—"]
 
     for decl in (
-        AccountType,
-        AutomatedDecision,
-        ContentType,
-        DecisionAccount,
-        DecisionGround,
-        DecisionMonetary,
-        DecisionProvision,
-        DecisionVisibility,
-        InformationSource,
+        AccountTypeMetric,
+        AutomatedDecisionMetric,
+        ContentTypeMetric,
+        DecisionAccountMetric,
+        DecisionGroundMetric,
+        DecisionMonetaryMetric,
+        DecisionProvisionMetric,
+        DecisionVisibilityMetric,
+        InformationSourceMetric,
     ):
         variants.extend(decl.variant_names())
 
