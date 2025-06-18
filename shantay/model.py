@@ -762,3 +762,7 @@ from ._platform import DownloadFailed as DownloadFailed
 
 class MetadataConflict(Exception):
     """Inconsistent metadata while merging."""
+
+
+class StagingIsBusy(Exception):
+    """The staging directory is already in use."""
