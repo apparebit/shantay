@@ -1,4 +1,5 @@
 from abc import ABCMeta, abstractmethod
+from collections.abc import Iterable
 import datetime as dt
 import logging
 from pathlib import Path
@@ -17,12 +18,15 @@ from .framing import (
 )
 from .model import ConfigError, Coverage, file_stem_for, Storage
 from .schema import (
-    AutomatedDecision, AutomatedDetection, CategoryMetric, ContentType, DecisionAccount,
-    DecisionGround, DecisionMonetary, DecisionProvision, DecisionType,
-    DecisionVisibility, humanize, IncompatibleContentIllegal,
+    AccountTypeMetric, AutomatedDecisionMetric, AutomatedDetectionMetric,
+    ContentLanguageMetric, CategoryMetric, ContentTypeMetric, DecisionAccountMetric,
+    DecisionGroundMetric, DecisionMonetaryMetric, DecisionProvisionMetric,
+    DecisionTypeMetric, DecisionVisibilityMetric, humanize,
+    IncompatibleContentIllegalMetric, InformationSourceMetric,
     KeywordChildSexualAbuseMaterial, make_metric, MetaPlatforms, MetricDeclaration,
-    PlatformValueType, ProcessingDelay, SCHEMA, StatementCategoryProtectionOfMinors,
-    StatementCount, TextColumns
+    PlatformValueType, ProcessingDelayMetric, SCHEMA,
+    StatementCategoryProtectionOfMinors, StatementCountMetric, TerritorialScopeMetric,
+    TextColumns
 )
 from .stats import get_tags, Statistics
 from .util import minify, to_markdown_table
@@ -141,9 +145,6 @@ tbody > tr:first-of-type > :where(th, td) {
 tbody > tr:nth-child(even) {
     background: #f0f0f0
 }
-/*tbody > tr.highlight {
-    background: #fff9cf;
-}*/
 td {
     font-variant-numeric: tabular-nums;
     text-align: right;
@@ -151,7 +152,10 @@ td {
 th {
     text-align: right;
 }
-.col2left tr > :where(td, th):nth-child(2) {
+:where(.col2left, .col3left) tr > :where(td, th):nth-child(2) {
+    text-align: left;
+}
+:where(.col3left) tr > :where(td, th):nth-child(3) {
     text-align: left;
 }
 tbody > tr.highlight > td {
@@ -383,6 +387,7 @@ class Visualizer:
         caption: None | str = None,
         klass: None | str = None,
     ) -> None:
+        frame = frame.with_row_index(offset=1)
         self._renderer.frame(frame)
 
         assert self._document is not None
@@ -607,6 +612,7 @@ class Visualizer:
             <li><a href="#dailies">Daily Statements of Reasons</a></li>
             <li><a href="#platforms">The Platforms Filing SoRs</a></li>
             <li><a href="#sors">The Statements of Reasons</a></li>
+            <li><a href="#outages">Outages</a></li>
             {tag_toc}
             {platform_toc}
             <li><a href="#data">Data Summary</a></li>
@@ -675,8 +681,6 @@ class Visualizer:
             pl.col("count").sum()
         ).sort(
             "count", descending=True
-        ).with_row_index(
-            offset=1
         )
 
         self.frame(table, klass="col2left")
@@ -687,7 +691,7 @@ class Visualizer:
 <p>The percentage for the "null" keyword denotes the fraction of <em>all</em> SoRs,
 whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ''')
-        self.frame(self._keyword_usage.with_row_index(offset=1), klass="col2left")
+        self.frame(self._keyword_usage, klass="col2left")
         pie = self.overall_keyword_usage()
         self.chart("keyword-pie", pie)
 
@@ -772,6 +776,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         self.html(f"<h2 id=sors>{self.secno()}. The Statements of Reasons</h2>")
         self.render_standard_timelines(None, tag=main_tag)
 
+        self.html(f"<h2 id=outages>{self.secno()}. Outages</h2>")
+        self.render_outages()
+
         for tag in self._tags[1:]:
             assert tag is not None
             _logger.debug('render charts tag="%s"', tag)
@@ -836,87 +843,66 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
     def render_standard_timelines(
         self, prefix: None | str, tag: None | str = None, platform: None | str = None
     ) -> None:
-        def with_prefix(name: str) -> str:
-            return name if prefix is None else f"{prefix}-{name}"
-
-        self.chart(
-            with_prefix("statements"),
-            self.render_timeline(StatementCount, tag, platform),
-        )
-
-        self.chart(
-            with_prefix("keywords"),
-            self.render_timeline(self._keyword_metric, tag, platform),
-        )
-        self.frame(
-            self.text_usage("category_specification_other", tag, platform),
-            caption="Keyword: Other"
-        )
+        metrics = [
+            StatementCountMetric,
+            "keywords",
+            ("Keyword: Other", "category_specification_other"),
+        ]
 
         if tag is None:
-            self.chart(
-                with_prefix("categories"),
-                self.render_timeline(CategoryMetric, tag, platform)
-            )
+            metrics.append(CategoryMetric)
 
-        self.chart(
-            with_prefix("content-type"),
-            self.render_timeline(ContentType, tag, platform)
-        )
-        self.frame(
-            self.text_usage("content_type_other", tag, platform),
-            caption="Content Type: Other"
-        )
+        metrics.extend([
+            ContentLanguageMetric,
+            TerritorialScopeMetric,
+            ContentTypeMetric,
+            ("Content Type: Other", "content_type_other"),
+            DecisionGroundMetric,
+            IncompatibleContentIllegalMetric,
+            DecisionTypeMetric,
+            DecisionVisibilityMetric,
+            ("Visibility Decision: Other", "decision_visibility_other"),
+            DecisionProvisionMetric,
+            DecisionMonetaryMetric,
+            ("Monetary Decision: Other", "decision_monetary_other"),
+            AccountTypeMetric,
+            DecisionAccountMetric,
+            InformationSourceMetric,
+            AutomatedDetectionMetric,
+            AutomatedDecisionMetric,
+            ProcessingDelayMetric,
+        ])
 
-        self.chart(with_prefix("decision-ground"), alt.vconcat(
-            self.render_timeline(DecisionGround, tag, platform),
-            self.render_timeline(IncompatibleContentIllegal, tag, platform),
-        ).resolve_scale(
-            x="shared",
-            color="independent",
-        ))
+        for metric in metrics:
+            allow_cutoff = True
 
-        self.chart(with_prefix("decision-type-and-visibility"), alt.vconcat(
-            self.render_timeline(DecisionType, tag, platform),
-            self.render_timeline(DecisionVisibility, tag, platform),
-            spacing=SPACING,
-        ).resolve_scale(
-            x="shared",
-            color="independent",
-        ))
-        self.frame(
-            self.text_usage("decision_visibility_other", tag, platform),
-            caption="Visibility Decision: Other"
-        )
+            if isinstance(metric, tuple):
+                caption, column = metric
+                self.frame(
+                    self.text_usage(column, tag, platform),
+                    caption=caption,
+                    klass="col3left",
+                )
+                continue
+            elif metric == "keywords":
+                allow_cutoff = False
+                metric = self._keyword_metric.without_null()
 
-        self.chart(with_prefix("decision-provision-and-monetary"), alt.vconcat(
-            self.render_timeline(DecisionProvision, tag, platform),
-            self.render_timeline(DecisionMonetary, tag, platform),
-            spacing=SPACING,
-        ).resolve_scale(
-            x="shared",
-            color="independent",
-        ))
-        self.frame(
-            self.text_usage("decision_monetary_other", tag, platform),
-            caption="Monetary Decision: Other"
-        )
+            chart = self.render_timeline(metric, tag, platform, allow_cutoff)
+            if chart is None:
+                self.html(
+                    f"<p><em>No Data Available on {metric.label}!</em></p>"
+                )
+                continue
 
-        self.chart(
-            with_prefix("decision-account-automation-delay"),
-            self.render_timeline(DecisionAccount, tag, platform),
-        )
-
-        self.chart(
-            with_prefix("automation-and-delay"), alt.vconcat(
-            self.render_timeline(AutomatedDetection, tag, platform),
-            self.render_timeline(AutomatedDecision, tag, platform),
-            self.render_timeline(ProcessingDelay, tag, platform),
-            spacing=SPACING,
-        ).resolve_scale(
-            x="shared",
-            color="independent",
-        ))
+            if metric is ProcessingDelayMetric:
+                name = "delays"
+            else:
+                assert isinstance(metric.field, str)
+                name = metric.field.replace("_", "-")
+            if prefix is not None:
+                name = f"{prefix}-{name}"
+            self.chart(name, chart)
 
     # ==================================================================================
 
@@ -1012,7 +998,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ).encode(
                 alt.X("start_date:T"),
                 alt.X2("end_date:T"),
-                alt.Y(f"sum({source}):Q").title("Monthly Statements of Reasons (Thousands)"),
+                alt.Y(f"sum({source}):Q").title(
+                    "Monthly Statements of Reasons (Thousands)"
+                ),
             )
 
             chart = alt.layer(monthly, chart).resolve_scale(
@@ -1156,7 +1144,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             size=1 if with_monthly_mean else 1.5,
         ).encode(
             alt.X("start_date:T").title("Date"),
-            alt.Y("pct:Q").title("Percent"),
+            alt.Y("pct:Q").title("Percent (Statements of Reasons)"),
             alt.Color("Kind:N").scale(
                 domain=column_names,
                 range=[f"{PINK}A0" if with_monthly_mean else PINK, BLUE],
@@ -1215,9 +1203,65 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         spec: MetricDeclaration,
         tag: None | str = None,
         platform: None | str = None,
-    ) -> alt.Chart | alt.LayerChart:
-        table = self.timeline_data(spec, tag, platform)
-        return self.timeline_chart(table, spec, tag, platform)
+        allow_cutoff: bool = True,
+    ) -> None | alt.Chart | alt.LayerChart | alt.VConcatChart:
+        table = self.timeline_data(spec, tag=tag, platform=platform)
+
+        if spec.quantity != "count" or not spec.has_variants():
+            return self.timeline_chart(
+                spec,
+                table,
+                tag=tag,
+                platform=platform,
+                allow_cutoff=allow_cutoff
+            )
+
+        ranking = self.variant_ranking(spec, table)
+        count = ranking.height
+        if count == 0:
+            return None
+
+        spec2, table2 = self.apply_ranking(
+            spec, table, ranking.get_column(spec.selector)
+        )
+        chart = self.timeline_chart(
+            spec2,
+            table2,
+            tag=tag,
+            platform=platform,
+            allow_cutoff=allow_cutoff
+        )
+
+        pct = ranking.get_column("cum_pct")
+
+        cut = None
+        if count > 1 and pct[0] > 95:
+            cut = 1
+        elif count > 2 and pct[1] > 90:
+            cut = 2
+        elif count > 3 and pct[2] > 80:
+            cut = 3
+
+        if cut is None:
+            return chart
+
+        spec2, table2 = self.apply_ranking(
+            spec, table, ranking.get_column(spec.selector).to_list()[cut:]
+        )
+        chart2 = self.timeline_chart(
+            spec2,
+            table2,
+            tag=tag,
+            platform=platform,
+            allow_cutoff=False,
+            with_title=False,
+            with_full_height=False,
+        )
+
+        return alt.vconcat(chart, chart2, spacing=0).resolve_scale(
+            x="shared",
+            color="shared",
+        )
 
     def timeline_data(
         self,
@@ -1236,7 +1280,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if platform is not None:
             filters["platform"] = platform
 
-        table = self._statistics.frame().lazy().filter(
+        table = self._statistics.frame().filter(
             predicate(**filters)
         )
 
@@ -1247,9 +1291,21 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 *spec.groupings(),
             ).agg(
                 pl.col("start_date").first().dt.month_start().dt.offset_by("5d"),
+                pl.col("start_date").first().dt.month_start().dt.offset_by("14d")
+                .alias("mid_date"),
                 pl.col("start_date").first().dt.month_end().dt.offset_by("-5d")
                 .alias("end_date"),
                 *aggregates(),
+            )
+
+            total_counts = table.group_by(
+                pl.col("year", "month")
+            ).agg(
+                pl.col("count").sum().alias("total_count")
+            )
+
+            table = table.join(
+                total_counts, on=["year", "month"], how="left"
             )
         else:
             table = table.group_by(
@@ -1259,12 +1315,28 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 *aggregates(),
             )
 
+            total_counts = table.group_by(
+                pl.col("start_date")
+            ).agg(
+                pl.col("count").sum().alias("total_count")
+            )
+
+            table = table.join(
+                total_counts, on="start_date", how="left"
+            )
+
         if spec.has_variants():
             table = table.with_columns(
                 pl.col(spec.selector)
                 .cast(pl.String)
                 .replace(spec.replacements())
-                .alias("label")
+                .alias("variant_label")
+            )
+        elif spec.quantity == "count":
+            table = table.with_columns(
+                pl.col("count")
+                .map_elements(minify, return_dtype=pl.String)
+                .alias("data_label")
             )
 
         if spec.quantity != "count" and spec.label == "Delays":
@@ -1272,19 +1344,20 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 pl.col(spec.quantity) / (24 * 60 * 60)
             )
 
-        return table.collect()
+        return table
 
-    def timeline_variants(
+    def variant_ranking(
         self,
-        table: pl.DataFrame,
         spec: MetricDeclaration,
-    ) -> tuple[MetricDeclaration, pl.DataFrame]:
+        table: pl.DataFrame,
+    ) -> pl.DataFrame:
+        """Rank variants by overall popularity."""
         assert spec.quantity == "count"
+        assert spec.has_variants()
 
-        ranking = table.lazy().group_by(
+        return table.lazy().group_by(
             spec.selector
         ).agg(
-            pl.col("label").first(),
             pl.col("count").sum(),
         ).filter(
             pl.col("count").gt(0)
@@ -1298,22 +1371,28 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.col("pct").cum_sum().alias("cum_pct")
         ).collect()
 
-        names = ranking.get_column(spec.selector)
-        filtered_spec = spec.with_variants(names, use_palette=spec.has_many_variants())
+    def apply_ranking(
+        self, spec: MetricDeclaration, table: pl.DataFrame, names: Iterable[None | str]
+    ) -> tuple[MetricDeclaration, pl.DataFrame]:
+        """Apply the ranking to the metric and its data."""
+        spec2 = spec.with_variants(names, use_palette=spec.has_many_variants())
 
-        filter = pl.col(spec.selector).is_in(names)
-        if filtered_spec.has_null_variant():
+        actual_names = [n for n in names if n is not None]
+        filter = pl.col(spec.selector).is_in(actual_names)
+        if spec2.has_null_variant():
             filter = filter.or_(pl.col(spec.selector).is_null())
-        filtered_table = table.filter(filter)
-
-        return filtered_spec, filtered_table
+        table2 = table .filter(filter)
+        return spec2, table2
 
     def timeline_chart(
         self,
-        table: pl.DataFrame,
         spec: MetricDeclaration,
+        table: pl.DataFrame,
         tag: None | str = None,
         platform: None | str = None,
+        allow_cutoff: bool = True,
+        with_title: bool = True,
+        with_full_height: bool = True,
     ) -> alt.Chart | alt.LayerChart:
         """
         Generate the standard timeline chart. The data frame may contain daily
@@ -1326,12 +1405,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             "max": "Maxima",
         }[spec.quantity]
 
-        bar_area_props: dict[str, Any] = dict(
-            tooltip=True,
-        )
-        if not spec.has_variants():
-            bar_area_props["color"] = GRAY
-
+        # X-Axis
         encoding: list[Any] = [
             alt.X("start_date:T").scale(domain=self._date_range.to_tuple())
             .title("Month" if self.is_monthly() else "Day"),
@@ -1339,25 +1413,28 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if self.is_monthly():
             encoding.append(alt.X2("end_date:T").title(""))
 
-            if spec is StatementCount:
-                table = self.data_signage(table, encoding)
-
+        # Variant Order
         order = alt.Undefined
         if spec.has_variants() and spec.quantity == "count":
-            spec, table = self.timeline_variants(table, spec)
             order = spec.variant_labels()
+        elif spec is ProcessingDelayMetric:
+            order = ["Moderation", "Disclosure", "—none—"]
 
+        # Y-Axis
         yaxis = alt.Y(f"sum({spec.quantity}):Q", sort=order).title(spec.quant_label)
 
         cutoff = None
         signage = None
-        if self._with_cutoff and platform is None and spec.quantity == "count":
-            if self.is_monthly() and tag is None:
+        if (
+            self._with_cutoff
+            and allow_cutoff
+            and self.is_monthly()
+            and spec.quantity == "count"
+            and platform is None
+        ):
+            if tag is None:
                 cutoff = 2_000_000_000
-            elif (
-                self.is_monthly() and
-                tag == StatementCategoryProtectionOfMinors
-            ):
+            elif tag == StatementCategoryProtectionOfMinors:
                 cutoff = 5_000_000
 
             if cutoff is not None:
@@ -1366,17 +1443,22 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         encoding.append(yaxis)
 
+        # (Variant) Colors
+        mark_props = {}
         if spec.has_variants():
             encoding.append(
-                alt.Color(f"label:N", sort=order).scale(
+                alt.Color(f"variant_label:N", sort=order).scale(
                     domain=spec.variant_labels(),
                     range=spec.variant_colors(),
                 ).title(spec.label),
             )
             encoding.append(
-                alt.Order("color_label_sort_index:Q")
+                alt.Order("color_variant_label_sort_index:Q")
             )
+        else:
+            mark_props["color"] = GRAY
 
+        # Title
         title = spec.label
         if platform is not None:
             title = f"{platform}: {title}"
@@ -1386,33 +1468,35 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             title += f" for {humanize(tag)}"
         title += f" — {"Monthly" if self.is_monthly() else "Daily"} {quantity}"
 
+        # Base Chart
         base = alt.Chart(
             table,
-            title=title,
+            title=title if with_title else alt.Undefined,
         ).encode(
             *encoding
         ).properties(
-            height=TIMELINE_HEIGHT,
+            height=TIMELINE_HEIGHT if with_full_height else TIMELINE_HEIGHT * 2 // 3,
             width=TIMELINE_WIDTH,
         )
 
+        # Charts
         if self.is_monthly():
-            chart = base.mark_bar(**bar_area_props)
+            chart = base.mark_bar(**mark_props)
 
-            if spec is StatementCount:
+            if spec is StatementCountMetric:
                 labels = base.encode(
-                    alt.X("mid_date:T")
+                    alt.X("mid_date:T"),
+                    alt.Text("data_label")
                 ).mark_text(
                     dy=-8,
                     align="center",
                     fontSize=10,
                 )
                 chart = chart + labels
-
         elif not spec.has_variants():
-            chart = base.mark_line(**bar_area_props)
+            chart = base.mark_line(**mark_props)
         else:
-            chart = base.mark_area(**bar_area_props)
+            chart = base.mark_area(**mark_props)
 
         if cutoff is not None:
             assert signage is not None
@@ -1431,41 +1515,16 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
             chart = chart + warnings
 
-        if spec is ProcessingDelay:
+        if spec is ProcessingDelayMetric:
             chart = chart + self.processing_delay_signage(tag, platform)
 
         return chart
 
-    def data_signage(
-        self, frame: pl.DataFrame, encoding: list[alt.FieldChannelMixin]
-    ) -> pl.DataFrame:
-        encoding.append(alt.Text("label"))
-        return frame.with_columns(
-            pl.col("start_date").dt.offset_by("10d").alias("mid_date"),
-            pl.col("count").map_elements(minify, return_dtype=pl.String).alias("label"),
-        )
-
     def warning_signage(self, cutoff: int, frame: pl.DataFrame) -> pl.DataFrame:
-        if self.is_monthly():
-            signage = frame.group_by(
-                pl.col("start_date").dt.year().alias("year"),
-                pl.col("start_date").dt.month().alias("month"),
-            ).agg(
-                pl.col("start_date").first().dt.offset_by("10d").alias("mid_date"),
-                pl.col("count").sum().alias("total"),
-            )
-        else:
-            signage = frame.group_by(
-                pl.col("start_date"),
-            ).agg(
-                pl.col("start_date").first().alias("mid_date"),
-                pl.col("count").sum().alias("total"),
-            )
-
-        return signage.with_columns(
+        return frame.with_columns(
             pl.lit(cutoff).alias("cutoff"),
             pl.when(
-                pl.col("total").gt(cutoff)
+                pl.col("total_count").gt(cutoff)
             ).then(
                 pl.lit("⚠️")
             ).otherwise(
@@ -1740,7 +1799,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             title += "Total Counts"
 
         y_data = "sum(percent):Q" if percent else "sum(count):Q"
-        y_title = "Percent Fraction" if percent else "Statements of Reasons"
+        y_title = (
+            "Percent (Statements of Reasons)" if percent else "Statements of Reasons"
+        )
 
         color = alt.Color("variant:N")
         if KeywordChildSexualAbuseMaterial in self._tags:
@@ -1820,6 +1881,81 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).with_columns(
             pl.col("text").fill_null("␀")
         )
+
+    def render_outages(self) -> None:
+        outages = self._statistics.frame().filter(
+            pl.col("column").eq("rows")
+        ).group_by(
+            pl.col("start_date"),
+            pl.col("platform")
+        ).agg(
+            pl.col("count").sum()
+        ).sort(
+            pl.col("start_date")
+        ).group_by(
+            pl.col("platform"), maintain_order=True
+        ).agg(
+            pl.len().alias("days_with_sors"),
+            pl.col("start_date").filter(
+                pl.col("start_date")
+                .ne(pl.col("start_date").shift(-1).dt.offset_by("-1d"))
+            ).alias("before_outage"),
+            pl.col("start_date").filter(
+                pl.col("start_date")
+                .ne(pl.col("start_date").shift(1).dt.offset_by("1d"))
+            ).alias("after_outage"),
+        ).explode(
+            ["before_outage", "after_outage"]
+        ).drop_nulls(
+        ).with_columns(
+            (pl.col("after_outage") - pl.col("before_outage") - dt.timedelta(days=1))
+            .alias("duration")
+        )
+
+        summary = outages.group_by(
+            pl.col("platform")
+        ).agg(
+            pl.len().alias("outage_count"),
+            pl.col("duration").sum().dt.total_days().alias("days_without_sors"),
+            pl.col("days_with_sors").first(),
+        ).with_columns(
+            (pl.col("days_without_sors") / pl.col("days_with_sors") < 0.2)
+            .alias("has_real_outages")
+        ).with_columns(
+            pl.col("platform").cast(pl.String).str.to_lowercase().alias("sortkey")
+        ).sort(
+            pl.col("sortkey")
+        ).select(
+            pl.exclude("sortkey")
+        )
+
+        outages = outages.join(
+            summary.select(pl.col("platform", "has_real_outages")),
+            on="platform",
+            how="left"
+        ).filter(
+            pl.col("has_real_outages") & pl.col("duration").dt.total_days().gt(1)
+        ).with_columns(
+            pl.col("platform").cast(pl.String).str.to_lowercase().alias("sortkey")
+        ).sort(
+            pl.col("sortkey", "before_outage")
+        ).select(
+            pl.exclude("sortkey")
+        )
+
+        self.html(
+            """
+            <p><strong>An outage</strong> is a period of at least a day for
+            which a platform did not report any SoRs, despite reporting SoRs
+            before and after that period as well as having at least five times
+            more days with SoRs than without.</p>
+            """
+        )
+
+        self.frame(
+            summary, caption="Platforms and Days with/without SoRs", klass="col3left"
+        )
+        self.frame(outages, caption="Outages of More Than One Day", klass="col3left")
 
 
 # --------------------------------------------------------------------------------------
