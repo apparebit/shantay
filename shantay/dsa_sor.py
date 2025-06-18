@@ -309,7 +309,7 @@ class StatementsOfReasons(Dataset):
                 .list.eval(
                     pl.element().filter(pl.element().is_not_null())
                 )
-                # Keep list elements that not the empty string
+                # Keep list elements that are not the empty string
                 .list.eval(
                     pl.element().filter(
                         pl.element().ne(
