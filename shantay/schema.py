@@ -940,7 +940,7 @@ TRANSFORMS = {
     "content_type_other": TransformType.TEXT_VALUE_COUNTS,
     "content_language": TransformType.VALUE_COUNTS,
     "moderation_delay": DurationTransform("content_date", "application_date"),
-    "territorial_scope": TransformType.VALUE_COUNTS,
+    "territorial_scope": TransformType.LIST_VALUE_COUNTS,
     "disclosure_delay": DurationTransform("application_date", "created_at"),
     "source_type": TransformType.VALUE_COUNTS,
     "automated_detection": TransformType.VALUE_COUNTS,
