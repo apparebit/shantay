@@ -3,6 +3,7 @@ import datetime as dt
 import errno
 import os
 from pathlib import Path
+import textwrap
 import traceback
 from typing import Any, cast
 
@@ -12,7 +13,7 @@ from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
     ConfigError, Coverage, DateRange, DownloadFailed, file_stem_for,
-    MetadataConflict, Storage
+    MetadataConflict, StagingIsBusy, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -29,27 +30,49 @@ def acquire_staging_lock(staging: Path) -> None:
     global _LOCK_FILE
 
     # Acquire lock file for staging
-    _LOCK_FILE = staging / f"staging.lock"
+    path = staging / f"staging.lock"
     try:
-        fd = os.open(str(_LOCK_FILE), os.O_CREAT | os.O_EXCL | os.O_RDWR)
+        fd = os.open(str(path), os.O_CREAT | os.O_EXCL | os.O_RDWR)
         with os.fdopen(fd, "a") as file:
             file.write(f"{os.getpid()}@{dt.datetime.now().isoformat()}")
     except OSError as x:
         if x.errno != errno.EEXIST:
             raise
 
-        with open(_LOCK_FILE, mode="r", encoding="utf8") as file:
-            provenance = file.read()
-        pid, _, ts = provenance.partition("@")
-        x.add_note(f"""\
-The staging root "{staging}" already contains a lock file "staging.lock".
-It was created by process {pid} at {ts}. If that process is still
-running Shantay, please use a different staging directory. If not,
-you can safely delete the lock file and run Shantay again.
-""")
-        raise x
+        # Continue after the try/except/else.
+    else:
+        _LOCK_FILE = path
+        atexit.register(lambda: cast(Path, _LOCK_FILE).unlink(missing_ok=True))
+        return
 
-    atexit.register(lambda: cast(Path, _LOCK_FILE).unlink(missing_ok=True))
+    try:
+        with open(str(path), mode="r", encoding="utf8") as file:
+            provenance = file.read()
+        pid, _, ts = provenance.strip().partition("@")
+        info = f"It was created by process {pid} at {ts}."
+    except Exception as x:
+        info = x
+
+    if isinstance(info, str):
+        print(textwrap.fill(f"""\
+The staging root "{staging}" already contains a "staging.lock" file.
+{info}
+If that process is still running, please use another staging directory.
+Otherwise, feel free to delete the lock file and run Shantay again.
+"""
+        ))
+    else:
+        print(textwrap.fill(f"""\
+The staging root {staging} already contains a "staging.lock" file.
+However, trying to read that file failed with an error:
+{info}
+If that file still exists and some process is still running Shantay,
+please use another staging directory. If no process is running Shantay,
+you can safely delete the lock file and run Shantay again.
+"""
+        ))
+
+    raise StagingIsBusy(str(staging))
 
 
 def get_configuration(
@@ -193,8 +216,10 @@ def get_configuration(
 
 
 def configure_printing() -> None:
-    # As of April 2025, the transparency database contains data for 102 platforms
-    pl.Config.set_tbl_rows(200)
+    # As of April 2025, the transparency database contains data for 102
+    # platforms, which define around 600 other reasons for moderating
+    # visibility.
+    pl.Config.set_tbl_rows(1_000)
     pl.Config.set_float_precision(3)
     pl.Config.set_thousands_separator(",")
     pl.Config.set_tbl_cell_numeric_alignment("RIGHT")
@@ -272,10 +297,13 @@ def run(options: Any) -> int:
 
     # Hide cursor
     print("\x1b[?25l", end="", flush=True)
+
     try:
         _run(options)
         print(f'\x1b[999;999H\n{happy}Happy, happy, joy, joy!{reset}')
         return 0
+    except StagingIsBusy:
+        return 1
     except KeyboardInterrupt as x:
         print("".join(traceback.format_exception(x)))
         # Put cursor into bottom right corner of terminal before printing
@@ -303,8 +331,8 @@ def run(options: Any) -> int:
         return 1
     finally:
         # Always delete lock file
-        assert _LOCK_FILE is not None
-        _LOCK_FILE.unlink(missing_ok=True)
+        if _LOCK_FILE is not None:
+            _LOCK_FILE.unlink(missing_ok=True)
 
         # Show cursor again
         print("\x1b[?25h", end="", flush=True)
