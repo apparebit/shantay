@@ -474,7 +474,7 @@ class Visualizer:
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Determine keyword ranking
         _logger.debug('analyze keyword usage')
-        self._keyword_usage = self._statistics.frame().filter(
+        self._keyword_usage = self._statistics.frame().lazy().filter(
             predicate("category_specification", entity=None)
         ).group_by(
             "variant"
@@ -496,7 +496,7 @@ class Visualizer:
             ).alias("pct")
         ).sort(
             pl.col("count"), descending=True, maintain_order=True
-        )
+        ).collect()
 
         self._keyword_metric = make_metric(
             "category_specification",
@@ -550,7 +550,7 @@ class Visualizer:
         top_num = 5
         select_platforms = ("YouTube", "Amazon", "Amazon Store")
 
-        top = self._statistics.frame().filter(
+        top = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None)
         ).group_by(
             pl.col("platform")
@@ -562,6 +562,7 @@ class Visualizer:
             # Thanks to the len(...) terms, this selection must contain at least
             # top_num platforms in addition to Meta's and select platforms.
             top_num + len(MetaPlatforms) + len(select_platforms)
+        ).collect(
         ).get_column(
             "platform"
         ).to_list()
@@ -583,7 +584,7 @@ class Visualizer:
         description = "All Data" if main_tag is None else humanize(main_tag)
         self.html(f'<h1>The DSA Transparency Database: {description}</h1>')
 
-        row = self._statistics.frame().select(
+        row = self._statistics.frame().lazy().select(
             pl.col("count").filter(predicate("batch_rows", tag=main_tag)).sum()
             .alias("batch_rows"),
             pl.col("count").filter(predicate("total_rows", tag=main_tag)).sum()
@@ -594,7 +595,7 @@ class Visualizer:
             .alias("other_entries"),
             pl.col("text").filter(predicate(tag=main_tag)).n_unique()
             .alias("unique_other_entries"),
-        ).row(0)
+        ).collect().row(0)
         batch_rows, total_rows, platform, days, other_entries, unique_other_entries = (
             row
         )
@@ -674,7 +675,7 @@ class Visualizer:
         self.markdown(self._statistics.summary(markdown=True))
 
         self.html(f"<h2 id=platform-ranking>{self.secno()}. Platform Ranking</h2>")
-        table = self._statistics.frame().filter(
+        table = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None, tag=self._tags[0])
         ).group_by(
             "platform"
@@ -682,7 +683,7 @@ class Visualizer:
             pl.col("count").sum()
         ).sort(
             "count", descending=True
-        )
+        ).collect()
 
         self.frame(table, klass="col2left")
 
@@ -1281,7 +1282,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if platform is not None:
             filters["platform"] = platform
 
-        table = self._statistics.frame().filter(
+        table = self._statistics.frame().lazy().filter(
             predicate(**filters)
         )
 
@@ -1345,7 +1346,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 pl.col(spec.quantity) / (24 * 60 * 60)
             )
 
-        return table
+        return table.collect()
 
     def variant_ranking(
         self,
@@ -1382,7 +1383,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         filter = pl.col(spec.selector).is_in(actual_names)
         if spec2.has_null_variant():
             filter = filter.or_(pl.col(spec.selector).is_null())
-        table2 = table .filter(filter)
+        table2 = table.filter(filter)
         return spec2, table2
 
     def timeline_chart(
@@ -1552,18 +1553,19 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             / (24 * 60 * 60)
         )
 
+        table = self._statistics.frame().lazy()
         total = pl.concat([
-            self._statistics.frame().filter(
+            table.filter(
                 predicate(column="moderation_delay", **constraints)
             ).select(
                 weighted_mean.alias("moderation")
             ),
-            self._statistics.frame().filter(
+            table.filter(
                 predicate(column="disclosure_delay", **constraints)
             ).select(
                 weighted_mean.alias("disclosure")
             ),
-        ], how="horizontal")
+        ], how="horizontal").collect()
 
         base = alt.Chart(total)
         moderation_rule = base.mark_rule(
