@@ -541,9 +541,12 @@ class Processor[R: Release]:
     def summarize_category(self) -> DataFrameType:
         """Analyze the data extracted into the extract root."""
         # Prepare metadata for analysis
-        range = self._metadata.range.intersection(
-            self._coverage.to_date_range(), empty_ok=False
-        ).dailies()
+        if self._offline:
+            range = self._metadata.range.intersection(
+                self._coverage.to_date_range(), empty_ok=False
+            ).dailies()
+        else:
+            range = self._coverage.to_date_range().dailies()
 
         # Prepare progress tracker
         self._progress.activity(
