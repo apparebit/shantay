@@ -252,7 +252,7 @@ class Processor[R: Release]:
         ):
             return
 
-        _logger.debug('preparing release="%s"', release.id)
+        _logger.debug('distilling release="%s"', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 
@@ -275,10 +275,8 @@ class Processor[R: Release]:
 
         for release in self._coverage:
             if self.is_archive_downloaded(release):
-                _logger.debug(
-                    'skipping already downloaded release="%s"',
-                    release.id
-                )
+                _logger.debug('already downloaded release="%s"', release.id)
+                continue
 
             self.download_archive(release)
             shutil.rmtree(self._storage.staging_root / release.parent_directory)
@@ -434,8 +432,8 @@ class Processor[R: Release]:
         filenames = self.list_archived_files(self._storage.staging_root, release)
         batch_count = len(filenames)
         self._progress.activity(
-            f"extracting batches from release {release.id}",
-            f"extracting {release.id}", "batch", with_rate=False,
+            f"distilling batches of release {release.id}",
+            f"distilling {release.id} ", "batch", with_rate=False,
         )
         self._progress.start(batch_count)
 
@@ -473,7 +471,7 @@ class Processor[R: Release]:
             self._storage.staging_root / f"{self._coverage.stem()}.json"
         )
         _logger.info(
-            'extracted batch-count=%d, file="%s"',
+            'distilled batch-count=%d, file="%s"',
             batch_count,
             self._dataset.archive_name(release)
         )
@@ -490,7 +488,7 @@ class Processor[R: Release]:
         self.copy_category_data(
             self._storage.staging_root, self._storage.the_extract_root, release, batch_count
         )
-        _logger.info('archived batch-count=%d, release="%s"', batch_count, release.id)
+        _logger.info('saved batch-count=%d, release="%s"', batch_count, release.id)
 
     def list_archived_files(self, root: Path, release: Daily) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
@@ -663,7 +661,7 @@ class Processor[R: Release]:
         collector: CollectorProtocol,
     ) -> None:
         """Analyze the full data for the given release."""
-        _logger.debug('analyzing release="%s"', release.id)
+        _logger.info('summarizing release="%s"', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 
@@ -672,8 +670,8 @@ class Processor[R: Release]:
         filenames = self.list_archived_files(self._storage.staging_root, release)
         batch_count = len(filenames)
         self._progress.activity(
-            f"analyzing batches from release {release.id}",
-            f"analyzing {release.id}", "batch", with_rate=False,
+            f"summarizing batches from release {release.id}",
+            f"summarizing {release.id}", "batch", with_rate=False,
         )
         self._progress.start(batch_count)
 
