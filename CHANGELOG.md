@@ -1,6 +1,6 @@
 # Version History for Shantay
 
-## v0.3.0 (June 16, 2025)
+## v0.3.0 (June 21, 2025)
 
 Shantay now collects richer statistics and produces far more compelling
 visualizations with a simpler interface. It can either process the full
