@@ -58,6 +58,7 @@ extensions = [
     "sphinx_copybutton",
     "sphinx_design",
     "sphinx_rtd_theme",
+    "myst_parser",
 ]
 
 napoleon_include_init_with_doc = True

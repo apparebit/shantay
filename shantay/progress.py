@@ -78,6 +78,10 @@ class Progress:
 
     @contextmanager
     def nested(self) -> Iterator[Self]:
+        """
+        Pause the current activity, perform another activity afresh, and then
+        resume the current activity.
+        """
         saved_label = self._label
         saved_unit = self._unit
         saved_with_rate = self._with_rate
@@ -224,4 +228,5 @@ class _NoProgress(Progress):
 
 
 NO_PROGRESS = _NoProgress()
+"""An object compatible with `Progress` that does nothing."""
 del _NoProgress

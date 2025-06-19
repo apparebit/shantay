@@ -2,6 +2,24 @@ shantay package
 ===============
 
 
+shantay.__init__
+----------------
+
+.. automodule:: shantay.__init__
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
+shantay.__main__
+----------------
+
+.. automodule:: shantay.__main__
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+
 shantay.color
 -------------
 

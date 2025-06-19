@@ -7,6 +7,7 @@ purple and brown as well as two more colors. Overally, colors are fairly
 saturated and bright, hence facilitating charts that "pop". However, that can be
 a bit much at times, so manual curation still matters.
 """
+
 BLUE = "#4269d0"
 ORANGE = "#efb118"
 RED = "#ff725c"
