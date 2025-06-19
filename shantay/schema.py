@@ -43,7 +43,7 @@ from .color import (
 # Humanized statement categories and keywords
 
 
-_HUMANIZED_REPLACEMENTS = {
+_HUMANIZED_FRAGMENTS = {
     " And ": " and ",
     " Based ": "-Based ",
     " Eu ": " EU ",
@@ -54,6 +54,12 @@ _HUMANIZED_REPLACEMENTS = {
     " Or ": " or ",
     " Specific ": "-Specific ",
     " To ": " to ",
+}
+
+
+_HUMANIZED_TAGS = {
+    "EEA": "EU+IS+LI+NO",
+    "EEA_no_IS": "EU+LI+NO",
 }
 
 
@@ -68,8 +74,9 @@ def humanize(tag: None | str) -> str:
     tag = tag.replace("_", " ")
     if len(tag) != 2 or tag != tag.upper():
         tag = tag.title()
-        for source, target in _HUMANIZED_REPLACEMENTS.items():
+        for source, target in _HUMANIZED_FRAGMENTS.items():
             tag = tag.replace(source, target)
+    tag = _HUMANIZED_TAGS.get(tag, tag)
     return tag
 
 
