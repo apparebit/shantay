@@ -186,8 +186,9 @@ def visualize(
     notebook: bool = False,
     with_cutoff: bool = True,
 ) -> pl.DataFrame:
-    charts = storage.staging_root / "charts"
-    charts.mkdir(exist_ok=True)
+    charts = storage.staging_root / "charts" / coverage.stem()
+    charts.unlink(missing_ok=True)
+    charts.mkdir(parents=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
     visualizer = Visualizer(
