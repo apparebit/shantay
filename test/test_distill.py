@@ -4,8 +4,6 @@ from pathlib import Path
 import shutil
 import unittest
 
-import polars as pl
-
 from shantay.__main__ import configure_logging
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
@@ -23,7 +21,7 @@ ARCHIVE = FIXTURE / "archive"
 # So we only need ARCHIVE and STAGING.
 STAGING = ROOT / "tmp"
 LOGFILE = STAGING / "log.log"
-SENTINEL = STAGING / "prepare.run"
+SENTINEL = STAGING / "distill.run"
 
 ZIP_FILES = [
     "sor-global-2024-03-14-full-00000.csv.zip",
@@ -53,7 +51,7 @@ def tearDownModule():
     pass
 
 
-class TestPrepare(unittest.TestCase):
+class TestDistill(unittest.TestCase):
 
     def assertFileEqual(self, path1: Path, path2: Path) -> None:
         data1 = path1.read_bytes()
@@ -112,7 +110,7 @@ class TestPrepare(unittest.TestCase):
             self.assertEqual(count1, 100)
             self.assertEqual(count2, 12)
 
-        with self.subTest("extract first batch of category data"):
+        with self.subTest("distill first batch of category data"):
             frame = dataset._distill_filtered_rows(
                 csv_files=glob,
                 release=release,
