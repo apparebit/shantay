@@ -475,9 +475,9 @@ class WorkerProgress(Progress):
         _send_status_update("step", processed, extra)
         return self
 
-    def perform(self, activity: str) -> Self:
+    def perform(self, description: str) -> Self:
         """Update the progress marker with a one-shot activity."""
-        _send_status_update("perform", activity)
+        _send_status_update("perform", description)
         return self
 
     def done(self) -> None:

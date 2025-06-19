@@ -1,3 +1,5 @@
+from collections.abc import Iterator
+from contextlib import contextmanager
 import shutil
 import time
 from typing import Callable, Self
@@ -74,6 +76,34 @@ class Progress:
     def _suffix(self) -> str:
         return "\x1b[0K"
 
+    @contextmanager
+    def nested(self) -> Iterator[Self]:
+        saved_label = self._label
+        saved_unit = self._unit
+        saved_with_rate = self._with_rate
+        saved_showing_bar = self._showing_bar
+        saved_timestamp = self._timestamp
+        saved_processed = self._processed
+        saved_total = self._total
+        saved_samples = self._samples
+        saved_rate = self._rate
+
+        self._reset_activity()
+        self._reset_stats()
+
+        try:
+            yield self
+        finally:
+            self._label = saved_label
+            self._unit = saved_unit
+            self._with_rate = saved_with_rate
+            self._showing_bar = saved_showing_bar
+            self._timestamp = saved_timestamp
+            self._processed = saved_processed
+            self._total = saved_total
+            self._samples = saved_samples
+            self._rate = saved_rate
+
     def activity(self, description: str, label: str, unit: str, with_rate: bool) -> Self:
         """Update the configuration of this progress tracker."""
         self._label = label
@@ -86,14 +116,15 @@ class Progress:
 
     def start(self, total: None | int = None) -> Self:
         """Start an activity with total steps."""
-        assert self._label is not None
+        assert self._label is not None, "Progress.activity() must precede Progress.start()"
+
         self._timestamp = self._timer()
         self._total = total
         return self
 
     def step(self, processed: int, extra: None | str = None) -> Self:
         """Update a previously started activity with processed steps."""
-        assert self._label is not None
+        assert self._label is not None, "Progress.start() must precede Progress.step()"
 
         # Handle timings: Should we update screen? What's the processing rate?
         if not self._showing_bar or self._with_rate:
@@ -149,12 +180,11 @@ class Progress:
         self._render(msg)
         return self
 
-    def perform(self, activity: str) -> Self:
+    def perform(self, description: str) -> Self:
         """Update a one-shot activity."""
         if self._label is not None:
             self._reset_activity()
-
-        self._render(f"{self._prefix}{activity}{self._suffix}")
+        self._render(f"{self._prefix}{description}{self._suffix}")
         return self
 
     def done(self) -> None:
@@ -168,6 +198,11 @@ class Progress:
 
 
 class _NoProgress(Progress):
+
+    @contextmanager
+    def nested(self) -> Iterator[Self]:
+        yield self
+
     def activity(self, *args, **kwargs) -> Self:
         return self
 
@@ -177,7 +212,7 @@ class _NoProgress(Progress):
     def step(self, processed: int, extra: None | str = None) -> Self:
         return self
 
-    def perform(self, activity: str) -> Self:
+    def perform(self, description: str) -> Self:
         return self
 
     def error(self, msg: str) -> Self:

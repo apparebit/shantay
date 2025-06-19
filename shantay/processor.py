@@ -566,7 +566,8 @@ class Processor[R: Release]:
                 )
                 break
 
-            self.distill_category_release(release)
+            with self._progress.nested():
+                self.distill_category_release(release)
             self.summarize_category_release(release, self._metadata[release], stats)
             # The generation of summary statistics creates a large number of
             # data frames (at least as few hundred), many of which have only one
