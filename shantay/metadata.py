@@ -467,7 +467,7 @@ class _Fsck:
         day_no = int(day.name)
         self.update_batch_count(year_no, month_no, day_no, batch_no, digest_of_digests)
 
-        _logger.info('checked batch-count=%d directory="%s"', batch_no, day)
+        _logger.info('checked batch-count=%d, directory="%s"', batch_no, day)
 
     def update_category(self, glob: str) -> None:
         """

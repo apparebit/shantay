@@ -286,7 +286,7 @@ def sync_web_platforms() -> Literal["skipped", "mtime", "disk", "memory"]:
     if now - mtime < _ONE_WEEK:
         ts = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
         _logger.info(
-            'skip scraping of platform names for path="%s" mtime="%s"',
+            'skip scraping of platform names for path="%s", mtime="%s"',
             _PLATFORM_FILE, ts.isoformat()
         )
         return "skipped"
@@ -332,7 +332,7 @@ def check_stats_platforms(frame: Any) -> None:
         return
     for name in unknown_names:
         _logger.warning(
-            'new platform in summary statistics, name="%s"', name
+            'new platform in summary statistics with name="%s"', name
         )
 
     raise MissingPlatformError(unknown_names)

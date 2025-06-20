@@ -378,7 +378,7 @@ class Processor[R: Release]:
             actual = hashlib.file_digest(file, algo).hexdigest()
 
         if expected != actual:
-            _logger.error('failed to validate digest=%s, file="%s"', algo, archive)
+            _logger.error('failed to validate digest="%s", file="%s"', algo, archive)
             raise ValueError(f'digest {actual} does not match {expected}')
 
     @annotate_error(filename_arg="target")
@@ -425,7 +425,7 @@ class Processor[R: Release]:
         ).exists()
 
     def actually_distill_category_release(self, release: Daily) -> None:
-        """Extract the batches for the given release."""
+        """Distill the batches for the given release."""
         assert self.is_archive_staged(release)
         assert self._coverage.category is not None
 
@@ -537,7 +537,7 @@ class Processor[R: Release]:
             self._progress.step(index)
 
     def summarize_category(self) -> DataFrameType:
-        """Analyze the data extracted into the extract root."""
+        """Analyze the data distilled into the extract root."""
         # Prepare metadata for analysis
         if self._offline:
             range = self._metadata.range.intersection(

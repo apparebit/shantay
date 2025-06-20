@@ -355,25 +355,25 @@ def run_on_worker(
         )
         _logger.info(
             'returning result for task="%s", release="%s", category="%s", worker=%d',
-            task, release, category or None, _PID
+            task, release, category or "", _PID
         )
         return "value", result
     except Cancelled as x:
         _logger.warning(
             'cancelled task="%s", release="%s", category="%s", worker=%d',
-            task, release, category or None, _PID
+            task, release, category or "", _PID
         )
         return "cancel", x.args
     except MissingPlatformError as x:
         _logger.warning(
             'missing platform names in task="%s", release="%s", category="%s", worker=%d',
-            task, release, category or None, _PID
+            task, release, category or "", _PID
         )
         return "platforms", x.args
     except Exception as x:
         _logger.error(
             'unexpected error in task="%s", release="%s", category="%s", worker=%d',
-            task, release, category or None, _PID, exc_info=x
+            task, release, category or "", _PID, exc_info=x
         )
         print(f"unexpected exception thrown by worker with pid={_PID}:")
         traceback.format_exception(x)
@@ -416,7 +416,7 @@ def _run_on_worker(
 
     # Actually run the task
     _logger.debug(
-        'running task=%s, release="%s", category="%s", worker=%d',
+        'running task="%s", release="%s", category="%s", worker=%d',
         task, release, category or "", _PID
     )
     if task == "download":

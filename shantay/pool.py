@@ -135,7 +135,7 @@ class Pool:
             max_workers=size,
             mp_context = context,
             initializer=_initialize_worker,
-            initargs=(self._status_queue, self._cancel_queue, log_level),
+            initargs=(self._status_queue, self._cancel_queue, log_level, self.id),
         )
 
         self._done = threading.Event()
@@ -519,12 +519,13 @@ def _initialize_worker(
     status_queue: mp.SimpleQueue,
     cancel_queue: mp.SimpleQueue,
     log_level: int,
+    pool: str,
 ) -> None:
     global _status_queue, _terminator
     status_queue._reader.close() # pyright: ignore[reportAttributeAccessIssue]
     _status_queue = status_queue
 
-    logger = logging.getLogger()
+    logger = logging.getLogger(__name__)
     if len(logger.handlers) == 0:
         logger.addHandler(WorkerLogHandler())
         logger.setLevel(log_level)
@@ -535,7 +536,7 @@ def _initialize_worker(
         daemon=True,
     )
     _terminator.start()
-    logger.info('initialized worker pool process pid=%d', _PID)
+    logger.info('initialized worker process for pool="%s", pid=%d', pool, _PID)
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
