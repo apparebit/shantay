@@ -632,32 +632,43 @@ class Visualizer:
             entries describing "other" with {unique_other_entries:,} unique
             values!</em></p>
 
-            <p><strong>Platform-focused sections</strong> include a manually
+            <p>Platforms:</p><ul>
+
+            <li><p><strong>Platform-focused sections</strong> include a manually
             curated selection of platforms, i.e., all of Meta's platforms
             together, Meta's platforms individually, YouTube, and Amazon
             (Store). They also include the top five platforms by SoR volume that
-            aren't already included.</p>
+            aren't already included.</p></li>
 
-            <p><strong>Meta's platforms</strong> are Facebook, Instagram,
+            <li><p><strong>Meta's platforms</strong> are Facebook, Instagram,
             Threads, WhatsApp, and some other Meta product(s). Seriously, the
             database entries for the latter are attributed to "Other Meta
-            Platforms Ireland Limited-offered Products". For category-specific
-            data, not all of Meta's platforms may be included in this
-            report.</p>
+            Platforms Ireland Limited-offered Products".</p></li>
 
-            <p><strong>Bars are stacked</strong> from the category with the most
-            SoRs at the bottom to the category with the least SoRs at the top.
-            The legend has the opposite order from category with the most SoRs
-            downwards.</p>
+            </ul>
 
-            <p><strong>Only categories with counts greater zero</strong> are
-            included in a timeline. If categories listed in the legend are not
-            visible, then that is because they represent too few SoRs.</p>
+            <p>Charts:</p><ul>
 
-            <p><strong>Bars marked ⚠️</strong> represent outliers that go beyond
-            the coordinate grid. Shantay clamps the y-axis under certain
+            <li><p><strong>Bars are stacked</strong> from the category with the
+            most SoRs at the bottom to the category with the least SoRs at the
+            top. The legend has the opposite order from category with the most
+            SoRs downwards.</p></li>
+
+            <li><p><strong>Only categories with counts greater zero</strong> are
+            included in a timeline.</p></li>
+
+            <li><p><strong>Charts with two panels</strong> visualize the same
+            breakdown of categories in both panel, except that the top-one to
+            top-three categories have been omitted. That way, the bottom panel
+            often visualizes the bottom permille to percent of
+            categories.</p></li>
+
+            <li><p><strong>Bars marked ⚠️</strong> represent outliers that go
+            beyond the coordinate grid. Shantay clamps the y-axis under certain
             circumstances so that subcategories remain discernible for most
-            bars.</p>
+            bars, though the second panel tends to be more effective.</p></li>
+
+            </ul>
 
             <p><strong><a
             href="https://github.com/apparebit/shantay">Shantay</a></strong>
@@ -845,16 +856,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
     def render_standard_timelines(
         self, prefix: None | str, tag: None | str = None, platform: None | str = None
     ) -> None:
-        metrics = [
-            StatementCountMetric,
-            "keywords",
-            ("Keyword: Other", "category_specification_other"),
+        metrics: list[MetricDeclaration | str | tuple[str, str]] = [
+            StatementCountMetric
         ]
-
         if tag is None:
             metrics.append(CategoryMetric)
-
         metrics.extend([
+            "keywords",
+            ("Keyword: Other", "category_specification_other"),
             ContentLanguageMetric,
             TerritorialScopeMetric,
             ContentTypeMetric,
@@ -886,7 +895,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                     klass="col3left",
                 )
                 continue
-            elif metric == "keywords":
+            elif isinstance(metric, str):
+                assert metric == "keywords"
                 allow_cutoff = False
                 metric = self._keyword_metric.without_null()
 
