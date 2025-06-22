@@ -6,7 +6,7 @@ import logging
 from pathlib import Path
 import re
 import shutil
-from typing import Callable, cast, Self
+from typing import Callable, cast, Literal, Self
 
 # from .framing import below within method
 from .model import (
@@ -223,18 +223,14 @@ class Metadata[R: Release]:
         return f"Metadata({self._category}, {len(self._releases):,} releases)"
 
 
-def read_digest_file(directory: Path) -> None | dict[str, str]:
+def read_digest_file(directory: Path) -> dict[str, str]:
     """Read the text file with a list of batchfile digests."""
     digests = {}
-
-    try:
-        with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
-            for line in file.readlines():
-                digest, batchfile = line.strip().split(" ")
-                digests[batchfile] = digest
-        return digests
-    except FileNotFoundError:
-        return None
+    with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
+        for line in file.readlines():
+            digest, batchfile = line.strip().split(" ")
+            digests[batchfile] = digest
+    return digests
 
 
 def write_digest_file(directory: Path, digests: dict[str, str]) -> None:
@@ -249,10 +245,10 @@ def write_digest_file(directory: Path, digests: dict[str, str]) -> None:
     tmp.replace(path)
 
 
-def compute_digest(path: Path) -> str:
+def compute_digest(path: Path, algo: Literal["sha1", "sha256"] = "sha256") -> str:
     """Compute the batchfile digest."""
     with open(path, mode="rb") as file:
-        return hashlib.file_digest(file, "sha256").hexdigest()
+        return hashlib.file_digest(file, algo).hexdigest()
 
 
 def fsck(
@@ -428,7 +424,10 @@ class _Fsck:
         batches = self.scandir(day, "*.parquet", _BATCH_FILE)
         self.check_children(day, batches, 0, 99_999, lambda n: int(n[-13:-8]))
 
-        expected_digests = read_digest_file(day)
+        try:
+            expected_digests = read_digest_file(day)
+        except FileNotFoundError:
+            expected_digests = None
         actual_digests = {}
 
         batch_no = 0
