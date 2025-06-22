@@ -252,13 +252,13 @@ class Processor[R: Release]:
         ):
             return
 
-        _logger.debug('distilling release="%s"', release.id)
+        _logger.debug('distill release="%s"', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 
         self.stage_archive(release)
         try:
-            self.actually_distill_category_release(release)
+            self._actually_distill_category_release(release)
         except Exception as x:
             x.add_note(
                 f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
@@ -274,10 +274,6 @@ class Processor[R: Release]:
             raise ValueError("can't download daily distributions in offline mode")
 
         for release in self._coverage:
-            if self.is_archive_downloaded(release):
-                _logger.debug('already downloaded release="%s"', release.id)
-                continue
-
             self.download_archive(release)
             shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
@@ -285,23 +281,36 @@ class Processor[R: Release]:
         if self._offline:
             raise ValueError("can't download daily distributions in offline mode")
         if self.is_archive_downloaded(release):
+            _logger.debug('already downloaded release="%s"', release.id)
             return
 
+        _logger.debug(
+            'download release="%s", directory="%s"',
+            release.id, self._storage.staging_root
+        )
         self._progress.activity(
             f"downloading data for release {release.id}",
             f"downloading {release.id}", "byte", with_rate=True,
         )
         archive = self._dataset.archive_name(release)
         size = self._actually_download_archive(self._storage.staging_root, release)
-        _logger.info('downloaded bytes=%d, file="%s"', size, archive)
+        _logger.info(
+            'downloaded release="%s", size=%d, file="%s"',
+            release.id,
+            size,
+            self._storage.staging_root / release.parent_directory / archive
+        )
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
-        _logger.info('validated file="%s"', archive)
         self._progress.perform(f"copying release {release.id} to archive")
         self.copy_archive(
             self._storage.staging_root, self._storage.the_archive_root, release
         )
-        _logger.info('archived file="%s"', archive)
+        _logger.info(
+            'archived release="%s", file="%s"',
+            release.id,
+            self._storage.the_archive_root / release.parent_directory / archive
+        )
 
     def is_archive_downloaded(self, release: Daily) -> bool:
         """Determine whether the archive for the release has been downloaded."""
@@ -366,20 +375,35 @@ class Processor[R: Release]:
 
     @annotate_error(filename_arg="root")
     def validate_archive(self, root: Path, release: Daily) -> None:
-        """Validate the archive stored under the root against its digest."""
         digest = root / release.parent_directory / self._dataset.digest_name(release)
+        archive = root / release.parent_directory / self._dataset.archive_name(release)
+        _logger.debug('validate release="%s", file="%s"', release.id, archive)
+
         with open(digest, mode="rt", encoding="ascii") as file:
             expected = file.read().strip()
             expected = expected[:expected.index(" ")]
 
         algo = digest.suffix[1:]
-        archive = root / release.parent_directory / self._dataset.archive_name(release)
-        with open(archive, mode="rb") as file:
+        self._validate_digest(archive, algo, expected)
+        _logger.info(
+            'validated release="%s", file="%s", digest="%s"',
+            release.id, archive, expected
+        )
+
+    def _validate_digest(self, path: Path, algo: str, digest: str) -> None:
+        with open(path, mode="rb") as file:
             actual = hashlib.file_digest(file, algo).hexdigest()
 
-        if expected != actual:
-            _logger.error('failed to validate digest="%s", file="%s"', algo, archive)
-            raise ValueError(f'digest {actual} does not match {expected}')
+        if digest == actual:
+            return
+
+        _logger.error(
+            'failed to validate file="%s", algo="%s", expected="%s", actual="%s"',
+            path, algo, digest, actual
+        )
+        raise ValueError(
+            f'{path} should have {algo} digest {digest} but has {actual}'
+        )
 
     @annotate_error(filename_arg="target")
     def copy_archive(self, source: Path, target: Path, release: Daily) -> None:
@@ -414,7 +438,6 @@ class Processor[R: Release]:
         _logger.info('staged file="%s"', archive)
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
-        _logger.info('validated file="%s"', archive)
 
     def is_archive_staged(self, release: Daily) -> bool:
         """"Determine whether the archive for the given release has been staged."""
@@ -424,7 +447,7 @@ class Processor[R: Release]:
             / self._dataset.archive_name(release)
         ).exists()
 
-    def actually_distill_category_release(self, release: Daily) -> None:
+    def _actually_distill_category_release(self, release: Daily) -> None:
         """Distill the batches for the given release."""
         assert self.is_archive_staged(release)
         assert self._coverage.category is not None
@@ -456,6 +479,9 @@ class Processor[R: Release]:
             batch_digests.append(digest)
             full_counters += counters
 
+            # The complete CSV data may take up 100 GB of disk space. So we need
+            # to aggressively reclaim storage to avoid filling the file system
+            # with the staging directory.
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
         digest_file = self._storage.staging_root / release.directory / DIGEST_FILE
@@ -471,16 +497,15 @@ class Processor[R: Release]:
             self._storage.staging_root / f"{self._coverage.stem()}.json"
         )
         _logger.info(
-            'distilled batch-count=%d, file="%s"',
-            batch_count,
-            self._dataset.archive_name(release)
+            'distilled release="%s", batch-count=%d, category="%s"',
+            release.id, batch_count, self._coverage.category
         )
 
-        # It's safe to copy the batches here because each worker has its own,
-        # isolated releases. So even if several workers are copying batch files
-        # to the extract root, they only add subdirectories and files. That does
-        # *not* hold for the metadata, which must be merged and written from a
-        # single process such as the coordinator.
+        # It's ok for a worker process to copy the batches to long-term storage
+        # because each worker processes different releases. So even if several
+        # workers are concurrently copying batches to the extract root, they are
+        # only adding new subdirectories and files. That does *not* hold for the
+        # metadata, which must be merged and written by the coordinator.
         self._progress.activity(
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
@@ -488,7 +513,10 @@ class Processor[R: Release]:
         self.copy_category_data(
             self._storage.staging_root, self._storage.the_extract_root, release, batch_count
         )
-        _logger.info('saved batch-count=%d, release="%s"', batch_count, release.id)
+        _logger.info(
+            'persisted release="%s", batch-count=%d, category="%s"',
+            release.id, batch_count, self._coverage.category
+        )
 
     def list_archived_files(self, root: Path, release: Daily) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
@@ -567,15 +595,13 @@ class Processor[R: Release]:
             with self._progress.nested():
                 self.distill_category_release(release)
             self.summarize_category_release(release, self._metadata[release], stats)
-            # The generation of summary statistics creates a large number of
-            # data frames (at least as few hundred), many of which have only one
-            # row. That ensures that even daily statistics easily fit into
-            # memory. But when there are too many data frames to concatenate,
-            # Pola.rs gets stuck. Hence it's a good idea to regularly save the
-            # statistics and thereby force reduction to a single data frame.
-            # However, saving the statistics for every release noticeably slows
-            # down progress. Hence we only save after processing n days worth of
-            # data.
+            # While collecting summary statistics, Shantay generates hundreds of
+            # data frames, many with just one row. However, concatenation in
+            # Pola.rs doesn't seem to have linear performance and gets stuck
+            # when there are too many frames. Hence, we regularly save
+            # statistics, which concatenates the frames. Yet, we need to avoid
+            # saving too often, which noticeably slows down Shantay. As a
+            # compromise, we only save after processing n=11 days worth of data.
             if index % 11 == 0:
                 stats.write(self._storage.staging_root)
             self._progress.step(index + 1, extra=release.id)
@@ -639,7 +665,7 @@ class Processor[R: Release]:
                 self.summarize_database_release(release, stats)
             except MissingPlatformError as x:
                 # This method is only executed during single-process runs and
-                # hence it is safe-ish to update the Python source code.
+                # hence it is safe-ish to update the list of platforms here.
                 update_platforms(x.args[0])
                 raise
             _logger.debug('writing summary statistics to file="%s"', staged)
@@ -690,26 +716,20 @@ class Processor[R: Release]:
                 progress=self._progress
             )
 
-            # check_frame_platforms probes the data frame for hereto unknown
-            # platform names, raises a MissingPlatformError with any unknown
-            # names, but does not modify the _platform module. Hence, this
-            # method can be safely executed by process pool workers, as long as
-            # they communicate the error and its payload to the coordinator.
+            # Check_db_platforms only probes the data frame for hereto unknown
+            # platform names, raising a MissingPlatformError with such names.
             check_db_platforms(release.id, index, frame)
             collector.collect(release, frame)
 
             # A daily release may comprise over 100 GB of uncompressed CSV data.
             # With three concurrent processes, that would be over 300 GB of disk
             # space for staging alone. Hence, we must aggressively clean up
-            # temporary files again. This same operation is the last one of the
-            # loop in distill_batches(), too.
+            # temporary files again.
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
-        # The data frame generated by this method is a small one indeed. Hence,
-        # there is no need to save it to disk first. We must, however, continue
-        # cleaning up aggressively. While not as huge as uncompressed CSV data,
-        # the actual release for a 100 GB of CSV data still weighs in at over 8
-        # GB. This same operation is the last one of prepare_batches(), too.
+        # While not quite as big as the uncompressed data, the zipped release
+        # can still weigh 8 GB. Hence we aggressively clean staged releases as
+        # well.
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
     def visualize(self) -> None:
