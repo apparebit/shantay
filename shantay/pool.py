@@ -48,6 +48,7 @@ import shutil
 import threading
 from types import TracebackType
 from typing import Any, Callable, Self
+import uuid
 
 from .progress import Progress
 
@@ -70,9 +71,6 @@ class Task:
 # The coordinator
 
 
-_id = 0
-
-
 class Pool:
     """
     A pool of worker processes.
@@ -91,9 +89,7 @@ class Pool:
         context: None | Any = None,
         log_level: int = logging.WARNING,
     ) -> None:
-        global _id
-        _id += 1
-        self._id = f"pool-{_id}"
+        self._id = uuid.uuid1().hex
 
         if size is None:
             # First available in Python 3.13
@@ -536,7 +532,7 @@ def _initialize_worker(
         daemon=True,
     )
     _terminator.start()
-    logger.info('initialized worker process for pool="%s", pid=%d', pool, _PID)
+    logger.info('initialized worker process pid=%d, pool="%s"', _PID, pool)
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
