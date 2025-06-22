@@ -13,7 +13,7 @@ from typing import Any
 
 from .metadata import Metadata
 from .model import Coverage, Daily, DataFrameType, Dataset, MetadataEntry, Storage
-from .pool import Cancelled, Pool, Task, WorkerProgress
+from .pool import Cancelled, check_not_cancelled, Pool, Task, WorkerProgress
 from .processor import distilled_category_exists, Processor
 from .schema import MissingPlatformError, update_platforms
 from .stats import Collector, Statistics
@@ -388,6 +388,9 @@ def _run_on_worker(
     release: Daily,
     offline: bool,
 ) -> Any:
+    # Check for cancellation
+    check_not_cancelled()
+
     # Create a minimal coverage object necessary for the task
     coverage = Coverage(release, release, category)
 
