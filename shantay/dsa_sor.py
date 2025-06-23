@@ -34,7 +34,7 @@ class StatementsOfReasons(Dataset):
         return f"{self.archive_name(release)}.sha1"
 
     @annotate_error(filename_arg="root")
-    def ingest_category_data(
+    def ingest_database_data(
         self,
         *,
         root: Path,
@@ -46,7 +46,7 @@ class StatementsOfReasons(Dataset):
         path = root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
-        frame = self._distill_filtered_rows(
+        frame = self._read_rows(
             csv_files=csv_files,
             release=release,
             index=index,
@@ -76,7 +76,7 @@ class StatementsOfReasons(Dataset):
             csv_files, index, name
         )
 
-        frame = self._distill_filtered_rows(
+        frame = self._read_rows(
             csv_files=csv_files,
             release=release,
             index=index,
@@ -121,7 +121,7 @@ class StatementsOfReasons(Dataset):
         )
         return rows, rows_with_keywords
 
-    def _distill_filtered_rows(
+    def _read_rows(
         self,
         *,
         csv_files: str,

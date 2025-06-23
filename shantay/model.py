@@ -583,7 +583,7 @@ class Dataset(metaclass=ABCMeta):
         """The digest file name for the release."""
 
     @abstractmethod
-    def ingest_category_data(
+    def ingest_database_data(
         self,
         *,
         root: Path,

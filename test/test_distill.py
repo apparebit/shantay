@@ -93,7 +93,7 @@ class TestDistill(unittest.TestCase):
             self.assertEqual(count2, 12)
 
         with self.subTest("distill first batch of category data"):
-            frame = dataset._distill_filtered_rows(
+            frame = dataset._read_rows(
                 csv_files=glob,
                 release=release,
                 index=0,

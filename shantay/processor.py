@@ -708,7 +708,7 @@ class Processor[R: Release]:
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
 
-            frame = self._dataset.ingest_category_data(
+            frame = self._dataset.ingest_database_data(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
