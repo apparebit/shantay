@@ -88,7 +88,7 @@ class TestDistill(unittest.TestCase):
 
         with self.subTest("determine row counts"):
             glob = f"{STAGING / release.temp_directory}/*.csv"
-            count1, count2 = dataset._distill_row_counts(glob, 0, ZIP_FILES[0])
+            count1, count2 = dataset.get_total_row_counts(glob, 0, ZIP_FILES[0])
             self.assertEqual(count1, 100)
             self.assertEqual(count2, 12)
 
@@ -198,7 +198,7 @@ class TestDistill(unittest.TestCase):
             self.assertIn('unarchived type="nested archive"', lines[offset + 3])
             self.assertIn('counted filter="none", rows=100', lines[offset + 4])
             self.assertIn('counted filter="with_keywords", rows=12', lines[offset + 5])
-            self.assertIn("extracted rows=8", lines[offset + 6])
+            self.assertIn("ingested rows=8", lines[offset + 6])
             self.assertIn('unarchived type="nested archive"', lines[offset + 7])
             self.assertIn('counted filter="none", rows=102', lines[offset + 8])
             self.assertIn('counted filter="with_keywords", rows=1', lines[offset + 9])
@@ -251,7 +251,7 @@ class TestDistill(unittest.TestCase):
             self.assertTrue(lines[offset + 12].startswith('Field `"Napodobňovanie'))
             # Parsing the first CSV file by itself with Pola.rs works:
             self.assertIn(
-                'extracted rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
+                'ingested rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
             )
             # Parsing the second CSV file by itself with Pola.rs fails:
             self.assertIn(
@@ -260,7 +260,7 @@ class TestDistill(unittest.TestCase):
             )
             # Parsing the second CSV fail by itself with Python's csv works:
             self.assertIn(
-                'extracted rows=1, strategy=3, using="Python\'s CSV module"',
+                'ingested rows=1, strategy=3, using="Python\'s CSV module"',
                 lines[offset + 15],
             )
 

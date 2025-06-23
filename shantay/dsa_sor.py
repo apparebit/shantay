@@ -18,6 +18,43 @@ from .util import annotate_error
 _logger = logging.getLogger(__spec__.parent)
 
 
+def parse_list(*columns: str) -> pl.Expr:
+    return (
+        pl.col(
+            *columns
+        )
+        # Turn list string into list of strings
+        .str.strip_prefix("[")
+        .str.strip_suffix("]")
+        .str.replace_all('"', "", literal=True)
+        .str.split(",")
+        # Keep list elements that are not null
+        .list.eval(
+            pl.element().filter(pl.element().is_not_null())
+        )
+        # Keep list elements that are not the empty string
+        .list.eval(
+            pl.element().filter(
+                pl.element().ne(
+                    pl.lit("")
+                )
+            )
+        )
+    )
+
+
+def empty_list_to_null(column: str) -> pl.Expr:
+    return pl.when(
+        pl.col(column).list.len() == 0
+    ).then(
+        pl.lit(None).alias(column)
+    ).otherwise(
+        pl.col(column)
+    )
+
+
+
+
 class StatementsOfReasons(Dataset):
 
     @property
@@ -72,7 +109,7 @@ class StatementsOfReasons(Dataset):
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
         progress.step(index, extra="count rows")
-        total_rows, total_rows_with_keywords = self._distill_row_counts(
+        total_rows, total_rows_with_keywords = self.get_total_row_counts(
             csv_files, index, name
         )
 
@@ -99,17 +136,28 @@ class StatementsOfReasons(Dataset):
 
         return digest, self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
 
-    def _distill_row_counts(self, csv_files: str, index: int, name: str) -> tuple[int, int]:
+    def get_total_row_counts(
+        self, csv_files: str, index: int, name: str
+    ) -> tuple[int, int]:
         """
-        Determine number of rows and rows with keywords across all CSV files in
-        the batch.
+        Determine number of rows (`total_rows`) and rows with keywords
+        (`total_rows_with_keywords`) across all CSV files in the batch.
         """
+        # It's too bad that we parse this column twice, once for the full frame
+        # and once for the filtered version. But since ingesting the full frame
+        # has two levels of fall back, adding the logic for also parsing the
+        # full frame doesn't seem to fit. Previously, this function avoided
+        # parsing and used a simpler syntactic test. Alas, that failed for maybe
+        # twenty out of 600 something releases.
         rows, rows_with_keywords = (
             pl.scan_csv(csv_files, infer_schema=False)
             .select(
+                parse_list("category_specification"),
+            ).with_columns(
+                empty_list_to_null("category_specification"),
+            ).select(
                 pl.len(),
-                # Minimum length of 3 bytes accounts for "[]"
-                (2 < pl.col("category_specification").str.len_bytes()).sum(),
+                pl.col("category_specification").is_not_null().sum(),
             )
             .collect()
             .row(0)
@@ -139,14 +187,15 @@ class StatementsOfReasons(Dataset):
         standard library.
         """
         # Fast path: Process several CSV files in one lazy Polars operation
-        progress.step(index, extra="distilling data extract")
+        _, _, pattern = csv_files.rpartition("/")
+        progress.step(index, extra=f"loading {pattern}")
         try:
             frame = self.finish_frame(
                 release,
                 self._scan_csv_with_polars(csv_files, category)
             ).collect()
             _logger.debug(
-                'extracted rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
+                'ingested rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
                 frame.height, name
             )
             return frame
@@ -167,7 +216,7 @@ class StatementsOfReasons(Dataset):
 
         frames = []
         for file_path in files:
-            progress.step(index, extra=f"extracting {file_path.name}")
+            progress.step(index, extra=f"loading {file_path.name}")
 
             try:
                 frame = self.finish_frame(
@@ -177,7 +226,7 @@ class StatementsOfReasons(Dataset):
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted rows=%d, strategy=2, using="Pola.rs", file="%s"',
+                    'ingested rows=%d, strategy=2, using="Pola.rs", file="%s"',
                     frame.height, file_path.name
                 )
                 continue
@@ -195,7 +244,7 @@ class StatementsOfReasons(Dataset):
                 frames.append(frame)
 
                 _logger.debug(
-                    'extracted rows=%d, strategy=3, using="Python\'s CSV module", file="%s"',
+                    'ingested rows=%d, strategy=3, using="Python\'s CSV module", file="%s"',
                     frame.height, file_path.name
                 )
             except Exception as x:
@@ -292,64 +341,24 @@ class StatementsOfReasons(Dataset):
                     .alias("territorial_scope"),
                 pl.col("platform_name").replace(CanonicalPlatformNames),
             )
-            # Parse list-valued columns (assumes no [] values, but see below)
+            # Parse list-valued columns
             .with_columns(
-                pl.col(
+                parse_list(
                     "decision_visibility",
                     "category_addition",
                     "category_specification",
                     "content_type",
                     "territorial_scope",
                 )
-                .str.strip_prefix("[")
-                .str.strip_suffix("]")
-                .str.replace_all('"', "", literal=True)
-                .str.split(",")
-                # Keep list elements that are not null
-                .list.eval(
-                    pl.element().filter(pl.element().is_not_null())
-                )
-                # Keep list elements that are not the empty string
-                .list.eval(
-                    pl.element().filter(
-                        pl.element().ne(
-                            pl.lit("")
-                        )
-                    )
-                )
             )
             .with_columns(
                 # Replace empty lists with None. This method used to assume that
                 # the value never is the empty list. That assumption becomes
                 # superfluous with introduction of this clause.
-                pl.when(
-                    pl.col("decision_visibility").list.len() == 0
-                ).then(
-                    pl.lit(None).alias("decision_visibility")
-                ).otherwise(
-                    pl.col("decision_visibility")
-                ),
-                pl.when(
-                    pl.col("category_specification").list.len() == 0
-                ).then(
-                    pl.lit(None).alias("category_specification")
-                ).otherwise(
-                    pl.col("category_specification")
-                ),
-                pl.when(
-                    pl.col("content_type").list.len() == 0
-                ).then(
-                    pl.lit(None).alias("content_type")
-                ).otherwise(
-                    pl.col("content_type")
-                ),
-                pl.when(
-                    pl.col("territorial_scope").list.len() == 0
-                ).then(
-                    pl.lit(None).alias("territorial_scope")
-                ).otherwise(
-                    pl.col("territorial_scope")
-                ),
+                empty_list_to_null("decision_visibility"),
+                empty_list_to_null("category_specification"),
+                empty_list_to_null("content_type"),
+                empty_list_to_null("territorial_scope"),
             )
             # Cast list elements and date columns to their types. Add released_on.
             .with_columns(
