@@ -58,8 +58,8 @@ _HUMANIZED_FRAGMENTS = {
 
 
 _HUMANIZED_TAGS = {
-    "EEA": "EU+IS+LI+NO",
-    "EEA_no_IS": "EU+LI+NO",
+    "Eea": "EU+IS+LI+NO",
+    "Eea No Is": "EU+LI+NO",
 }
 
 
