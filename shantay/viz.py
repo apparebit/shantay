@@ -620,8 +620,8 @@ class Visualizer:
             <li><a href="#intro">Introduction</a></li>
             <li><a href="#dailies">Daily Statements of Reasons</a></li>
             <li><a href="#platforms">The Platforms Filing SoRs</a></li>
-            <li><a href="#sors">The Statements of Reasons</a></li>
-            <li><a href="#outages">Outages</a></li>
+            <li><a href="#sors">Monthly Categorizations</a></li>
+            <li><a href="#outages">Per-Platform Outages</a></li>
             {tag_toc}
             {platform_toc}
             <li><a href="#data">Data Summary</a></li>
@@ -681,10 +681,11 @@ class Visualizer:
             <ul>
 
             <li><p><strong>Platform-focused sections</strong> include a manually
-            curated selection of platforms (all of Meta's platforms together,
-            Meta's platforms individually, as well as YouTube). They also
-            include the top five platforms by SoR volume ignoring the already
-            included platforms.</p></li>
+            curated selection of platforms, i.e., all of Meta's platforms
+            together, Meta's platforms individually, as well as YouTube, in
+            Section 11-17. They also include the top five platforms by SoR
+            volume ignoring the already included platforms in Section
+            6-10.</p></li>
 
             <li><p><strong>Meta's platforms</strong> are Facebook, Instagram,
             Threads, WhatsApp, and some other Meta product(s). Seriously, the
