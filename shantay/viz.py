@@ -4,6 +4,7 @@ import datetime as dt
 import logging
 from pathlib import Path
 import re
+import shutil
 from typing import Any, cast
 
 import altair as alt
@@ -84,14 +85,14 @@ svg {
     display: block;
 }
 
-main > :where(h1, h2, ol, p, svg, table, details) {
+main > :where(details, h1, h2, h3, ol, p, svg, table, ul) {
     margin-left: auto;
     margin-right: auto;
 }
 
-main > :where(h1, h2, ol, p, details) { max-width:  75rch; }
-main > :where(table)                  { max-width:  90rch; }
-main > :where(svg)                    { max-width: 100rch; }
+main > :where(details, h1, h2, h3, ol, p, ul) { max-width:  75rch; }
+main > :where(table)                          { max-width:  90rch; }
+main > :where(svg)                            { max-width: 100rch; }
 
 h2 {
     margin-top: 3rem;
@@ -116,9 +117,6 @@ table caption {
 }
 table caption > :where(cite, dfn, em, i) {
     font-style: normal;
-}
-tr > th:first-child, tr > td:first-child {
-    text-align: left;
 }
 th {
     font-weight: normal;
@@ -147,15 +145,20 @@ tbody > tr:nth-child(even) {
 }
 td {
     font-variant-numeric: tabular-nums;
-    text-align: right;
 }
-th {
-    text-align: right;
-}
-:where(.col2left, .col3left) tr > :where(td, th):nth-child(2) {
+:where(.left-except-2) :where(th, td) {
     text-align: left;
 }
-:where(.col3left) tr > :where(td, th):nth-child(3) {
+:where(.left-except-2) :where(th, td):nth-child(2) {
+    text-align: right;
+}
+:where(.right-except-2, .right-except-2-3) :where(th, td) {
+    text-align: right;
+}
+:where(.right-except-2, .right-except-2-3) :where(th, td):nth-child(2) {
+    text-align: left;
+}
+:where(.right-except-2-3) :where(th, td):nth-child(3) {
     text-align: left;
 }
 tbody > tr.highlight > td {
@@ -187,7 +190,8 @@ def visualize(
     with_cutoff: bool = True,
 ) -> pl.DataFrame:
     charts = storage.staging_root / "charts" / coverage.stem()
-    charts.unlink(missing_ok=True)
+    if charts.exists():
+        shutil.rmtree(charts)
     charts.mkdir(parents=True)
 
     renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
@@ -387,8 +391,10 @@ class Visualizer:
         frame: pl.DataFrame,
         caption: None | str = None,
         klass: None | str = None,
+        with_index: bool = True,
     ) -> None:
-        frame = frame.with_row_index(offset=1)
+        if with_index:
+            frame = frame.with_row_index(offset=1)
         self._renderer.frame(frame)
 
         assert self._document is not None
@@ -548,7 +554,7 @@ class Visualizer:
 
         # We want to show top_num platforms in addition to Meta's and selected ones
         top_num = 5
-        select_platforms = ("YouTube", "Amazon", "Amazon Store")
+        select_platforms = ("YouTube",)
 
         top = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None)
@@ -611,6 +617,7 @@ class Visualizer:
         self.html(
             f"""
             <ol>
+            <li><a href="#intro">Introduction</a></li>
             <li><a href="#dailies">Daily Statements of Reasons</a></li>
             <li><a href="#platforms">The Platforms Filing SoRs</a></li>
             <li><a href="#sors">The Statements of Reasons</a></li>
@@ -622,23 +629,62 @@ class Visualizer:
             <li><a href="#keyword-ranking">Keyword Ranking</a></li>
             <li><a href="#schemas">Schemas</a></li>
             </ol>
+            """
+        )
 
-            <p><em style="font-size: 1.2em;">{batch_rows:,} out of
-            {total_rows:,} statements of reasons<br>
-            submitted by {platform} platforms<br>
-            over {days.days:,} days</em>!</p>
+        self.html(f"<h2 id=intro>{self.secno()}. Introduction</h2>")
 
-            <p><em style="font-size: 1.2em;">Also, {other_entries:,} free-text
-            entries describing "other" with {unique_other_entries:,} unique
-            values!</em></p>
+        self.frame(
+            pl.DataFrame({
+                "Description": [
+                    "Covers",
+                    "Out of",
+                    "Submitted by",
+                    "Over",
+                    "Including",
+                    "With",
+                ],
+                "Quantity": [
+                    batch_rows,
+                    total_rows,
+                    platform,
+                    days.days,
+                    other_entries,
+                    unique_other_entries,
+                ],
+                "Entity": [
+                    "statements of reasons",
+                    "statements of reasons",
+                    "platforms",
+                    "days",
+                    "free-text entries",
+                    "unique values",
+                ],
+            }),
+            caption="This Report…",
+            klass="left-except-2",
+            with_index=False,
+        )
 
-            <p>Platforms:</p><ul>
+        self.html(
+            f"""
+            <p><strong><a
+            href="https://github.com/apparebit/shantay">Shantay</a></strong>
+            created this report on {self._timestamp.date().isoformat()} at
+            {self._timestamp.time().isoformat(timespec="seconds")}<br>
+            based on data from the <a
+            href="https://transparency.dsa.ec.europa.eu">DSA transparency
+            database</a>.</p>
+
+            <h3>Platforms</h3>
+
+            <ul>
 
             <li><p><strong>Platform-focused sections</strong> include a manually
-            curated selection of platforms, i.e., all of Meta's platforms
-            together, Meta's platforms individually, YouTube, and Amazon
-            (Store). They also include the top five platforms by SoR volume that
-            aren't already included.</p></li>
+            curated selection of platforms (all of Meta's platforms together,
+            Meta's platforms individually, as well as YouTube). They also
+            include the top five platforms by SoR volume ignoring the already
+            included platforms.</p></li>
 
             <li><p><strong>Meta's platforms</strong> are Facebook, Instagram,
             Threads, WhatsApp, and some other Meta product(s). Seriously, the
@@ -647,35 +693,36 @@ class Visualizer:
 
             </ul>
 
-            <p>Charts:</p><ul>
+            <h3>Charts</h3>
 
-            <li><p><strong>Bars are stacked</strong> from the category with the
-            most SoRs at the bottom to the category with the least SoRs at the
-            top. The legend has the opposite order from category with the most
-            SoRs downwards.</p></li>
+            <ul>
+
+            <li><p><strong>Bars are stacked</strong> by number of statements of
+            reasons (SoRs) per category, with the category with the most SoRs at
+            the bottom. The legend follows the opposite order from category with
+            the most SoRs at the top.</p></li>
 
             <li><p><strong>Only categories with counts greater zero</strong> are
-            included in a timeline.</p></li>
+            included in a timeline. If a category is listed in the legend but
+            not visible amongst bars, its counts are too small.</p></li>
+
+            <li><p>Except the bar charts for keywords and delays, <strong>bar
+            charts have the same x and y axis dimensions</strong>. That way,
+            they are easier to compare. (This does not hold for the y-axis of
+            two panel charts; see next item.)</p></li>
 
             <li><p><strong>Charts with two panels</strong> visualize the same
-            breakdown of categories in both panel, except that the top-one to
-            top-three categories have been omitted. That way, the bottom panel
-            often visualizes the bottom permille to percent of
-            categories.</p></li>
+            breakdown of categories in both panels, except that the bottom panel
+            omits the top-one to top-three categories and has its own y-axis
+            range. That way, the bottom panel may show the bottom permille to
+            percent of categories when the top panel does not.</p></li>
 
             <li><p><strong>Bars marked ⚠️</strong> represent outliers that go
-            beyond the coordinate grid. Shantay clamps the y-axis under certain
-            circumstances so that subcategories remain discernible for most
-            bars, though the second panel tends to be more effective.</p></li>
+            beyond the coordinate grid. Shantay sometimes clamps the y-axis for
+            readability of most of the bars. However, in practice, the second
+            panel tends to be more effective.</p></li>
 
             </ul>
-
-            <p><strong><a
-            href="https://github.com/apparebit/shantay">Shantay</a></strong>
-            created this document on {self._timestamp.date().isoformat()} at
-            {self._timestamp.time().isoformat(timespec="seconds")} based on data
-            from the <a href="https://transparency.dsa.ec.europa.eu">DSA
-            transparency database</a>.</p>
             """
         )
 
@@ -696,7 +743,7 @@ class Visualizer:
             "count", descending=True
         ).collect()
 
-        self.frame(table, klass="col2left")
+        self.frame(table, klass="right-except-2")
 
         self.html(f"<h2 id=keyword-ranking>{self.secno()}. Keyword Ranking</h2>")
         self.html(
@@ -704,7 +751,7 @@ class Visualizer:
 <p>The percentage for the "null" keyword denotes the fraction of <em>all</em> SoRs,
 whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ''')
-        self.frame(self._keyword_usage, klass="col2left")
+        self.frame(self._keyword_usage, klass="right-except-2")
         pie = self.overall_keyword_usage()
         self.chart("keyword-pie", pie)
 
@@ -892,7 +939,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 self.frame(
                     self.text_usage(column, tag, platform),
                     caption=caption,
-                    klass="col3left",
+                    klass="right-except-2-3",
                 )
                 continue
             elif isinstance(metric, str):
@@ -1966,9 +2013,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         self.frame(
-            summary, caption="Platforms and Days with/without SoRs", klass="col3left"
+            summary,
+            caption="Platforms and Days with/without SoRs",
+            klass="right-except-2"
         )
-        self.frame(outages, caption="Outages of More Than One Day", klass="col3left")
+        self.frame(
+            outages,
+            caption="Outages of More Than One Day",
+            klass="right-except-2"
+        )
 
 
 # --------------------------------------------------------------------------------------
