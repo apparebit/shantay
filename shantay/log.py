@@ -12,22 +12,33 @@ from io import StringIO
 from pathlib import Path
 import re
 import sys
-from typing import Literal, Self, TextIO
+from typing import cast, Literal, Self, TextIO
+
+from .model import Release
 
 
 COMMA_SPACE = re.compile(r",\s+")
-DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
+DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 RULE = re.compile(r"^▁+$")
 
 
-@dataclass(frozen=True, slots=True)
+class NoArgument:
+    pass
+
+
+@dataclass(slots=True)
 class LogMessage:
+    """
+    The actual log message, comprising a prefix and key, value pairs, both of
+    which are optional.
+    """
 
     prefix: None | str
-    props: Mapping[str, None | bool | int | str | dt.date]
+    props: Mapping[str, None | bool | int | str]
 
     @classmethod
     def parse(cls, s: str) -> Self:
+        """Parse the log message."""
         prefix = None
         props = {}
 
@@ -58,8 +69,6 @@ class LogMessage:
                     value = False
                 elif value.lower() == "true":
                     value = True
-                elif DATE.match(value):
-                    value = dt.date.fromisoformat(value)
             else:
                 value = int(value)
 
@@ -67,12 +76,37 @@ class LogMessage:
 
         return cls(prefix, props)
 
+    def __contains__(self, key: str) -> bool:
+        return key in self.props
+
+    def has(self, *keys: str, prefix: None | str | type = NoArgument) -> bool:
+        """Determine whether the message has all given properties."""
+        if prefix is not NoArgument and prefix != self.prefix:
+            return False
+        for key in keys:
+            if not key in self:
+                return False
+        return True
+
+    def release(self) -> None | Release:
+        """Get the release if any."""
+        if "release" in self:
+            return Release.of(cast(str, self.props["release"]))
+        if "file" in self:
+            file = DATE.search(cast(str, self.props["file"]))
+            if file is not None:
+                return Release.of(file.group(0))
+
+        return None
+
     def __str__(self) -> str:
+        """Get the log message as a string."""
         s = StringIO()
         self.write(s)
         return s.getvalue()
 
     def write(self, stream: TextIO) -> None:
+        """Write the log message to the stream."""
         if self.prefix is not None:
             stream.write(self.prefix)
             stream.write(" ")
@@ -95,29 +129,57 @@ class LogMessage:
             stream.write(value)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(slots=True)
 class LogEntry:
+    """
+    A structured log entry, comprising the timestamp, the process ID, the
+    module, the level, the actual message, and the optional exception
+    information on subsequent lines.
+    """
 
     timestamp: dt.datetime
     pid: int
     module: str
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
     message: LogMessage
+    exc_info: None | str = None
 
     @classmethod
-    def ingest(cls, path: Path) -> Iterator[Self]:
+    def parse_file(cls, path: Path) -> Iterator[Self]:
+        """Parse the contents of the log file. Since log files may get rather
+        large, this method is a generator."""
         with open(path, mode="r", encoding="utf8") as file:
-            while (line := file.readline()):
-                yield cls.parse(line)
+            line = file.readline()
+            no = 1
+
+            while line != "":
+                # Parse an entry
+                entry = cls.parse(no, line)
+
+                # Collect subsequent lines that are not log entries
+                trace = []
+                while (line := file.readline()):
+                    no += 1
+
+                    if "︙" in line:
+                        break
+                    trace.append(line)
+
+                # Add as exception info to entry
+                if 0 < len(trace):
+                    entry.exc_info = "\n".join(trace)
+
+                yield entry
 
     @classmethod
-    def parse(cls, line: str) -> Self:
+    def parse(cls, number: int, line: str) -> Self:
+        """Parse a log line."""
         parts = line.strip().split("︙")
         if len(parts) != 5:
-            raise ValueError(f'malformed log entry "{line}"')
+            raise ValueError(f'malformed log entry in line {number:,}:{line}')
         level = parts[3]
         if level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
-            raise ValueError(f'malformed log level "{level}')
+            raise ValueError(f'malformed log level in line {number:,}:{line}')
 
         return cls(
             dt.datetime.fromisoformat(parts[0]),
@@ -127,12 +189,67 @@ class LogEntry:
             LogMessage.parse(parts[4]),
         )
 
+    def is_rule(self) -> bool:
+        """Determine whether the log entry contains a horizontal rule as message."""
+        return self.message.prefix is not None and "▁▁▁▁▁" in self.message.prefix
+
+    def is_task_start(self) -> bool:
+        """Determine whether the log entry marks the beginning of a task."""
+        if not self.message.has("pid", "task"):
+            return False
+        prefix = self.message.prefix
+        return (
+            prefix == "running processor with"
+            or prefix == "running multiprocessor with"
+        )
+
+    def is_concurrent_task_start(self) -> bool:
+        """Determine whether the log entry marks the beginning of a concurrent
+        task."""
+        return self.message.has("pid", "task", prefix="running multiprocessor with")
+
+    def is_key_value(self) -> bool:
+        """Determine whether the log entry contains a key, value pair describing
+        a task."""
+        return self.message.has("key", "value", prefix=None)
+
+    def is_job_start1(self) -> bool:
+        """Determine whether the log entry is the first entry for concurrently
+        processing a release."""
+        return self.message.has("task", "release", "pool", prefix="submitting")
+
+    def is_job_start2(self) -> bool:
+        """Determine whether the log entry is the second entry for concurrently
+        processing a release."""
+        return self.message.has("fn", "pool", prefix="submit")
+
+    def is_job_start3(self) -> bool:
+        """Determine whether the log entry is the third entry for concurrently
+        processing a release."""
+        return self.message.has("task", "release", "category", "worker", prefix="running")
+
+    def is_worker_init(self) -> bool:
+        """Determine whether the log entry marks the initialization of a worker
+        process. Note that this entry may occur between, for example, the second
+        and third entries of a new job."""
+        return self.message.has("pid", "pool", prefix="initialized worker process")
+
+    def is_job_done(self) -> bool:
+        """Determine whether the long entry marks the end of concurrently
+        processing a release."""
+        return self.message.has(
+            "task", "release", "category", "worker",
+            prefix="returning result for"
+        )
+
     def __str__(self) -> str:
+        """Get the log message as a string."""
         s = StringIO()
         self.write(s)
         return s.getvalue()
 
     def write(self, stream: TextIO) -> None:
+        """Write the log entry to the stream."""
         stream.write(self.timestamp.isoformat())
         stream.write("︙")
         stream.write(f"{self.pid}")
@@ -142,11 +259,16 @@ class LogEntry:
         stream.write(self.level)
         stream.write("︙")
         self.message.write(stream)
+        if self.exc_info is not None:
+            stream.write("\n")
+            stream.write(self.exc_info)
 
     def print(self, stream: TextIO = sys.stdout, end: None | str = "\n") -> None:
+        """Print the log entry."""
         self.write(stream)
         if end is not None:
             stream.write(end)
+
 
 if __name__ == "__main__":
     import argparse
@@ -158,15 +280,12 @@ if __name__ == "__main__":
     )
     options = parser.parse_args(sys.argv[1:])
 
-    processes = {}
-    for entry in LogEntry.ingest(options.path):
-        processes.setdefault(entry.pid, []).append(entry)
-
-    for process, entries in processes.items():
-        label = f"PID {process}"
-        print(label)
-        print("-" * len(label))
-        print()
-        for entry in entries[:20]:
-            entry.print()
-        print("...\n\n")
+    for entry in LogEntry.parse_file(options.path):
+        if (
+            entry.is_rule()
+            or entry.is_task_start()
+            or entry.is_key_value()
+            or entry.is_job_start1()
+        ):
+            entry.write(sys.stdout)
+            sys.stdout.write("\n")
