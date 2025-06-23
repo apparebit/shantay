@@ -193,36 +193,38 @@ class TestDistill(unittest.TestCase):
             self.assertNotEqual(offset, -1)
             self.assertTrue(offset + 38 <= len(lines))
             self.assertIn("staged file", lines[offset + 0])
-            self.assertIn("validated file", lines[offset + 1])
-            self.assertIn('unarchived type="nested archive"', lines[offset + 2])
-            self.assertIn('counted filter="none", rows=100', lines[offset + 3])
-            self.assertIn('counted filter="with_keywords", rows=12', lines[offset + 4])
-            self.assertIn("extracted rows=8", lines[offset + 5])
-            self.assertIn('unarchived type="nested archive"', lines[offset + 6])
-            self.assertIn('counted filter="none", rows=102', lines[offset + 7])
-            self.assertIn('counted filter="with_keywords", rows=1', lines[offset + 8])
+            self.assertIn("validate release", lines[offset + 1])
+            self.assertIn("validated release", lines[offset + 2])
+            self.assertIn('unarchived type="nested archive"', lines[offset + 3])
+            self.assertIn('counted filter="none", rows=100', lines[offset + 4])
+            self.assertIn('counted filter="with_keywords", rows=12', lines[offset + 5])
+            self.assertIn("extracted rows=8", lines[offset + 6])
+            self.assertIn('unarchived type="nested archive"', lines[offset + 7])
+            self.assertIn('counted filter="none", rows=102', lines[offset + 8])
+            self.assertIn('counted filter="with_keywords", rows=1', lines[offset + 9])
+            offset += 10
             # Trying to parse both CSV files in one Pola.rs operation fails:
             self.assertIn(
                 'shantay︙WARNING︙failed to read CSV with strategy=1, using="globbing Pola.rs"',
-                lines[offset + 9],
+                lines[offset + 0],
             )
-            self.assertTrue(lines[offset + 10].startswith("Traceback"))
+            self.assertTrue(lines[offset + 1].startswith("Traceback"))
+            self.assertTrue(lines[offset + 2].startswith("  File"))
+            self.assertTrue(lines[offset + 3].startswith("    ).collect()"))
+            self.assertTrue(lines[offset + 4].startswith("      ^^^^^^^"))
+            self.assertTrue(lines[offset + 5].startswith("  File"))
+            self.assertTrue(lines[offset + 6].startswith("    return function(*args, **kwargs)"))
+            self.assertTrue(lines[offset + 7].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 8].startswith("  File"))
+            self.assertTrue(lines[offset + 9].startswith("    return function(*args, **kwargs)"))
+            self.assertTrue(lines[offset + 10].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
             self.assertTrue(lines[offset + 11].startswith("  File"))
-            self.assertTrue(lines[offset + 12].startswith("    ).collect()"))
-            self.assertTrue(lines[offset + 13].startswith("      ^^^^^^^"))
-            self.assertTrue(lines[offset + 14].startswith("  File"))
-            self.assertTrue(lines[offset + 15].startswith("    return function(*args, **kwargs)"))
-            self.assertTrue(lines[offset + 16].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
-            self.assertTrue(lines[offset + 17].startswith("  File"))
-            self.assertTrue(lines[offset + 18].startswith("    return function(*args, **kwargs)"))
-            self.assertTrue(lines[offset + 19].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
-            self.assertTrue(lines[offset + 20].startswith("  File"))
-            self.assertTrue(lines[offset + 21].startswith("    return wrap_df(ldf.collect(engine, callback))"))
-            self.assertTrue(lines[offset + 22].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 12].startswith("    return wrap_df(ldf.collect(engine, callback))"))
+            self.assertTrue(lines[offset + 13].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
 
             # Since the particulars of the traceback have changed over time,
             # make offsets relative to the next log line.
-            offset = offset + 23
+            offset = offset + 14
 
             self.assertTrue(
                 lines[offset].startswith(

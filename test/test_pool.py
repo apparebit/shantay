@@ -84,12 +84,12 @@ class TestPool(unittest.TestCase):
 
             lines = sorted(l[l.index("︙", 24) + 1:] for l in lines)
             for index in range(expected_init):
-                self.assertIn("root︙INFO︙initialized worker pool process pid", lines[index])
+                self.assertIn("shantay.pool︙INFO︙initialized worker process pid=", lines[index])
             self.assertIn('shantay︙DEBUG︙cancelled thread="status_manager"', lines[expected_init])
-            self.assertIn('shantay︙DEBUG︙done processing tasks in pool="pool-1"', lines[expected_init + 1])
-            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task1", pool="pool-1"', lines[expected_init + 2])
-            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task2", pool="pool-1"', lines[expected_init + 3])
-            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task3", pool="pool-1"', lines[expected_init + 4])
+            self.assertIn('shantay︙DEBUG︙done processing tasks in pool=', lines[expected_init + 1])
+            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task1", pool=', lines[expected_init + 2])
+            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task2", pool=', lines[expected_init + 3])
+            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task3", pool=', lines[expected_init + 4])
             self.assertIn('test.test_pool︙INFO︙task1 processes "1"', lines[expected_init + 5])
             self.assertIn('test.test_pool︙INFO︙task2 processes "2"', lines[expected_init + 6])
             self.assertIn('test.test_pool︙INFO︙task3 processes "3"', lines[expected_init + 7])
