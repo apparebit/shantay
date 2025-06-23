@@ -515,13 +515,14 @@ def _initialize_worker(
     status_queue: mp.SimpleQueue,
     cancel_queue: mp.SimpleQueue,
     log_level: int,
-    pool: str,
+    pool_id: str,
 ) -> None:
     global _status_queue, _terminator
     status_queue._reader.close() # pyright: ignore[reportAttributeAccessIssue]
     _status_queue = status_queue
 
-    logger = logging.getLogger(__name__)
+    # Provide root logger with a handler that forwards to coordinator
+    logger = logging.getLogger()
     if len(logger.handlers) == 0:
         logger.addHandler(WorkerLogHandler())
         logger.setLevel(log_level)
@@ -532,7 +533,10 @@ def _initialize_worker(
         daemon=True,
     )
     _terminator.start()
-    logger.info('initialized worker process pid=%d, pool="%s"', _PID, pool)
+
+    # Log under module name
+    logger = logging.getLogger(__name__)
+    logger.info('initialized worker process pid=%d, pool="%s"', _PID, pool_id)
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
