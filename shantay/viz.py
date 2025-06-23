@@ -632,7 +632,8 @@ class Visualizer:
             """
         )
 
-        self.html(f"<h2 id=intro>{self.secno()}. Introduction</h2>")
+        secno = self.secno()
+        self.html(f"<h2 id=intro>{secno}. Introduction</h2>")
 
         self.frame(
             pl.DataFrame({
@@ -676,16 +677,16 @@ class Visualizer:
             href="https://transparency.dsa.ec.europa.eu">DSA transparency
             database</a>.</p>
 
-            <h3>Platforms</h3>
+            <h3>{secno}.1. Platforms</h3>
 
             <ul>
 
             <li><p><strong>Platform-focused sections</strong> include a manually
             curated selection of platforms, i.e., all of Meta's platforms
             together, Meta's platforms individually, as well as YouTube, in
-            Section 11-17. They also include the top five platforms by SoR
-            volume ignoring the already included platforms in Section
-            6-10.</p></li>
+            sections 11&#8209;17. They also include the top five platforms by
+            SoR volume ignoring the already included platforms in sections
+            6&#8209;10.</p></li>
 
             <li><p><strong>Meta's platforms</strong> are Facebook, Instagram,
             Threads, WhatsApp, and some other Meta product(s). Seriously, the
@@ -694,7 +695,7 @@ class Visualizer:
 
             </ul>
 
-            <h3>Charts</h3>
+            <h3>{secno}.2. Charts</h3>
 
             <ul>
 
