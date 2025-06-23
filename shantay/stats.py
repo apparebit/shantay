@@ -395,16 +395,21 @@ class Collector:
         if isinstance(self._source, pl.LazyFrame):
             self._source = self._source.collect()
 
-        pairs["batch_count"] = md.get("batch_count")
-        pairs["batch_rows"] = self._source.height
-        pairs["batch_rows_with_keywords"] = (
+        batch_rows_with_keywords = (
             self._source.select(
                 pl.col("category_specification").is_null().not_().sum()
             ).item()
         )
+
+        pairs["batch_count"] = md.get("batch_count")
+        pairs["batch_rows"] = self._source.height
+        pairs["batch_rows_with_keywords"] = batch_rows_with_keywords
         pairs["batch_memory"] = self._source.estimated_size()
-        pairs["total_rows"] = md.get("total_rows")
-        pairs["total_rows_with_keywords"] = md.get("total_rows_with_keywords")
+        pairs["total_rows"] = self._source.height if tag is None else md.get("total_rows")
+        pairs["total_rows_with_keywords"] = (
+            batch_rows_with_keywords if tag is None
+            else md.get("total_rows_with_keywords")
+        )
         height = len(pairs)
 
         assert self._release is not None
