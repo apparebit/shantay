@@ -719,7 +719,10 @@ class Processor[R: Release]:
             # Check_db_platforms only probes the data frame for hereto unknown
             # platform names, raising a MissingPlatformError with such names.
             check_db_platforms(release.id, index, frame)
-            collector.collect(release, frame)
+
+            # We process each batch by itself. When the summary statistics are
+            # finalized, those unit counts add up.s
+            collector.collect(release, frame, metadata_entry={"batch_count": 1})
 
             # A daily release may comprise over 100 GB of uncompressed CSV data.
             # With three concurrent processes, that would be over 300 GB of disk
