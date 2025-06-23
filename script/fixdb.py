@@ -19,6 +19,29 @@ from shantay.progress import Progress
 from shantay.stats import Statistics
 
 
+DIFFICULT_RELEASES = tuple(Release.of(*d) for d in (
+    (2024, 3, 23),
+    (2024, 3, 24),
+    (2024, 3, 25),
+    (2024, 3, 26),
+    (2024, 3, 27),
+    (2024, 3, 28),
+    (2024, 3, 29),
+    (2024, 3, 30),
+    (2024, 3, 31),
+    (2024, 4, 1),
+    (2024, 4, 2),
+    (2024, 4, 9),
+    (2024, 4, 10),
+    (2024, 4, 11),
+    (2024, 4, 12),
+    (2024, 4, 13),
+    (2024, 4, 14),
+    (2024, 4, 15),
+    (2024, 4, 16),
+))
+
+
 def configure(argv: list[str]) -> tuple[Storage, Metadata, Any]:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -34,7 +57,12 @@ def configure(argv: list[str]) -> tuple[Storage, Metadata, Any]:
     parser.add_argument(
         "--check",
         action="store_true",
-        help="check counts",
+        help="if counts are inconsistent, recompute them to determine correct ones",
+    )
+    parser.add_argument(
+        "--validate",
+        action="store_true",
+        help="recompute counts for releases that caused problems in the past",
     )
     parser.add_argument(
         "--print",
@@ -152,6 +180,40 @@ def main(argv: list[str]) -> int:
         (range.first <= pl.col("start_date")) & (pl.col("end_date") <= range.last)
     )
 
+    # Just validate known troublemakers
+    if options.validate:
+        is_data_ok = True
+        for release in DIFFICULT_RELEASES:
+            print(release)
+            ttl1, ttl_kw1, ttl2, ttl_kw2 = frame.filter(
+                pl.col("start_date").eq(release.date)
+            ).select(
+                pl.col("column").eq("batch_rows").alias("batch_rows"),
+                pl.col("column").eq("batch_rows_with_keywords")
+                .alias("batch_rows_with_keywords"),
+                pl.col("column").eq("total_rows").alias("total_rows"),
+                pl.col("column").eq("total_rows_with_keywords")
+                .alias("total_rows_with_keywords"),
+            ).row(0)
+
+            ttl3, ttl_kw3, ttl4, ttl_kw4 = recompute(storage, release)
+
+            if (
+                ttl1 != ttl2 or ttl1 != ttl3 or ttl1 != ttl4
+                or ttl_kw1 != ttl_kw2 or ttl_kw1 != ttl_kw3 or ttl_kw1 != ttl_kw4
+            ):
+                flag = "####"
+                is_data_ok = False
+            else:
+                flag = "    "
+            print(f"{flag}{ttl1:>10,}  {ttl2:>10,}  {ttl3:>10,}  {ttl4:>10,}")
+            print(
+                f"{flag}{ttl_kw1:>10,}  "
+                f"{ttl_kw2:>10,}  {ttl_kw3:>10,}  {ttl_kw4:>10,}"
+            )
+
+        return not is_data_ok
+
     # Determine indices of relevant counts
     index_matrix = frame.select(
         pl.col("column").eq("batch_count").arg_true().alias("batch_count"),
@@ -178,9 +240,12 @@ def main(argv: list[str]) -> int:
         md_entry = metadata[date]
 
         # Check consistency of summary statistics and metadata
-        assert batch_count == 0
-        assert total_rows == 0
-        assert total_rows_with_keywords == 0
+        if batch_count == 0:
+            assert total_rows == 0
+            assert total_rows_with_keywords == 0
+        else:
+            assert total_rows == batch_rows
+            assert total_rows_with_keywords == batch_rows_with_keywords
         assert md_entry.get("total_rows") == batch_rows
 
         # If inconsistent, recompute counts from CSV and frame
