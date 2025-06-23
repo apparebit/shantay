@@ -188,11 +188,13 @@ def main(argv: list[str]) -> int:
             ttl1, ttl_kw1, ttl2, ttl_kw2 = frame.filter(
                 pl.col("start_date").eq(release.date)
             ).select(
-                pl.col("column").eq("batch_rows").alias("batch_rows"),
-                pl.col("column").eq("batch_rows_with_keywords")
+                pl.col("count").filter(pl.col("column").eq("batch_rows"))
+                .alias("batch_rows"),
+                pl.col("count").filter(pl.col("column").eq("batch_rows_with_keywords"))
                 .alias("batch_rows_with_keywords"),
-                pl.col("column").eq("total_rows").alias("total_rows"),
-                pl.col("column").eq("total_rows_with_keywords")
+                pl.col("count").filter(pl.col("column").eq("total_rows"))
+                .alias("total_rows"),
+                pl.col("count").filter(pl.col("column").eq("total_rows_with_keywords"))
                 .alias("total_rows_with_keywords"),
             ).row(0)
 
@@ -202,10 +204,11 @@ def main(argv: list[str]) -> int:
                 ttl1 != ttl2 or ttl1 != ttl3 or ttl1 != ttl4
                 or ttl_kw1 != ttl_kw2 or ttl_kw1 != ttl_kw3 or ttl_kw1 != ttl_kw4
             ):
-                flag = "####"
                 is_data_ok = False
+                flag = "####"
             else:
                 flag = "    "
+
             print(f"{flag}{ttl1:>10,}  {ttl2:>10,}  {ttl3:>10,}  {ttl4:>10,}")
             print(
                 f"{flag}{ttl_kw1:>10,}  "
