@@ -1,11 +1,8 @@
 from collections.abc import Iterator
-import datetime as dt
 import logging
 from pathlib import Path
-import shutil
 import unittest
 
-from shantay.__main__ import configure_logging
 from shantay.pool import Future, Pool, Task
 
 
@@ -17,7 +14,6 @@ ARCHIVE = FIXTURE / "archive"
 # So we only need ARCHIVE and STAGING.
 STAGING = ROOT / "tmp"
 LOGFILE = STAGING / "log.log"
-SENTINEL = STAGING / "pool.run"
 
 ONE = "1"
 TWO = "2"
@@ -25,20 +21,6 @@ THREE = "3"
 
 
 logger = logging.getLogger(__name__)
-
-
-def setUpModule():
-    # Since the staging directory and log file are shared across test modules,
-    # we use per-test-module sentinel files to detect new runs.
-    if SENTINEL.exists():
-        shutil.rmtree(STAGING)
-    STAGING.mkdir(exist_ok=True)
-    SENTINEL.write_text(f"{dt.datetime.now()}\n")
-
-    configure_logging(str(LOGFILE), verbose=True)
-
-def tearDownModule():
-    pass
 
 
 def task1(value: str) -> str:

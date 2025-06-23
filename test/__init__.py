@@ -6,13 +6,9 @@ import unittest
 # It would have been easier to add necessary imports manually,
 # but this can serve as recipe for future projects, too!
 
-for direntry in pathlib.Path(__file__).parent.iterdir():
+for direntry in sorted(pathlib.Path(__file__).parent.glob("test_*.py")):
     # For each submodule named test.test_something, ...
-    if (
-        not direntry.is_file()
-        or not direntry.name.startswith("test_")
-        or direntry.suffix != ".py"
-    ):
+    if not direntry.is_file():
         continue
 
     # ... import the module, ...

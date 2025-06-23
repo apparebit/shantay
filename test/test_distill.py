@@ -1,10 +1,8 @@
 from collections import Counter
 import datetime as dt
 from pathlib import Path
-import shutil
 import unittest
 
-from shantay.__main__ import configure_logging
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
 from shantay.metadata import Metadata
@@ -21,7 +19,6 @@ ARCHIVE = FIXTURE / "archive"
 # So we only need ARCHIVE and STAGING.
 STAGING = ROOT / "tmp"
 LOGFILE = STAGING / "log.log"
-SENTINEL = STAGING / "distill.run"
 
 ZIP_FILES = [
     "sor-global-2024-03-14-full-00000.csv.zip",
@@ -34,21 +31,6 @@ CSV_FILES = [
     "sor-global-2024-03-14-full-00001-00000.csv",
     "sor-global-2024-03-14-full-00001-00001.csv",
 ]
-
-
-def setUpModule():
-    # Since the staging directory and log file are shared across test modules,
-    # we use per-test-module sentinel files to detect new runs.
-    if SENTINEL.exists():
-        shutil.rmtree(STAGING)
-    STAGING.mkdir(exist_ok=True)
-    SENTINEL.write_text(f"{dt.datetime.now()}\n")
-
-    configure_logging(str(LOGFILE), verbose=True)
-
-
-def tearDownModule():
-    pass
 
 
 class TestDistill(unittest.TestCase):
