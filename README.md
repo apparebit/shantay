@@ -72,8 +72,10 @@ summary statistics at day-granularity. To visualize that same data, execute:
 $ uvx shantay --archive <directory> visualize
 ```
 
-Once finished, you'll find an `db.html` document with all charts in the default
-staging directory `dsa-db-staging`.
+Once finished, you'll find an
+[`db.html`](https://apparebit.github.io/shantay/db.html) document with all
+charts in the default staging directory `dsa-db-staging`. (The linked version
+covers far more data.)
 
 Alas, three months of data from the beginning of the DSA transparency database
 aren't particularly satisfying. Shantay ships with a copy of the summary
@@ -83,7 +85,8 @@ statistics for the entire database. To visualize them, execute:
 $ uvx shantay visualize
 ```
 
-Now look at the `db.html` again: Much better!
+Now look at the [`db.html`](https://apparebit.github.io/shantay/db.html) again:
+Much better!
 
 
 ## 2. Using Shantay

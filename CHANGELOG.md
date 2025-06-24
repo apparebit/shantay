@@ -1,6 +1,6 @@
 # Version History for Shantay
 
-## v0.3.0 (June 21, 2025)
+## v0.3.0 (June 24, 2025)
 
 Shantay now collects richer statistics and produces far more compelling
 visualizations with a simpler interface. It can either process the full
@@ -33,19 +33,21 @@ by the `summarize` task.
 ### More compelling visualization
 
 Amongst other changes, the HTML document produced by `visualize` is now named
-after the category, e.g., `protection-of-minors.html`, when covering a subset
-and `db.html` when covering the full database. It now starts with an outline,
-includes graphs tracking the volume of daily statements of reasons (SoRs) and
-breaking down the various attributes for (by default) monthly SoRs. Where
-needed, bars are annotated with their numeric quantities and means; others cut
-off outliers (clearly marked with ⚠️) to ensure good readability of the majority
-of (stacked) bar graphs. Each timeline only includes categories that are
-actually present in the data and they are always ordered from category with the
-most SoRs to least SoRs. Each summary repeats the same set of timelines for
-overall SoRs, Meta's platforms, YouTube, as well as the top-five platforms by
-SoRs not already mentioned. The appearance of the document has also been
-improved. Alas, all that goodness adds quite a bit of heft to the self-contained
-HTML document, which weighs in at 6-10 MB.
+after the category, e.g.,
+[`protection-of-minors.html`](https://apparebit.github.io/shantay/protection-of-minors.html),
+when covering a subset and
+[`db.html`](https://apparebit.github.io/shantay/db.html) when covering the full
+database. It now starts with an outline, includes graphs tracking the volume of
+daily statements of reasons (SoRs) and breaking down the various attributes for
+(by default) monthly SoRs. Where needed, bars are annotated with their numeric
+quantities and means; others cut off outliers (clearly marked with ⚠️) to ensure
+good readability of the majority of (stacked) bar graphs. Each timeline only
+includes categories that are actually present in the data and they are always
+ordered from category with the most SoRs to least SoRs. Each summary repeats the
+same set of timelines for overall SoRs, Meta's platforms, YouTube, as well as
+the top-five platforms by SoRs not already mentioned. The appearance of the
+document has also been improved. Alas, all that goodness adds quite a bit of
+heft to the self-contained HTML document, which weighs in at 6-10 MB.
 
 
 ### Richer statistics
