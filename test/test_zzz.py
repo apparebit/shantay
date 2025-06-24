@@ -31,7 +31,7 @@ class TestZzz(unittest.TestCase):
                 warning = entry
             if release is not None:
                 self.assertEqual(entry.message.release(), release)
-            if entry.message.has(prefix="analyzing"):
+            if entry.message.has(prefix="summarizing"):
                 release = None
 
         self.assertEqual(worker_entries, 5)

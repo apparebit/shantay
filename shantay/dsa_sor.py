@@ -418,13 +418,12 @@ class StatementsOfReasons(Dataset):
         count = sum(1 for _ in root.glob(release.batch_glob))
         glob = f"{root}/{release.batch_glob}"
         _logger.debug(
-            'analyzing release="%s", file-count=%d, glob="%s"', release, count, glob
+            'summarizing release="%s", file-count=%d, glob="%s"', release, count, glob
         )
 
-        # When using scan_parquet() instead, shantay makes seemingly rapid
-        # progress analyzing the data, only to get stuck at the 100% mark
-        # executing collect(). Even if eager processing is a bit slower, it
-        # provides a more consistent appearance of progress.
+        # With scan_parquet(), Shantay makes rapid progress only to get stuck at
+        # the 100% mark executing collect(). Hence, even if eager processing is
+        # a bit slower, it provides a consistent appearance of progress.
         extract = pl.read_parquet(glob).with_columns(
             pl.col("platform_name").replace(CanonicalPlatformNames)
         )
