@@ -121,7 +121,7 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
     )
 
 
-if __name__ == "__main__":
+def main() -> None:
     # Handle command line options
     parser = get_parser()
     options = parser.parse_args(sys.argv[1:])
@@ -151,3 +151,7 @@ if __name__ == "__main__":
 
     from .tool import run
     sys.exit(run(options))
+
+
+if __name__ == "__main__":
+    main()
