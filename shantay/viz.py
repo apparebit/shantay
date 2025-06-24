@@ -554,7 +554,7 @@ class Visualizer:
 
         # We want to show top_num platforms in addition to Meta's and selected ones
         top_num = 5
-        select_platforms = ("YouTube",)
+        select_platforms = ("X", "YouTube")
 
         top = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None)
@@ -683,8 +683,8 @@ class Visualizer:
 
             <li><p><strong>Platform-focused sections</strong> include a manually
             curated selection of platforms, i.e., all of Meta's platforms
-            together, Meta's platforms individually, as well as YouTube, in
-            sections 11&#8209;17. They also include the top five platforms by
+            together, Meta's platforms individually, as well as X and YouTube,
+            in sections 11&#8209;18. They also include the top five platforms by
             SoR volume ignoring the already included platforms in sections
             6&#8209;10.</p></li>
 
@@ -705,24 +705,26 @@ class Visualizer:
             the most SoRs at the top.</p></li>
 
             <li><p><strong>Only categories with counts greater zero</strong> are
-            included in a timeline. If a category is listed in the legend but
+            included in bar charts. If a category is listed in the legend but
             not visible amongst bars, its counts are too small.</p></li>
 
-            <li><p>Except the bar charts for keywords and delays, <strong>bar
-            charts have the same x and y axis dimensions</strong>. That way,
-            they are easier to compare. (This does not hold for the y-axis of
-            two panel charts; see next item.)</p></li>
+            <li><p>Except for keywords and delays, <strong>all bar charts have
+            the same x and y axis dimensions</strong>. That way, they are easier
+            to compare. (This does not hold for the y-axis of the bottom panel
+            in two-panel charts; see next item.)</p></li>
 
             <li><p><strong>Charts with two panels</strong> visualize the same
             breakdown of categories in both panels, except that the bottom panel
             omits the top-one to top-three categories and has its own y-axis
-            range. That way, the bottom panel may show the bottom permille to
+            range. That way, the bottom panel shows the bottom permille or
             percent of categories when the top panel does not.</p></li>
 
             <li><p><strong>Bars marked ⚠️</strong> represent outliers that go
-            beyond the coordinate grid. Shantay sometimes clamps the y-axis for
-            readability of most of the bars. However, in practice, the second
-            panel tends to be more effective.</p></li>
+            beyond the coordinate grid. To avoid charts with a few very large
+            and many small, hardly readable bars, Shantay clamps the y-axis
+            under certain circumstances. However, in practice, the second panel
+            tends to be more effective at ensuring that most categories are
+            visible.</p></li>
 
             </ul>
             """
