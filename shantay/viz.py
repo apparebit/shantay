@@ -593,7 +593,7 @@ class Visualizer:
         row = self._statistics.frame().lazy().select(
             pl.col("count").filter(predicate("batch_rows", tag=main_tag)).sum()
             .alias("batch_rows"),
-            pl.col("count").filter(predicate("total_rows", tag=main_tag)).sum()
+            pl.col("count").filter(predicate("total_rows", tag=None)).sum()
             .alias("total_rows"),
             pl.col("platform").n_unique(),
             pl.col("end_date").max() - pl.col("start_date").min() + dt.timedelta(days=1),
