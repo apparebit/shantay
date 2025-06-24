@@ -266,7 +266,7 @@ class Processor[R: Release]:
             raise
 
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
-        self._progress.perform(f"done with {release.id}").done()
+        self._progress.perform(f"distilled {release.id}").done()
         return
 
     def download(self) -> None:
