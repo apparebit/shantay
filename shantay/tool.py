@@ -86,6 +86,7 @@ def get_configuration(
     )
 
     # Acquire lock file
+    storage.staging_root.mkdir(parents=True, exist_ok=True)
     acquire_staging_lock(storage.staging_root)
 
     # Check task-specific conditions
@@ -162,6 +163,7 @@ def get_configuration(
                 f'file name "{metapath.name}"'
             )
 
+        # Merge the metadata ...
         try:
             metadata = metadata.merge_with(
                 Metadata.read_json(storage.staging_root / f"{filestem}.json")
@@ -169,9 +171,7 @@ def get_configuration(
         except FileNotFoundError:
             pass
 
-    # Make sure staging directory exists and store latest metadata in it
-    storage.staging_root.mkdir(parents=True, exist_ok=True)
-    if storage.archive_root is not None:
+        # ... and write out merged metadata
         metadata.write_json(storage.staging_root / f"{filestem}.json")
 
     # Handle --first and --last, with the latter including one day for the
