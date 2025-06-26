@@ -1,5 +1,3 @@
-from typing import Literal
-
 # See
 # https://transparency.dsa.ec.europa.eu/page/additional-explanation-for-statement-attributes
 # for two-level classification for types of violative activity.
@@ -28,6 +26,3 @@ StatementCategory = (
     "STATEMENT_CATEGORY_UNSAFE_AND_PROHIBITED_PRODUCTS",
     "STATEMENT_CATEGORY_VIOLENCE",
 )
-
-
-StatementCategoryType = Literal[*StatementCategory]

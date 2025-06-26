@@ -27,8 +27,9 @@ from .framing import (
 from .model import Daily, DateRange, MetadataEntry, Release
 from .schema import (
     CanonicalPlatformNames, check_stats_platforms, DurationTransform, humanize,
-    KeywordChildSexualAbuseMaterial, StatisticsSchema, TRANSFORM_COUNT, TRANSFORMS,
-    TransformType, ValueCountsPlusTransform, VariantValueType
+    KeywordChildSexualAbuseMaterial, StatisticsSchema, STRATIFY_BY_CATEGORY,
+    TRANSFORM_COUNT, TRANSFORMS, TransformType, ValueCountsPlusTransform,
+    VariantValueType,
 )
 from .util import scale_time
 
@@ -128,6 +129,7 @@ class Collector:
         self._tag = None
         self._release = None
         self._platform = None
+        self._category = None
         self._frames = []
 
     @contextmanager
@@ -150,13 +152,11 @@ class Collector:
             self._release = old_release
 
     @contextmanager
-    def platform_data(
-        self,
-        platform: None | str,
-    ) -> Iterator[Self]:
+    def platform_data(self, platform: None | str) -> Iterator[Self]:
         """Create a context for the platform."""
         new_source = self._source.filter(
-            pl.col("platform_name").eq(platform)
+            pl.col("platform_name").is_null() if platform is None
+            else pl.col("platform_name").eq(platform)
         )
 
         old_source, self._source = self._source, new_source
@@ -166,6 +166,19 @@ class Collector:
         finally:
             self._source = old_source
             self._platform = old_platform
+
+    @contextmanager
+    def category_data(self, category: str) -> Iterator[Self]:
+        """Create a context for the category."""
+        new_source = self._source.filter(pl.col("category").eq(category))
+
+        old_source, self._source = self._source, new_source
+        old_category, self._category = self._category, category
+        try:
+            yield self
+        finally:
+            self._source = old_source
+            self._category = old_category
 
     def add_rows(
         self,
@@ -239,6 +252,10 @@ class Collector:
             pl.lit(self._release.end_date).alias("end_date"),
             pl.lit(tag).alias("tag"),
             pl.lit(self._platform).alias("platform"),
+            *(
+                [pl.lit(self._category).alias("category")] if STRATIFY_BY_CATEGORY
+                else []
+            ),
             pl.lit(column).alias("column"),
             pl.lit(entity).alias("entity"),
             *effective_values,
@@ -258,7 +275,9 @@ class Collector:
         # Enforce canonical column order, so that frames can be concatenated!
         self._frames.append(frame.select(
             pl.col(
-                "start_date", "end_date", "tag", "platform", "column", "entity",
+                "start_date", "end_date", "tag", "platform",
+                *(["category"] if STRATIFY_BY_CATEGORY else []),
+                "column", "entity",
                 "variant", "text", "count", "min", "mean", "max"
             )
         ))
@@ -314,14 +333,16 @@ class Collector:
             entity = "is_null" if count == 0 else "_".join(suffix)
             self.add_rows("decision_type", entity=entity, count=expr.sum())
 
-    def collect_platform_data(self) -> None:
+    def collect_body_data(self) -> None:
         """Collect the standard statistics for the current data frame."""
         for key, value in TRANSFORMS.items():
             match value:
+                # Platform name and category name are distinct columns that are
+                # filled in while handling other fields.
                 case TransformType.PLATFORM_NAME:
                     assert key == "platform_name"
-                    # Summary statistics include column for platform name, which
-                    # is already filled in while handling other fields.
+                case TransformType.CATEGORY_NAME:
+                    assert key == "category"
                 case TransformType.SKIPPED_DATE:
                     pass
                 case TransformType.ROWS:
@@ -374,16 +395,30 @@ class Collector:
                         key, self_is_list, other_field
                     )
 
-    def collect_body(self) -> None:
+    def collect_categories(self) -> None:
+        categories = self._source.select(
+            pl.col("category").unique()
+        )
+        if isinstance(categories, pl.LazyFrame):
+            categories = categories.collect()
+
+        for category in categories.get_column("category"):
+            with self.category_data(category) as this:
+                this.collect_body_data()
+
+    def collect_platforms(self) -> None:
         platform_names = self._source.select(
             pl.col("platform_name").unique()
         )
         if isinstance(platform_names, pl.LazyFrame):
             platform_names = platform_names.collect()
 
-        for name, in platform_names.iter_rows():
+        for name in platform_names.get_column("platform_name"):
             with self.platform_data(name) as this:
-                this.collect_platform_data()
+                if STRATIFY_BY_CATEGORY:
+                    this.collect_categories()
+                else:
+                    this.collect_body_data()
 
     def collect_header(
         self, metadata_entry: None | MetadataEntry = None, tag: None | str = None
@@ -421,6 +456,9 @@ class Collector:
                 for k in pairs.keys()
             ],
             "platform": height * [None],
+        } | (
+            {"category": height * [None]} if STRATIFY_BY_CATEGORY else {}
+        ) | {
             "column": [k for k in pairs.keys()],
             "entity": height * [None],
             "variant": height * [None],
@@ -436,7 +474,7 @@ class Collector:
     def collect(
         self,
         release: Release,
-        frame: pl.DataFrame | pl.LazyFrame,
+        frame: pl.DataFrame,
         tag: None | str = None,
         metadata_entry: None | MetadataEntry = None,
     ) -> None:
@@ -444,10 +482,10 @@ class Collector:
         if tag is None or tag.startswith("STATEMENT_CATEGORY_"):
             with self.source_data(frame=frame, release=release, tag=tag) as this:
                 this.collect_header(metadata_entry, tag)
-                this.collect_body()
+                this.collect_platforms()
         else:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
-                this.collect_body()
+                this.collect_platforms()
 
     def frame(self, validate: bool = False) -> pl.DataFrame:
         """Combine the collected partial frames into one."""
@@ -504,7 +542,7 @@ class _Summarizer:
         self._summary = []
 
     @contextmanager
-    def tagged_frame(
+    def _tagged_frame(
         self,
         tag: None | str,
         frame: pl.DataFrame,
@@ -547,7 +585,7 @@ class _Summarizer:
             self._tag = old_tag
 
     @contextmanager
-    def spacer_on_demand(self) -> Iterator[None]:
+    def _spacer_on_demand(self) -> Iterator[None]:
         """
         If the scope adds new summary entries, preface those entries with an
         empty row.
@@ -558,17 +596,17 @@ class _Summarizer:
             yield None
         finally:
             if 0 < len(self._summary):
-                self.spacer(actual_summary)
+                self._spacer(actual_summary)
                 actual_summary.extend(self._summary)
             self._summary = actual_summary
 
-    def spacer(self, summary: None | _Summary = None) -> None:
+    def _spacer(self, summary: None | _Summary = None) -> None:
         """Add an empty row to the summary of summary statistics."""
         if summary is None:
             summary = self._summary
         summary.append((_SPACER, _SPACER))
 
-    def collect1(
+    def _collect1(
         self,
         column: str,
         entity: None | str = None,
@@ -591,7 +629,7 @@ class _Summarizer:
 
         self._summary.append((variable, value))
 
-    def collect_value_counts(
+    def _collect_value_counts(
         self, column: str, entity: None | str = None, is_text: bool = False
     ) -> None:
         """Collect the given column's value counts."""
@@ -624,14 +662,14 @@ class _Summarizer:
 
             self._summary.append((var, count))
 
-    def collect_platform_names(self) -> None:
+    def _collect_platform_names(self) -> None:
         base = self._source_by_platform.filter(
             predicate("rows", entity=None)
         ).group_by(
             "platform"
         )
 
-        self.spacer()
+        self._spacer()
         for platform, count in base.agg(
             pl.col("count").sum()
         ).sort(
@@ -640,7 +678,7 @@ class _Summarizer:
         ).rows():
             self._summary.append((f"platform.{platform}.rows", count))
 
-        self.spacer()
+        self._spacer()
         for platform, start_date in base.agg(
             pl.col("start_date").min()
         ).sort(
@@ -649,49 +687,49 @@ class _Summarizer:
         ).rows():
             self._summary.append((f"platform.{platform}.start_date", start_date))
 
-    def summarize_fields(self) -> None:
+    def _summarize_fields(self) -> None:
         """Summarize all fields of summary statistics."""
         for field_name, field_type in TRANSFORMS.items():
             match field_type:
                 case TransformType.PLATFORM_NAME:
                     assert field_name == "platform_name"
-                    self.collect_platform_names()
+                    self._collect_platform_names()
                 case TransformType.SKIPPED_DATE:
                     pass
                 case TransformType.ROWS:
-                    self.collect1("rows")
-                    self.spacer()
+                    self._collect1("rows")
+                    self._spacer()
                 case TransformType.VALUE_COUNTS:
-                    self.spacer()
-                    self.collect_value_counts(field_name)
+                    self._spacer()
+                    self._collect_value_counts(field_name)
                 case TransformType.TEXT_VALUE_COUNTS:
-                    self.spacer()
-                    self.collect_value_counts(field_name, is_text=True)
+                    self._spacer()
+                    self._collect_value_counts(field_name, is_text=True)
                 case TransformType.LIST_VALUE_COUNTS:
-                    self.spacer()
-                    self.collect1(field_name, "elements")
-                    self.collect1(field_name, "elements_per_row", "max")
-                    self.collect1(field_name, "rows_with_elements")
-                    self.collect_value_counts(field_name)
+                    self._spacer()
+                    self._collect1(field_name, "elements")
+                    self._collect1(field_name, "elements_per_row", "max")
+                    self._collect1(field_name, "rows_with_elements")
+                    self._collect_value_counts(field_name)
                 case DurationTransform(_, _):
-                    self.spacer()
-                    self.collect1(field_name, quantity="count")
-                    self.collect1(field_name, quantity="min")
-                    self.collect1(field_name, quantity="mean")
-                    self.collect1(field_name, quantity="max")
-                    self.collect1(
+                    self._spacer()
+                    self._collect1(field_name, quantity="count")
+                    self._collect1(field_name, quantity="min")
+                    self._collect1(field_name, quantity="mean")
+                    self._collect1(field_name, quantity="max")
+                    self._collect1(
                         field_name, entity="null_bc_negative", quantity="count"
                     )
                 case ValueCountsPlusTransform(_, other_field):
-                    self.spacer()
-                    self.collect_value_counts(field_name)
+                    self._spacer()
+                    self._collect_value_counts(field_name)
 
-                    with self.spacer_on_demand():
+                    with self._spacer_on_demand():
                         entity = (
                             "with_end_date" if other_field.startswith("end_date")
                             else f"with_{other_field}"
                         )
-                        self.collect_value_counts(field_name, entity=entity)
+                        self._collect_value_counts(field_name, entity=entity)
                 case TransformType.DECISION_TYPE:
                     for count in range(16):
                         suffix = []
@@ -700,7 +738,7 @@ class _Summarizer:
                             if count & (1 << shift) != 0:
                                 suffix.append(column[_DECISION_OFFSET:_DECISION_OFFSET+3])
 
-                        self.collect1(
+                        self._collect1(
                             field_name,
                             entity="_".join(suffix) if count != 0  else "is_null",
                         )
@@ -767,23 +805,16 @@ class _Summarizer:
     def summarize(self, frame: pl.DataFrame) -> _Summary:
         """Summarize the data frame."""
         for index, tag in enumerate(get_tags(frame)):
-            with self.tagged_frame(tag, frame) as this:
+            with self._tagged_frame(tag, frame) as this:
                 if index == 0:
                     this._summary_intro(frame, tag)
 
-                this.spacer()
-                this.spacer()
-                if tag is None:
-                    t = tag
-                elif tag.startswith("STATEMENT_CATEGORY_"):
-                    t = tag[len("STATEMENT_CATEGORY_"):]
-                elif tag.startswith("KEYWORD_"):
-                    t = tag[len("KEYWORD_"):]
-                else:
-                    t = tag
+                this._spacer()
+                this._spacer()
+                t = humanize(tag)
                 this._summary.append((_Tag(t), _Tag(t)))
-                this.spacer()
-                this.summarize_fields()
+                this._spacer()
+                this._summarize_fields()
 
         return self._summary
 
@@ -905,6 +936,9 @@ class Statistics:
         self._file = file
         self._frames = list(frames)
         self._collector = None
+        # Cache monthly and total aggregations
+        self._monthly = None
+        self._total = None
 
     @classmethod
     def builtin(cls) -> Self:
@@ -1008,10 +1042,25 @@ class Statistics:
         self._collector = None
         return frame
 
+    def monthly(self) -> pl.DataFrame:
+        if self._monthly is None:
+            self._monthly = self.frame().group_by(
+                pl.col("start_date").dt.year().alias("year"),
+                pl.col("start_date").dt.month().alias("month"),
+                pl.col("tag", "platform", "column", "entity", "variant", "text"),
+            ).agg(*aggregates())
+        return self._monthly
+
+    def total(self) -> pl.DataFrame:
+        if self._total is None:
+            self._total = self.frame().group_by(
+                pl.col("tag", "platform", "column", "entity", "variant", "text"),
+            ).agg(*aggregates())
+        return self._total
+
     def is_empty(self) -> bool:
         """Determine whether this instance has no data."""
-        frame = self.frame()
-        return frame.height == 0
+        return self.frame().height == 0
 
     def __contains__(self, date: None | dt.date | Daily) -> bool:
         """
@@ -1045,7 +1094,7 @@ class Statistics:
     def collect(
         self,
         release: Release,
-        frame: pl.DataFrame | pl.LazyFrame,
+        frame: pl.DataFrame,
         tag: None | str = None,
         metadata_entry: None | MetadataEntry = None,
     ) -> None:
@@ -1056,6 +1105,9 @@ class Statistics:
         """
         if self._collector is None:
             self._collector = Collector()
+            # Null out cached monthly and total aggregations
+            self._monthly = None
+            self._total = None
         self._collector.collect(release, frame, tag=tag, metadata_entry=metadata_entry)
 
     def append(self, frame: pl.DataFrame) -> None:
@@ -1063,6 +1115,9 @@ class Statistics:
         Append the data frame with summary statistics. Use `collect()` for
         frames with transparency database data.
         """
+        # Null out cached monthly and total aggregations
+        self._monthly = None
+        self._total = None
         self._frames.append(
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         )

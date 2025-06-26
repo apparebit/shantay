@@ -17,7 +17,6 @@ from .progress import NO_PROGRESS, Progress
 # logic to be contained.
 import polars
 type DataFrameType = polars.DataFrame
-type LazyFrameType = polars.LazyFrame
 del polars
 
 
@@ -538,7 +537,7 @@ class CollectorProtocol(Protocol):
     def collect(
         self,
         release: Release,
-        frame: DataFrameType | LazyFrameType,
+        frame: DataFrameType,
         tag: None | str = None,
         metadata_entry: None | MetadataEntry = None,
     ) -> None:
