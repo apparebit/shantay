@@ -415,8 +415,8 @@ class StatementsOfReasons(Dataset):
         metadata_entry: MetadataEntry,
         collector: CollectorProtocol,
     ) -> None:
-        count = sum(1 for _ in root.glob(release.batch_glob))
-        glob = f"{root}/{release.batch_glob}"
+        count = sum(1 for _ in (root / release.directory).glob(release.batch_glob))
+        glob = f"{root}/{release.directory}/{release.batch_glob}"
         _logger.debug(
             'summarizing release="%s", file-count=%d, glob="%s"', release, count, glob
         )

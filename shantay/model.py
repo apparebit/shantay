@@ -190,7 +190,7 @@ class Daily(Release):
     @property
     def batch_glob(self) -> str:
         """Get a glob for all batch files for the release."""
-        return f"{self.year}/{self.month:02}/{self.day:02}/{self.id}-?????.parquet"
+        return f"{self.id}-?????.parquet"
 
     def to_first_full_month(self) -> "Monthly":
         monthly = Monthly(self.year, self.month)
