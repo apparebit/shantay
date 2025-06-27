@@ -1,14 +1,14 @@
 from collections.abc import Iterator
 import datetime as dt
-import hashlib
 import json
 import logging
 from pathlib import Path
 import re
 import shutil
-from typing import Callable, cast, Literal, Self
+from typing import Callable, cast, Self
 
 # from .framing import below within method
+from .digest import compute_digest, read_digest_file, write_digest_file
 from .model import (
     Coverage, DateRange, DIGEST_FILE, FullMetadataEntry, MetadataConflict,
     MetadataEntry, Release
@@ -223,34 +223,6 @@ class Metadata[R: Release]:
         return f"Metadata({self._category}, {len(self._releases):,} releases)"
 
 
-def read_digest_file(directory: Path) -> dict[str, str]:
-    """Read the text file with a list of batchfile digests."""
-    digests = {}
-    with open(directory / DIGEST_FILE, mode="r", encoding="utf8") as file:
-        for line in file.readlines():
-            digest, batchfile = line.strip().split(" ")
-            digests[batchfile] = digest
-    return digests
-
-
-def write_digest_file(directory: Path, digests: dict[str, str]) -> None:
-    """Write the text file with the list of batchfile digests."""
-    path = directory / DIGEST_FILE
-    tmp = path.with_suffix(".tmp.txt")
-
-    with open(tmp, mode="w", encoding="utf8") as file:
-        for batchfile, digest in digests.items():
-            file.write(f"{digest} {batchfile}\n")
-
-    tmp.replace(path)
-
-
-def compute_digest(path: Path, algo: Literal["sha1", "sha256"] = "sha256") -> str:
-    """Compute the batchfile digest."""
-    with open(path, mode="rb") as file:
-        return hashlib.file_digest(file, algo).hexdigest()
-
-
 def fsck(
     root: Path,
     *,
@@ -425,7 +397,7 @@ class _Fsck:
         self.check_children(day, batches, 0, 99_999, lambda n: int(n[-13:-8]))
 
         try:
-            expected_digests = read_digest_file(day)
+            expected_digests = read_digest_file(day / DIGEST_FILE)
         except FileNotFoundError:
             expected_digests = None
         actual_digests = {}
@@ -452,7 +424,7 @@ class _Fsck:
 
         if error_count == len(self._errors) and expected_digests is None:
             # Only write a new digest file if there were no errors and no file.
-            write_digest_file(day, actual_digests)
+            write_digest_file(day / DIGEST_FILE, actual_digests)
 
         if self._metadata._category is None and 0 < batch_no:
             self.update_category(f"{day}/*.parquet")
