@@ -11,6 +11,7 @@ from urllib.request import Request, urlopen
 import zipfile
 
 from .__init__ import __version__
+from .digest import validate_digests
 from .metadata import compute_digest, Metadata
 from .model import (
     CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
@@ -243,7 +244,7 @@ class Processor[R: Release]:
                 self._storage.the_extract_root / meta_json
             )
 
-    def distill_category_release(self, release: Daily) -> None:
+    def distill_category_release(self, release: Daily, cleanup: bool = True) -> None:
         if (
             release in self._metadata
             and distilled_category_exists(
@@ -265,7 +266,8 @@ class Processor[R: Release]:
             )
             raise
 
-        shutil.rmtree(self._storage.staging_root / release.parent_directory)
+        if cleanup:
+            shutil.rmtree(self._storage.staging_root / release.parent_directory)
         self._progress.perform(f"distilled {release.id}").done()
         return
 
@@ -564,6 +566,36 @@ class Processor[R: Release]:
             shutil.copy(source_dir / batch, target_dir / batch)
             self._progress.step(index)
 
+    def stage_category_data(self, release: Daily) -> None:
+        batch_count = self._metadata[release]["batch_count"]
+        if self.category_data_exists(self._storage.staging_root, release):
+            return
+
+        self.copy_category_data(
+            self._storage.the_extract_root,
+            self._storage.staging_root,
+            release,
+            batch_count,
+        )
+        _logger.info('staged extract for release="%s"', release)
+
+        digest = self._metadata[release].get("sha256")
+        if digest is not None:
+            try:
+                validate_digests(
+                    self._storage.staging_root / release.directory,
+                    release.batch_glob,
+                    self._storage.staging_root / release.directory / DIGEST_FILE,
+                    digest,
+                )
+            except ValueError as x:
+                _logger.error(
+                    'could not validate extract for release="%s"', release, exc_info=x
+                )
+                raise
+
+        _logger.info('validated extract for release="%s"', release)
+
     def summarize_category(self) -> DataFrameType:
         """Analyze the data distilled into the extract root."""
         # Prepare metadata for analysis
@@ -592,9 +624,13 @@ class Processor[R: Release]:
                 )
                 break
 
-            with self._progress.nested():
-                self.distill_category_release(release)
+            if not distilled_category_exists(
+                self._storage.the_extract_root, release, self._metadata
+            ):
+                with self._progress.nested():
+                    self.distill_category_release(release, cleanup=False)
             self.summarize_category_release(release, self._metadata[release], stats)
+
             # While collecting summary statistics, Shantay generates hundreds of
             # data frames, many with just one row. However, concatenation in
             # Pola.rs doesn't seem to have linear performance and gets stuck
@@ -617,14 +653,18 @@ class Processor[R: Release]:
         collector: CollectorProtocol,
     ) -> None:
         """Analyze the category-specific data for the given release."""
+        self.stage_category_data(release)
+
         assert isinstance(self._coverage.category, str)
         self._dataset.summarize_release(
-            root=self._storage.the_extract_root,
+            root=self._storage.staging_root,
             release=release,
             category=self._coverage.category,
             metadata_entry=metadata_entry,
             collector=collector
         )
+
+        shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
     def summarize_database(self) -> DataFrameType:
         """Analyze the full data set."""
