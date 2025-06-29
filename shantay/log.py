@@ -48,6 +48,7 @@ class LogMessage:
             if sep == '':
                 if index != 0 or len(parts) != 1:
                     raise ValueError(f'malformed log message "{s}"')
+                key = key.strip()
                 if key:
                     prefix = key
                 break
@@ -70,7 +71,10 @@ class LogMessage:
                 elif value.lower() == "true":
                     value = True
             else:
-                value = int(value)
+                try:
+                    value = int(value)
+                except ValueError:
+                    value = float(value)
 
             props[key] = value
 
@@ -118,8 +122,10 @@ class LogMessage:
             if value is None:
                 value ='""'
             elif isinstance(value, bool):
-                value = f'"{value}"'
+                value = f'"{value}"'.lower()
             elif isinstance(value, int):
+                value = f'{value}'
+            elif isinstance(value, float):
                 value = f'{value}'
             else:
                 value = f'"{value}"'
