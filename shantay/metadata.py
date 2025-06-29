@@ -14,7 +14,7 @@ from .model import (
     MetadataEntry, Release
 )
 from .progress import NO_PROGRESS, Progress
-from .schema import normalize_category
+from .schema import is_category_file
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -171,11 +171,8 @@ class Metadata[R: Release]:
         """
         files = []
         for file in directory.glob("*.json"):
-            try:
-                normalize_category(file.stem)
+            if is_category_file(file.stem):
                 files.append(file)
-            except ValueError:
-                pass
 
         if len(files) == 0:
             raise FileNotFoundError(

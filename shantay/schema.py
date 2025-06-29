@@ -1000,6 +1000,14 @@ TextColumns = (
 # ======================================================================================
 
 
+_CATEGORY_FILE_NAMES = frozenset(
+    c[len("STATEMENT_CATEGORY_"):].lower().replace("_", "-") for c in StatementCategory
+)
+
+def is_category_file(name: str) -> bool:
+    return name in _CATEGORY_FILE_NAMES
+
+
 @overload
 def normalize_category(category: None) -> None: ...
 
