@@ -1,5 +1,4 @@
 from collections import Counter
-import hashlib
 import logging
 import os
 from pathlib import Path
@@ -11,8 +10,10 @@ from urllib.request import Request, urlopen
 import zipfile
 
 from .__init__ import __version__
-from .digest import validate_digests
-from .metadata import compute_digest, Metadata
+from .digest import (
+    compute_digest, read_digest_file, validate_digests, write_digest_file
+)
+from .metadata import Metadata
 from .model import (
     CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
     DownloadFailed, MetadataEntry, Release, Storage
@@ -420,25 +421,22 @@ class Processor[R: Release]:
             expected = expected[:expected.index(" ")]
 
         algo = digest.suffix[1:]
-        self._validate_digest(archive, algo, expected)
+        if algo not in ("sha1", "sha256"):
+            raise ValueError(f"invalid digest algorithm {algo}")
+
+        actual = compute_digest(archive, algo=algo)
+        if actual != expected:
+            _logger.error(
+                'failed to validate file="%s", algo="%s", expected="%s", actual="%s"',
+                archive, algo, digest, actual
+            )
+            raise ValueError(
+                f'{archive} should have {algo} digest {digest} but has {actual}'
+            )
+
         _logger.info(
             'validated release="%s", file="%s", digest="%s"',
             release.id, archive, expected
-        )
-
-    def _validate_digest(self, path: Path, algo: str, digest: str) -> None:
-        with open(path, mode="rb") as file:
-            actual = hashlib.file_digest(file, algo).hexdigest()
-
-        if digest == actual:
-            return
-
-        _logger.error(
-            'failed to validate file="%s", algo="%s", expected="%s", actual="%s"',
-            path, algo, digest, actual
-        )
-        raise ValueError(
-            f'{path} should have {algo} digest {digest} but has {actual}'
         )
 
     @annotate_error(filename_arg="target")
@@ -505,7 +503,7 @@ class Processor[R: Release]:
         self._progress.start(batch_count)
 
         # Archived files are archives, too. Unarchive one at a time.
-        batch_digests = []
+        batch_digests = {}
         full_counters = Counter(batch_count=batch_count)
         for index, name in enumerate(filenames):
             check_not_cancelled()
@@ -520,7 +518,7 @@ class Processor[R: Release]:
                 category=self._coverage.category,
                 progress=self._progress
             )
-            batch_digests.append(digest)
+            batch_digests[f"{release.id}-{index:05}.parquet"] = digest
             full_counters += counters
 
             # The complete CSV data may take up 100 GB of disk space. So we need
@@ -529,9 +527,7 @@ class Processor[R: Release]:
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
         digest_file = self._storage.staging_root / release.directory / DIGEST_FILE
-        with open(digest_file, mode="w", encoding="utf8") as file:
-            for index, digest in enumerate(batch_digests):
-                file.write(f"{digest} {release.id}-{index:05}.parquet\n")
+        write_digest_file(digest_file, batch_digests)
 
         self._progress.perform(f"updating batch metadata for release {release.id}")
         meta_data_entry = cast(MetadataEntry, dict(full_counters))
@@ -645,26 +641,18 @@ class Processor[R: Release]:
 
     def summarize_category(self) -> DataFrameType:
         """Analyze the data distilled into the extract root."""
-        # Prepare metadata for analysis
-        if self._offline:
-            range = self._metadata.range.intersection(
-                self._coverage.to_date_range(), empty_ok=False
-            ).dailies()
-        else:
-            range = self._coverage.to_date_range().dailies()
-
         # Prepare progress tracker
         self._progress.activity(
             "summarizing category data", "summarizing category", "batch", with_rate=False
         )
-        self._progress.start(range.last - range.first + 1)
+        self._progress.start(self._coverage.last - self._coverage.first + 1)
 
         stats = Statistics(self.stats_file)
 
-        for index, release in enumerate(range):
+        for index, release in enumerate(self._coverage):
             # Ensure graceful termination in offline mode
             if self._offline and not self.is_archive_downloaded(release):
-                _logger.debug(
+                _logger.info(
                     'stopping due to missing archive in offline mode '
                     'for task="summarize-category", release="%s"',
                     release.id
@@ -866,7 +854,12 @@ class Processor[R: Release]:
 def distilled_category_exists(root: Path, release: Daily, metadata: Metadata) -> bool:
     """Determine whether all batch files exist under the given root directory."""
     path = root / release.directory
-    for index in range(metadata.batch_count(release)):
-        if not (path / release.batch_file(index)).exists():
-            return False
+    batch_count = sum(1 for _ in path.glob(release.batch_glob))
+    if batch_count == 0:
+        return False
+    if not (path / DIGEST_FILE).exists():
+        return False
+    if batch_count != len(read_digest_file(path / DIGEST_FILE)):
+        return False
+
     return True
