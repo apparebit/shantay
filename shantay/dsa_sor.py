@@ -53,8 +53,6 @@ def empty_list_to_null(column: str) -> pl.Expr:
     )
 
 
-
-
 class StatementsOfReasons(Dataset):
 
     @property
@@ -79,7 +77,7 @@ class StatementsOfReasons(Dataset):
         index: int,
         name: str,
         progress: Progress = NO_PROGRESS,
-    ) -> pl.DataFrame:
+    ) -> tuple[Counter, pl.DataFrame]:
         path = root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
@@ -92,7 +90,15 @@ class StatementsOfReasons(Dataset):
             progress=progress
         )
         self._validate_schema(frame)
-        return frame
+
+        counter = Counter(
+            total_rows=frame.height,
+            total_rows_with_keywords=frame.select(
+                pl.col("category_specification").is_not_null().sum()
+            ).item(),
+        )
+
+        return counter, frame
 
     @annotate_error(filename_arg="root")
     def distill_category_data(
@@ -134,7 +140,9 @@ class StatementsOfReasons(Dataset):
         with open(path, mode="rb") as file:
             digest = hashlib.file_digest(file, "sha256").hexdigest()
 
-        return digest, self._assemble_frame_counters(frame, total_rows, total_rows_with_keywords)
+        return digest, self._assemble_frame_counters(
+            frame, total_rows, total_rows_with_keywords
+        )
 
     def get_total_row_counts(
         self, csv_files: str, index: int, name: str
@@ -394,7 +402,7 @@ class StatementsOfReasons(Dataset):
     ) -> Counter:
         batch_rows = frame.height
         batch_rows_with_keywords = frame.select(
-            (0 < pl.col("category_specification").list.len()).sum()
+            pl.col("category_specification").is_not_null().sum(),
         ).item()
 
         return Counter(
@@ -440,22 +448,3 @@ class StatementsOfReasons(Dataset):
                 )
             )
             collector.collect(release, csam, tag=KeywordChildSexualAbuseMaterial)
-
-    @annotate_error(filename_arg="root")
-    def combine_releases(
-        self, root: Path, stats_file: str, collector: CollectorProtocol
-    ) -> pl.DataFrame:
-        _logger.debug('combining daily statistics into a single data frame')
-        frame = collector.frame(validate=True).sort(
-            pl.col("start_date"),
-            maintain_order=True,
-        ).rechunk()
-
-        _logger.debug(f'writing combined statistics to "{stats_file}"')
-        self.write_parquet(frame, root / stats_file)
-        return frame
-
-    def write_parquet(self, frame: pl.DataFrame, path: Path) -> None:
-        tmp = path.with_suffix(".tmp.parquet")
-        frame.write_parquet(tmp)
-        tmp.replace(path)

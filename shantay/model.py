@@ -589,7 +589,7 @@ class Dataset(metaclass=ABCMeta):
         index: int,
         name: str,
         progress: Progress = NO_PROGRESS,
-    ) -> DataFrameType:
+    ) -> tuple[Counter, DataFrameType]:
         """Ingest unfiltered, uncompressed data."""
 
     @abstractmethod
@@ -617,18 +617,6 @@ class Dataset(metaclass=ABCMeta):
         """
         Analyze a release's data. The release period need not be the original
         release period and, in fact, is likely to be coarser.
-        """
-
-    @abstractmethod
-    def combine_releases(
-        self,
-        root: Path,
-        stats_file: str,
-        collector: CollectorProtocol,
-    ) -> DataFrameType:
-        """
-        Combine the analysis results. The release period is the same as for
-        analysis. This method may return more than one named data frame.
         """
 
 

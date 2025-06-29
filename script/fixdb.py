@@ -134,7 +134,7 @@ def recompute(storage: Storage, release: Daily) -> tuple[int, int, int, int]:
         progress.step(index, "unarchive data")
         processor.unarchive_file(storage.staging_root, release, index, name)
 
-        frame = dataset.ingest_database_data(
+        frame, counter = dataset.ingest_database_data(
             root=storage.staging_root,
             release=release,
             index=index,
@@ -142,10 +142,8 @@ def recompute(storage: Storage, release: Daily) -> tuple[int, int, int, int]:
             progress=progress,
         )
 
-        total_rows1 += frame.height
-        total_rows_with_keywords1 += frame.select(
-            pl.col("category_specification").is_not_null().sum()
-        ).item()
+        total_rows1 += counter["total_rows"]
+        total_rows_with_keywords1 += counter["total_rows_with_keywords"]
 
         path = storage.staging_root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"

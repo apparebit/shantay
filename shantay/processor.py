@@ -642,9 +642,26 @@ class Processor[R: Release]:
                 stats.write(self._storage.staging_root)
             self._progress.step(index + 1, extra=release.id)
 
-        return self._dataset.combine_releases(
-            self._storage.the_extract_root, self.stats_file, stats
+        meta_json = f"{self._coverage.stem()}.json"
+        Metadata.copy_json(
+            self._storage.staging_root / meta_json,
+            self._storage.the_extract_root / meta_json
         )
+
+        _logger.info(
+            'writing rechunked summary statistics to file="%s"',
+            self._storage.staging_root / self.stats_file
+        )
+        stats.write(self._storage.staging_root, should_finalize=True)
+
+        _logger.info(
+            'copying summary statistics to extract file="%s"',
+            self._storage.the_extract_root / self.stats_file
+        )
+        Statistics.copy(
+            self.stats_file, self._storage.staging_root, self._storage.the_extract_root
+        )
+        return stats.frame()
 
     def summarize_category_release(
         self,
@@ -741,6 +758,8 @@ class Processor[R: Release]:
         )
         self._progress.start(batch_count)
 
+        full_counts = Counter(batch_count=batch_count)
+
         # Archived files are archives, too. Unarchive one at a time.
         for index, name in enumerate(filenames):
             check_not_cancelled()
@@ -748,13 +767,15 @@ class Processor[R: Release]:
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
 
-            frame = self._dataset.ingest_database_data(
+            counts, frame = self._dataset.ingest_database_data(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
                 name=name,
                 progress=self._progress
             )
+
+            full_counts += counts
 
             # Check_db_platforms only probes the data frame for hereto unknown
             # platform names, raising a MissingPlatformError with such names.
@@ -769,6 +790,11 @@ class Processor[R: Release]:
             # space for staging alone. Hence, we must aggressively clean up
             # temporary files again.
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
+
+        self._metadata[release] = cast(MetadataEntry, full_counts)
+        self._metadata.write_json(
+            self._storage.staging_root / f"{self._coverage.stem()}.json"
+        )
 
         # While not quite as big as the uncompressed data, the zipped release
         # can still weigh 8 GB. Hence we aggressively clean staged releases as
