@@ -1,5 +1,28 @@
 # Version History for Shantay
 
+## v0.4.0 (June 30, 2025)
+
+In addition to implementation clean-up and improvements, this release makes the
+following changes:
+
+  - When summarizing a category-specific subset of the DSA transparency
+    database, stage the extracted Parquet files before processing them.
+  - When summarizing the entire DSA transparency database, also generate a
+    metadata file.
+  - When distilling the database or when summarizing (part of) the database,
+    consistently write the metadata and summary statistics to the archive or
+    extract root only after completing the task.
+  - Do not require metadata to check whether a release has already been
+    distilled.
+  - Extend the `info` task to emit the coverage of metadata and summary
+    statistics in the staging directory as well.
+  - Remove `batch_memory` entry from summary statistics.
+    [fixmem.py](script/fixmem.py) patches existing metadata and summary
+    statistics.
+  - Add tests for summarizing the entire database as well as a category-specific
+    subset.
+
+
 ## v0.3.0 (June 24, 2025)
 
 Shantay now collects richer statistics and produces far more compelling
