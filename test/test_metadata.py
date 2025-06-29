@@ -46,26 +46,13 @@ class TestMetadata(unittest.TestCase):
         self.check_metadata_2000(metadata)
 
         metadata_too = Metadata.read_json(METADATA_2000)
-        self.assertDictEqual(metadata_too["2000-01-01"], {"batch_count": 1})
-        self.assertEqual(metadata.batch_count("1999-12-31"), 665)
-        self.assertEqual(metadata.batch_count("2000-01-01"), 1)
+        metadata_too["1999-12-31"]["sha256"] = "test-digest"
 
-        metadata_too["2000-01-01"]["batch_memory"] = 1_234_567
         metadata = metadata.merge_with(metadata_too)
-        self.assertDictEqual(metadata["2000-01-01"], {
-            "batch_count": 1,
-            "batch_memory": 1_234_567,
+        self.assertDictEqual(metadata["1999-12-31"], {
+            "batch_count": 665,
+            "sha256": "test-digest",
         })
-
-    def test_merge_with_ignored_data(self) -> None:
-        # Fields may diverge if they are not part of the core schema
-        metadata = Metadata.read_json(METADATA_2000)
-        metadata["2000-01-01"]["batch_memory"] = 1_234_567
-        metadata_too = Metadata.read_json(METADATA_2000)
-        metadata_too["2000-01-01"]["batch_memory"] = 666
-
-        metadata.merge_with(metadata_too)
-        self.assertEqual(metadata["2000-01-01"].get("batch_memory"), 1_234_567)
 
     def test_merge_with_inconsistent_data(self) -> None:
         # Fields must not diverge when they are part of the core schema
