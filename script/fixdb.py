@@ -134,7 +134,7 @@ def recompute(storage: Storage, release: Daily) -> tuple[int, int, int, int]:
         progress.step(index, "unarchive data")
         processor.unarchive_file(storage.staging_root, release, index, name)
 
-        frame, counter = dataset.ingest_database_data(
+        counter, frame = dataset.ingest_database_data(
             root=storage.staging_root,
             release=release,
             index=index,
