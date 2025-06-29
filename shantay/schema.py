@@ -859,7 +859,7 @@ TRANSFORM_COUNT = sum(
 
 # For now, the universe of tags are all statement categories and keywords, with
 # each keyword implying the larger category as well.
-TagValueType = pl.Enum(tuple([*StatementCategory, *Keyword]))
+TagValueType = pl.Enum([*StatementCategory, *Keyword])
 
 
 PlatformValueType = pl.Enum(PlatformNames)
@@ -956,7 +956,8 @@ def _all_variants() -> list[str]:
         )
     )
 
-    return variants
+    # Impose well-defined order, since Pola.rs considers order for equality testing
+    return sorted(variants)
 
 
 VariantValueType = pl.Enum(_all_variants())
