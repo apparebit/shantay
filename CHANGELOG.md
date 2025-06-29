@@ -2,8 +2,8 @@
 
 ## v0.4.0 (June 30, 2025)
 
-In addition to implementation clean-up and improvements, this release makes the
-following changes:
+In addition to simplifying and refactoring the implementation, this release
+makes the following changes:
 
   - When summarizing a category-specific subset of the DSA transparency
     database, stage the extracted Parquet files before processing them.
