@@ -1,0 +1,13 @@
+{
+  "category": "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+  "releases": {
+    "2024-03-14": {
+      "batch_count": 2,
+      "total_rows": 202,
+      "total_rows_with_keywords": 13,
+      "batch_rows": 17,
+      "batch_rows_with_keywords": 2,
+      "sha256": "93240886158f6690bc0e41757ace39ce1e034ac32b013edddf56fe93ef9642c2"
+    }
+  }
+}
