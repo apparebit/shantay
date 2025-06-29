@@ -325,8 +325,6 @@ class TerritorialAlias(enum.StrEnum):
 
 type VariantNamesAndColors = dict[None | str, tuple[str, str]]
 
-_POISON = object()
-
 
 @dataclass(frozen=True, slots=True)
 class MetricDeclaration:
