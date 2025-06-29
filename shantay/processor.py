@@ -20,7 +20,7 @@ from .model import (
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
 from .schema import (
-    check_db_platforms, MissingPlatformError, update_platforms
+    check_db_platforms, is_category_file, MissingPlatformError, update_platforms
 )
 from .stats import Statistics
 from .util import annotate_error, scale_time
@@ -69,7 +69,8 @@ class Processor[R: Release]:
         _logger.info('    key="storage.extract_root", value="%s"',
             "" if self._storage.extract_root is None else self._storage.extract_root)
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="coverage.category",    value="%s"', self._coverage.category)
+        _logger.info('    key="coverage.category",    value="%s"',
+            "" if self._coverage.category is None else self._coverage.category)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency())
@@ -153,21 +154,35 @@ class Processor[R: Release]:
         # Archive Root
 
         emit_rule(strong=True)
-        if self._storage.archive_root is None:
-            emit_pair("archive.path", "<builtin>")
-            emit_rule()
-            emit_range("archive", "<builtin>", Statistics.builtin().range())
-        else:
+        emit_pair("archive.path", "<builtin>")
+        emit_rule()
+        emit_range("archive", "db.parquet", Statistics.builtin().range())
+
+        if self._storage.archive_root is not None:
+            emit_rule(strong=True)
             emit_pair("archive.path", str(self._storage.archive_root))
             emit_rule()
-            emit_range("archive", "file system", self._storage.coverage_of_archive())
+            emit_range("archive", "<file-system>", self._storage.coverage_of_archive())
 
-            emit_rule()
-            try:
-                stats = Statistics.read(self._storage.the_archive_root / "db.parquet")
-            except FileNotFoundError:
-                stats = None
-            emit_range("archive", "db.parquet", None if stats is None else stats.range())
+            path = self._storage.archive_root / "db.json"
+            if path.exists():
+                try:
+                    metarange = Metadata.read_json(path).range
+                except FileNotFoundError | ValueError:
+                    metarange = None
+
+                emit_rule()
+                emit_range("archive", "db.json", metarange)
+
+            path = self._storage.archive_root / "db.parquet"
+            if path.exists():
+                try:
+                    stats_range = Statistics.read(path).range()
+                except FileNotFoundError:
+                    stats_range = None
+
+                emit_rule()
+                emit_range("archive", "db.parquet", stats_range)
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Extract Root
@@ -176,37 +191,56 @@ class Processor[R: Release]:
             emit_rule(strong=True)
             emit_pair("extract.path", str(self._storage.extract_root))
             emit_rule()
-            emit_range("extract", "file system", self._storage.coverage_of_extract())
+            emit_range("extract", "<file-system>", self._storage.coverage_of_extract())
 
-            emit_rule()
             try:
                 metapath = Metadata.find_file(self._storage.extract_root)
-                metadata = Metadata.read_json(metapath)
             except FileNotFoundError:
                 metapath = None
-                metadata = None
-            emit_range(
-                "extract",
-                "n/a" if metapath is None else metapath.name,
-                None if metadata is None else metadata.range
-            )
+            if metapath is not None:
+                metarange = Metadata.read_json(metapath).range
 
-            emit_rule()
-            filename = f"{self._coverage.stem()}.parquet"
-            try:
-                stats = Statistics.read(self._storage.extract_root / filename)
-            except FileNotFoundError:
-                stats = None
-            emit_range("extract", filename, None if stats is None else stats.range())
+                emit_rule()
+                emit_range("extract", metapath.name, metarange)
+
+            path = self._storage.extract_root / f"{self._coverage.stem()}.parquet"
+            if path.exists():
+                stats_range = Statistics.read(path).range()
+
+                emit_rule()
+                emit_range("extract", path.name, stats_range)
+
+        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+        # Staging Root
 
         emit_rule(strong=True)
+        emit_pair("staging.path", str(self._storage.extract_root))
+
+        for file in sorted(self._storage.staging_root.glob("*.json")):
+            if file.name != "db.json" and not is_category_file(file.stem):
+                continue
+
+            try:
+                metarange = Metadata.read_json(file).range
+            except ValueError:
+                metarange = None
+
+            emit_rule()
+            emit_range("staging", file.name, metarange)
+
+        for file in sorted(self._storage.staging_root.glob("*.parquet")):
+            if file.name != "db.parquet" and not is_category_file(file.stem):
+                continue
+
+            emit_rule()
+            emit_range("staging", file.name, Statistics.read(file).range())
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Actually emit the output
 
         key_width = max(0 if k is None else len(k) for k in keys)
         value_width = max(0 if v in (1, 2) else len(v) for v in values)
-        width = key_width + 3 + value_width + 2
+        width = key_width + 3 + value_width
 
         for key, value in zip(keys, values):
             if key is None:
@@ -215,7 +249,7 @@ class Processor[R: Release]:
                 else:
                     line = '━' * width
             else:
-                line = f'{key:<{key_width}} = "{value}"'
+                line = f'{key:<{key_width}} = {value}'
 
             print(line)
             _logger.debug(line)
