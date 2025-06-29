@@ -396,14 +396,12 @@ class StatementsOfReasons(Dataset):
         batch_rows_with_keywords = frame.select(
             (0 < pl.col("category_specification").list.len()).sum()
         ).item()
-        batch_memory = frame.estimated_size()
 
         return Counter(
             total_rows=total_rows,
             total_rows_with_keywords=total_rows_with_keywords,
             batch_rows=batch_rows,
             batch_rows_with_keywords=batch_rows_with_keywords,
-            batch_memory=int(batch_memory),
         )
 
     @annotate_error(filename_arg="root")

@@ -479,7 +479,6 @@ class MetadataEntry(TypedDict, total=False):
     batch_count: Required[int]
     total_rows: Optional[int]
     batch_rows: Optional[int]
-    batch_memory: Optional[int]
     sha256: Optional[str]
 
     # Specific to DSA SoR DB

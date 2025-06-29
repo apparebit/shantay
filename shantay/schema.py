@@ -874,7 +874,6 @@ ColumnValueType = pl.Enum((
     "batch_count",
     "batch_rows",
     "batch_rows_with_keywords",
-    "batch_memory",
     "total_rows",
     "total_rows_with_keywords",
     "rows",

@@ -147,10 +147,6 @@ class TestDistill(unittest.TestCase):
             self.assertEqual(counters["batch_rows"], 8 + 9)
             self.assertEqual(counters["batch_rows_with_keywords"], 2 + 0)
 
-            memory = round(counters["batch_memory"] / 1_000)
-            self.assertLess(10, memory)
-            self.assertLess(memory, 30)
-
             self.assertTrue(batch1.exists())
             self.assertFileEqual(batch1, FIXTURE / release.batch_file(1))
 
@@ -271,7 +267,6 @@ EXPECTED_ANALYSIS = {
         "batch_count",
         "batch_rows",
         "batch_rows_with_keywords",
-        "batch_memory",
         "total_rows",
         "total_rows_with_keywords",
         "rows",
@@ -565,7 +560,6 @@ EXPECTED_ANALYSIS = {
         2,
         17,
         2,
-        21127,
         665,
         212,
         1,
@@ -1147,10 +1141,8 @@ EXPECTED_ANALYSIS = {
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
-        dt.date(2024, 3, 14),
     ],
     "entity": [
-        None,
         None,
         None,
         None,
@@ -1444,7 +1436,6 @@ EXPECTED_ANALYSIS = {
         None,
     ],
     "max": [
-        None,
         None,
         None,
         None,
@@ -1828,7 +1819,6 @@ EXPECTED_ANALYSIS = {
         0,
         0,
         0,
-        0,
         86582,
         0,
         0,
@@ -2032,7 +2022,6 @@ EXPECTED_ANALYSIS = {
         0,
     ],
     "min": [
-        None,
         None,
         None,
         None,
@@ -2326,7 +2315,6 @@ EXPECTED_ANALYSIS = {
         None,
     ],
     "platform": [
-        None,
         None,
         None,
         None,
@@ -2911,10 +2899,8 @@ EXPECTED_ANALYSIS = {
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
-        dt.date(2024, 3, 14),
     ],
     "tag": [
-        "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
@@ -3357,7 +3343,6 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
-        None,
         "Account",
         None,
         None,
@@ -3502,7 +3487,6 @@ EXPECTED_ANALYSIS = {
         None,
     ],
     "variant": [
-        None,
         None,
         None,
         None,

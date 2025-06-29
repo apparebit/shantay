@@ -149,15 +149,11 @@ class Metadata[R: Release]:
                 "total_rows_with_keywords",
                 "batch_rows",
                 "batch_rows_with_keywords",
-                "batch_memory",
                 "sha256",
             ):
                 # Copy over missing fields, check existing fields for consistency
                 if key not in entry1 and key in entry2:
                     entry1[key] = entry2[key] # type: ignore
-                elif key == "batch_memory":
-                    # Don't compare for equality since only an estimate
-                    pass
                 elif key in entry1 and key in entry2 and entry1[key] != entry2[key]: # type: ignore
                     mismatch = True
 

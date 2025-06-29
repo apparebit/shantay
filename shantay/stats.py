@@ -439,7 +439,6 @@ class Collector:
         pairs["batch_count"] = md.get("batch_count")
         pairs["batch_rows"] = self._source.height
         pairs["batch_rows_with_keywords"] = batch_rows_with_keywords
-        pairs["batch_memory"] = self._source.estimated_size()
         pairs["total_rows"] = self._source.height if tag is None else md.get("total_rows")
         pairs["total_rows_with_keywords"] = (
             batch_rows_with_keywords if tag is None
@@ -793,7 +792,6 @@ class _Summarizer:
             ("batch_rows_pct", batch_rows_pct),
             ("batch_rows_with_keywords", batch_kw_rows),
             ("batch_rows_with_keywords_pct", batch_rows_with_keywords_pct),
-            ("batch_memory", get_quantity(frame, "batch_memory", entity=None)),
             ("total_rows", total_rows),
             ("total_rows_with_keywords", total_kw_rows),
             ("total_rows_with_keywords_pct", total_rows_with_keywords_pct),
