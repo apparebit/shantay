@@ -268,15 +268,15 @@ class Processor[R: Release]:
             # Do the distillation
             self.distill_category_release(release)
 
-            # The staging root's category-specific metadata was merged with the
-            # extract's metadata during startup. Hence writing it back to the
-            # extract directory won't lead to data loss---as long as there are
-            # no concurrent writers!
-            meta_json = f"{self._coverage.stem()}.json"
-            Metadata.copy_json(
-                self._storage.staging_root / meta_json,
-                self._storage.the_extract_root / meta_json
-            )
+        # The staging root's category-specific metadata was merged with the
+        # extract's metadata during startup. Hence writing it back to the
+        # extract directory won't lead to data loss---as long as there are
+        # no concurrent writers!
+        meta_json = f"{self._coverage.stem()}.json"
+        Metadata.copy_json(
+            self._storage.staging_root / meta_json,
+            self._storage.the_extract_root / meta_json
+        )
 
     def distill_category_release(self, release: Daily, cleanup: bool = True) -> None:
         if (
@@ -451,10 +451,18 @@ class Processor[R: Release]:
         target_dir = target / release.parent_directory
         digest = self._dataset.digest_name(release)
         archive = self._dataset.archive_name(release)
+        digest_path = target_dir / digest
+        archive_path = target_dir / archive
 
         target_dir.mkdir(parents=True, exist_ok=True)
-        shutil.copy(source_dir / digest, target_dir / digest)
-        shutil.copy(source_dir / archive, target_dir / archive)
+
+        if archive_path.exists():
+            raise ValueError(f"cannot copy over existing {archive_path}")
+        shutil.copy(source_dir / archive, archive_path)
+
+        if digest_path.exists():
+            raise ValueError(f"cannot copy over existing {digest_path}")
+        shutil.copy(source_dir / digest, digest_path)
 
     def stage_archive(self, release: Daily) -> None:
         """
@@ -597,7 +605,12 @@ class Processor[R: Release]:
         shutil.copy(source_dir / DIGEST_FILE, target_dir / DIGEST_FILE)
         for index in range(count):
             batch = release.batch_file(index)
-            shutil.copy(source_dir / batch, target_dir / batch)
+
+            target_path = target_dir / batch
+            if target_path.exists():
+                raise ValueError(f"cannot copy over existing {target_path}")
+            shutil.copy(source_dir / batch, target_path)
+
             self._progress.step(index)
 
     def stage_category_data(self, release: Daily) -> None:
@@ -761,6 +774,12 @@ class Processor[R: Release]:
                 raise
             _logger.debug('writing summary statistics to file="%s"', staged)
             stats.write(self._storage.staging_root)
+
+        meta_json = f"{self._coverage.stem()}.json"
+        Metadata.copy_json(
+            self._storage.staging_root / meta_json,
+            self._storage.the_archive_root / meta_json
+        )
 
         # Rewrite saved statistics after rechunking and copy to persistent root
         _logger.info('writing rechunked summary statistics to file="%s"', staged)

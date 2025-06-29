@@ -9,10 +9,12 @@ import sys
 import time
 import traceback
 from types import FrameType
-from typing import Any
+from typing import Any, cast
 
 from .metadata import Metadata
-from .model import Coverage, Daily, DataFrameType, Dataset, MetadataEntry, Storage
+from .model import (
+    Coverage, Daily, DataFrameType, Dataset, FullMetadataEntry, MetadataEntry, Storage
+)
 from .pool import Cancelled, check_not_cancelled, Pool, Task, WorkerProgress
 from .processor import distilled_category_exists, Processor
 from .schema import MissingPlatformError, update_platforms
@@ -68,11 +70,13 @@ class Multiprocessor:
 
         _logger.info('running multiprocessor with pid=%d, task="%s"', _PID, task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
-        _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root)
+        _logger.info('    key="storage.archive_root", value="%s"',
+            "" if self._storage.archive_root is None else self._storage.archive_root)
         _logger.info('    key="storage.extract_root", value="%s"',
             "" if self._storage.extract_root is None else self._storage.extract_root)
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="coverage.category",    value="%s"', self._coverage.category)
+        _logger.info('    key="coverage.category",    value="%s"',
+            "" if self._coverage.category is None else self._coverage.category)
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency())
@@ -89,11 +93,12 @@ class Multiprocessor:
         elif task == "distill":
             cover = self._coverage.to_date_range()
         elif task == "summarize-category":
-            # Intersect desired data range with available date range
-            self._stats = Statistics(self.stats_file)
+            self._stats = Statistics.from_storage(
+                self.stats_file,
+                self._storage.staging_root,
+                self._storage.the_extract_root,
+            )
             cover = self._coverage.to_date_range()
-            if self._offline:
-                cover = cover.intersection(self._metadata.range)
         elif task == "summarize-all":
             self._stats = Statistics.from_storage(
                 self.stats_file,
@@ -119,6 +124,17 @@ class Multiprocessor:
         _logger.info('    key="iter.last",            value="%s"', cover.last)
 
         self._pool.run(self._task_iter(), self._done_with_task)
+
+        if task in ("distill", "summarize-category"):
+            meta_json = f"{self._coverage.stem()}.json"
+            Metadata.copy_json(
+                self._storage.staging_root / meta_json,
+                self._storage.the_extract_root / meta_json)
+        elif task == "summarize-all":
+            Metadata.copy_json(
+                self._storage.staging_root / "db.json",
+                self._storage.the_archive_root / "db.json",
+            )
 
         if task.startswith("summarize"):
             assert self._stats is not None
@@ -262,36 +278,36 @@ class Multiprocessor:
         if task.kwargs["task"] == "download":
             pass
         elif task.kwargs["task"] == "distill":
-            release = result["release"]
-            del result["release"]
-            self._metadata[release] = result
-
-            # Since distillation starts out with the extract root's metadata,
-            # it's ok to write back the extended metadata. We protect against
-            # concurrent updates by first writing to a temporay file and then
-            # atomically replace the old file with newly written one. While that
-            # ensures the integrity of the file, it cannot prevent dataloss if
-            # multiple Shantay instance are running concurrently and clobber
-            # each others' updates.
-            meta_json = f"{self._coverage.stem()}.json"
-            meta_staging = self._storage.staging_root / meta_json
-            self._metadata.write_json(meta_staging, sort_keys=True)
-            Metadata.copy_json(meta_staging, self._storage.the_extract_root / meta_json)
+            release = self._update_metadata(result)
 
             # If distill was scheduled as part of summarize, schedule summarization
             if self._task == "summarize-category":
                 self._continuations.append(release)
         elif task.kwargs["task"].startswith("summarize"):
-            assert self._stats is not None
-            self._stats.append(result)
+            if result[0] is not None:
+                self._update_metadata(result[0])
 
-            # By the same logic as for copying the metadata for extract, we
-            # could also copy the summary statistics to the persistent root.
-            # However, that file should be optimized (rechunked), so we only
-            # copy upon completion.
+            assert self._stats is not None
+            self._stats.append(result[1])
+
+            # This method executes in coordinator and writes to coordinator's
+            # staging, making it safe to update the file.
             self._stats.write(self._storage.staging_root)
         else:
             raise AssertionError(f"invalid task {self._task}")
+
+    def _update_metadata(self, entry: FullMetadataEntry) -> Daily:
+        release = entry["release"]
+        del entry["release"] # pyright: ignore[reportGeneralTypeIssues]
+        self._metadata[release] = entry
+
+        # This method runs in the coordinator and uses the coordinator's
+        # staging, making this write safe.
+        meta_json = f"{self._coverage.stem()}.json"
+        meta_staging = self._storage.staging_root / meta_json
+        self._metadata.write_json(meta_staging, sort_keys=True)
+
+        return cast(Daily, release)
 
     def stop(self) -> None:
         assert self._pool is not None
@@ -427,17 +443,16 @@ def _run_on_worker(
         result = None
     if task == "distill":
         processor.distill_category_release(release)
-        record = metadata[release]
-        result = dict(**record, release=release)
+        result = metadata[release] | dict(release=release)
     elif task == "summarize-all":
         collector = Collector()
         processor.summarize_database_release(release, collector)
-        result = collector.frame()
+        result = metadata[release] | dict(release=release), collector.frame()
     elif task == "summarize-category":
         assert metadata_entry is not None
         collector = Collector()
         processor.summarize_category_release(release, metadata_entry, collector)
-        result = collector.frame()
+        result = None, collector.frame()
     else:
         raise AssertionError(f"invalid task {task}")
 
