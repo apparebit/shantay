@@ -62,8 +62,7 @@ class Progress:
         self._timestamp = self._timer()
         self._processed = 0
         self._total = None
-        self._samples = 0
-        self._rate = 0
+        self._rate = None
 
     @property
     def _prefix(self) -> str:
@@ -89,7 +88,6 @@ class Progress:
         saved_timestamp = self._timestamp
         saved_processed = self._processed
         saved_total = self._total
-        saved_samples = self._samples
         saved_rate = self._rate
 
         self._reset_activity()
@@ -105,7 +103,6 @@ class Progress:
             self._timestamp = saved_timestamp
             self._processed = saved_processed
             self._total = saved_total
-            self._samples = saved_samples
             self._rate = saved_rate
 
     def activity(self, description: str, label: str, unit: str, with_rate: bool) -> Self:
@@ -146,9 +143,9 @@ class Progress:
                 rate = (processed - self._processed) / duration
                 self._processed = processed
                 self._timestamp = timestamp
-
-                self._samples +=1
-                self._rate += (rate - self._rate) / self._samples
+                self._rate = (
+                    rate if self._rate is None else 0.7 * rate + 0.3 * self._rate
+                )
 
         # Format progress bar or fallback
         msg = f"{self._prefix}{self._label} "
@@ -167,7 +164,7 @@ class Progress:
             columns += len(s)
 
         # Add rate
-        if self._with_rate and self._rate != 0:
+        if self._with_rate and self._rate is not None:
             value, prefix = scale(self._rate)
             s = f" at {value:,.1f} {prefix}{self._unit}/s"
             if columns + len(s) < self._size[0]:
