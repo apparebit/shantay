@@ -61,8 +61,13 @@ DOC_HEAD = """\
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<title>The DSA Transparency Database</title>
-<meta property="og:article:published_time" content="{0}">
+<title>{title}</title>
+<meta property="og:type" content="object">
+<meta property="og:image" content="https://repository-images.githubusercontent.com/937380800/32d2e3d9-26a4-4fc1-b79c-497865a5176d">
+<meta property="og:image:alt" content="Leigh Bowery wearing a floral dress, matching face mask, and Pickelhaube">
+<meta property="og:title" content="{title}">
+<meta property="og:description" content="A comprehensive report on the contents of the EU's DSA transparency database">
+<meta property="og:article:published_time" content="{time}">
 """
 
 DOC_SCRIPTS = """\
@@ -364,7 +369,7 @@ class Visualizer:
         if self._renderer.plain and (hn := HTML_HEADLINE.fullmatch(markup)) is not None:
             self._renderer.md(f"{'#' * int(hn.group(1))} {hn.group(2)}")
         else:
-            self._renderer.html(markup)
+            self._renderer.html(FRAME_STYLE.sub("", markup))
 
         assert self._document is not None
         self._document.write(markup)
@@ -479,16 +484,10 @@ class Visualizer:
         with open(path, mode="w", encoding="utf8") as document:
             try:
                 self._document = document
-                document.write(DOC_HEAD.format(self._timestamp.isoformat()))
-                if self.emit_interactive_charts():
-                    document.write(DOC_SCRIPTS)
-                document.write(DOC_STYLE)
-                document.write("</head>\n<body>\n<main>\n")
-
-                self.render_heading()
+                title = self.render_head()
+                self.render_intro(title)
                 self.render_charts()
                 self.render_tables()
-
                 document.write(DOC_FOOTER)
             finally:
                 self._document = None
@@ -626,12 +625,30 @@ class Visualizer:
             top[:top_num] + ["Meta", *meta_platforms, *select_platforms]
         )
 
-    def render_heading(self) -> None:
-        _logger.debug('render heading')
+    def render_head(self) -> str:
+        _logger.debug('render HTML <head>')
 
         main_tag = self._tags[0]
         description = "All Data" if main_tag is None else humanize(main_tag)
-        self.html(f'<h1>The DSA Transparency Database: {description}</h1>')
+        title = f"The DSA Transparency Database: {description}"
+
+        self.html(DOC_HEAD.format(
+            time=self._timestamp.isoformat(),
+            title=title,
+        ))
+        if self.emit_interactive_charts():
+            self.html(DOC_SCRIPTS)
+        self.html(DOC_STYLE)
+        self.html("</head>")
+
+        return title
+
+    def render_intro(self, title: str) -> None:
+        _logger.debug('render introduction')
+        main_tag = self._tags[0]
+
+        self.html(f'<body>\n<main>')
+        self.html(f'<h1>{title}</h1>')
 
         row = self._statistics.frame().lazy().select(
             pl.col("count").filter(predicate("batch_rows", tag=main_tag)).sum()
