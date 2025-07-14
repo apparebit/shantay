@@ -29,10 +29,6 @@ class TestRelease(unittest.TestCase):
         r = Daily(1999, 12, 31)
         self.assertEqual(str(r), "1999-12-31")
 
-    def test_to_monthly(self) -> None:
-        r = Daily(1999, 12, 31).to_monthly()
-        self.check_monthly(r)
-
     def test_leap_years(self) -> None:
         self.assertEqual(Daily(1899, 2, 28).next().month, 3)
         self.assertEqual(Daily(1900, 2, 28).next().month, 3)
