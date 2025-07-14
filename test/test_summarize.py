@@ -9,6 +9,7 @@ from shantay.metadata import Metadata
 from shantay.model import Coverage, Daily, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
+from shantay.stats import Statistics
 
 
 ROOT = Path(__file__).parent
@@ -71,11 +72,12 @@ class TestSummarize(unittest.TestCase):
         frame2 = pl.read_parquet(ARCHIVE / "db.parquet")
         self.assertFrameEqual(frame1, frame2)
 
-        frame2 = pl.read_parquet(FIXTURE / "db.parquet")
+        # By indirecting through Statistics.read, we ensure that the type of the
+        # fixture's platform column is up to date.s
+        frame2 = Statistics.read(FIXTURE / "db.parquet").frame()
         self.assertFrameEqual(frame1, frame2)
 
-        self.assertFileEqual(STAGING / "db.parquet", FIXTURE / "db.parquet")
-        self.assertFileEqual(ARCHIVE / "db.parquet", FIXTURE / "db.parquet")
+        self.assertFileEqual(STAGING / "db.parquet", ARCHIVE / "db.parquet")
 
     def test_summarize_category(self):
         dataset = StatementsOfReasons()
@@ -103,14 +105,12 @@ class TestSummarize(unittest.TestCase):
         frame2 = pl.read_parquet(EXTRACT / "protection-of-minors.parquet")
         self.assertFrameEqual(frame1, frame2)
 
-        frame2 = pl.read_parquet(FIXTURE / "protection-of-minors.parquet")
+        # By indirecting through Statistics.read, we ensure that the type of the
+        # fixture's platform column is up to date.s
+        frame2 = Statistics.read(FIXTURE / "protection-of-minors.parquet").frame()
         self.assertFrameEqual(frame1, frame2)
 
         self.assertFileEqual(
             STAGING / "protection-of-minors.parquet",
-            FIXTURE / "protection-of-minors.parquet",
-        )
-        self.assertFileEqual(
             EXTRACT / "protection-of-minors.parquet",
-            FIXTURE / "protection-of-minors.parquet",
         )
