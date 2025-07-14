@@ -62,6 +62,7 @@ PlatformNames = (
     "Adobe Photoshop Express",
     "Adobe Stock",
     "AGODA",
+    "Airbnb",
     "Akciós-újság.hu",
     "AliExpress",
     "Amazon",
@@ -77,6 +78,7 @@ PlatformNames = (
     "Behance",
     "BigBang.si",
     "BlaBlaCar",
+    "bol.com",
     "bolha.com",
     "Booking.com",
     "Bumble",
@@ -91,6 +93,7 @@ PlatformNames = (
     "Dailymotion",
     "DATEV Marktplatz",
     "DATEV SmartExperts",
+    "De Morgen Shop",
     "Deliveroo Ireland",
     "Delivery Hero",
     "Discord",
@@ -99,6 +102,7 @@ PlatformNames = (
     "e15",
     "eBay",
     "eJobs",
+    "ElitePartner",
     "EMAG.BG",
     "EMAG.HU",
     "EMAG.RO",
@@ -111,6 +115,7 @@ PlatformNames = (
     "G2.com",
     "Garmin",
     "Gastrojobs",
+    "GitHub",
     "Glassdoor",
     "Google Maps",
     "Google Play",
@@ -122,6 +127,7 @@ PlatformNames = (
     "happn",
     "Használtautó.hu",
     "Hinge",
+    "HLN Shop",
     "Hornbach",
     "Hostelworld.com",
     "Hotel Hideaway",
@@ -132,11 +138,15 @@ PlatformNames = (
     "IMDb",
     "imobiliare.ro",
     "Imovirtual",
+    "Indeed",
+    "Infojobs.net",
     "ingatlan.com",
     "Ingatlanbazár",
     "Instagram",
     "irishjobs.ie",
     "JetBrains",
+    "JetBrains Marketplace",
+    "jobs.cz",
     "jobs.ie",
     "Joom",
     "Kaggle",
@@ -146,19 +156,26 @@ PlatformNames = (
     "leboncoin",
     "Ligaportal",
     "LinkedIn",
+    "Livios Forum",
     "ManoMano",
+    "MATY",
     "Meetic",
     "Microsoft Operations",
     "Microsoft Store",
     "Microsoft Teams",
+    "Mijnvergelijker",
     "Milanuncios.com",
     "Mimiaukce",
+    "Mimibazar",
     "Mindmegette",
     "mobile.de",
+    "MORE.COM",
     "nebenan.de",
     "Nebius AI",
+    "Njuskalo Turizam",
     "Njuškalo.hr",
     "Nosalty",
+    "NPM",
     "OKCupid",
     "OLX",
     "Other Meta Product",
@@ -181,6 +198,7 @@ PlatformNames = (
     "ResearchGate",
     "rezeptwelt.de",
     "Roblox",
+    "Samsung Galaxy Store",
     "Samsung PENUP",
     "SAP",
     "SE LOGER",
@@ -190,14 +208,17 @@ PlatformNames = (
     "SME Blog",
     "Snapchat",
     "SoundCloud",
+    "Spaargids Forum",
     "Spark Networks",
     "Standvirtual",
     "Startlap",
+    "StayFriends",
     "Stepstone",
     "Streamate.com",
     "Stripchat",
     "Studydrive",
     "TAZZ",
+    "Telegram",
     "Telia Yhteisö",
     "Temu",
     "Tenor",
@@ -213,22 +234,29 @@ PlatformNames = (
     "Udemy",
     "Vacation Rentals",
     "Vareni.cz",
+    "Veepee",
     "Vestiaire Collective",
     "Viator",
+    "Videa",
+    "Videakid",
     "Vimeo",
     "Vinted",
+    "Vrbo.com",
     "VSCO",
     "Wallapop",
     "Waze",
     "WhatsApp",
+    "Wikipower",
     "willhaben",
     "Wizz",
     "X",
     "Xbox Store",
     "Xbox.com",
+    "XVideos",
     "YouTube",
     "Yubo",
     "Zalando",
+    "Zenga",
     "Živě.cz",
 )
 
@@ -245,13 +273,16 @@ CanonicalPlatformNames = MappingProxyType({
     "HORNBACH Marktplatz, Smart Home by HORNBACH": "Hornbach",
     "Hostelworld.com Limited": "Hostelworld.com",
     "Meetic SAS": "Meetic",
+    "Mijnvergelijker / Comparateur": "Mijnvergelijker",
     "Microsoft Ireland Operations Limited": "Microsoft Operations",
     "Microsoft Store on Windows (PC App Store)": "Microsoft Store",
     "Microsoft Teams personal": "Microsoft Teams",
+    "MORE.COM ΗΛΕΚΤΡΟΝΙΚΕΣ ΥΠΗΡΕΣΙΕΣ": "MORE.COM",
     "Other Meta Platforms Ireland Limited-offered Products": "Other Meta Product",
     "OTTO Market": "OTTO",
     "Quora Ireland Limited": "Quora",
     "www.rentalia.com": "rentalia.com",
+    "Samsung Galaxy App Store": "Samsung Galaxy Store",
     "SAP Community": "SAP",
     "SFDC Ireland Limited": "SFDC",
     'SIA "JOOM"': "Joom",
@@ -267,7 +298,7 @@ CanonicalPlatformNames = MappingProxyType({
 
 
 class MissingPlatformError(Exception):
-    """An exception indicating that previously unknown platform names."""
+    """An exception indicating unknown platform names."""
 
 
 _KNOWN_PLATFORM_NAMES: frozenset[str] = frozenset(PlatformNames)
@@ -296,43 +327,32 @@ def sync_web_platforms() -> Literal["skipped", "mtime", "disk", "memory"]:
     return update_platforms(new_names)
 
 
-def check_db_platforms(release: str, batch: int, frame: Any) -> None:
+def check_db_platforms(path: Path, frame: Any) -> None:
     """
     Check the data frame with transparency data for previously unknown platform
     names and raise a missing platform error with any unknown names.
     """
-    import polars as pl
-    used_names = frame.select(
-        pl.col("platform_name").unique()
-    ).get_column("platform_name")
-
-    unknown_names = to_canonical_platforms(used_names) - _KNOWN_PLATFORM_NAMES
-    if len(unknown_names) == 0:
-        return
-    for name in unknown_names:
-        _logger.warning(
-            'new platform in release="%s", batch=%d, name="%s"', release, batch, name
-        )
-
-    raise MissingPlatformError(unknown_names, release, batch)
+    _check_platforms(path, frame, "platform_name")
 
 
-def check_stats_platforms(frame: Any) -> None:
+def check_stats_platforms(path: Path, frame: Any) -> None:
     """
     Check the data frame with summary statistics for previously unknown platform
     names and raise a missing platform error with any unknown names.
     """
+    _check_platforms(path, frame, "platform")
+
+
+def _check_platforms(path: Path, frame: Any, column: str) -> None:
     import polars as pl
-    used_names = frame.select(
-        pl.col("variant").filter(pl.col("column").eq("platform_name")).unique()
-    ).get_column("variant")
+    used_names = frame.select(pl.col(column).drop_nulls().unique()).get_column(column)
 
     unknown_names = to_canonical_platforms(used_names) - _KNOWN_PLATFORM_NAMES
     if len(unknown_names) == 0:
         return
     for name in unknown_names:
         _logger.warning(
-            'new platform in summary statistics with name="%s"', name
+            'new platform in column="%s", path="%s", name="%s"', column, path, name
         )
 
     raise MissingPlatformError(unknown_names)
@@ -344,7 +364,7 @@ _PLATFORM_FILE = Path.home() / ".shantay" / "platforms.json"
 def update_platforms(names: Iterable[str]) -> Literal["mtime", "disk", "memory"]:
     """
     Update the persistent list of platform names with the given names. After
-    converting the given names to their canonical versions, this function read
+    converting the given names to their canonical versions, this function reads
     the list of known platform names from persistent storage, merges the two
     lists, and writes out the combined list if it is any different.
 
@@ -478,3 +498,61 @@ def _did_import_unsafe_modules() -> bool:
         if f"{pkg}.{mod}" in sys.modules:
             return True
     return False
+
+
+_MODULE_PARTS = re.compile(
+    r"""
+    ^
+    (?P<prefix>.*?)
+    PlatformNames [ ][=][ ][(][\n]
+        (?P<names>.*?)
+    [\n][)]
+    (?P<suffix>.*)
+    $
+    """,
+    re.VERBOSE | re.DOTALL
+)
+
+
+def _update_self() -> None:
+    """
+    Update this module's source code with the current platform names. This
+    function always updates this module's source code. However, unless the
+    platform names have been updated since the last distribution of Shantay,
+    doing so effectively is a no-op.
+
+    DO NOT EVEN THINK OF INVOKING THIS FUNCTION!
+    """
+    # Read this module's source code
+    path = Path(__file__)
+    source = path.read_text(encoding="utf8")
+    parts = _MODULE_PARTS.match(source)
+    assert parts is not None
+
+    # Prepare the updated source code
+    prefix = parts.group("prefix")
+    listing = "\n".join(f'    "{n}",' for n in PlatformNames)
+    suffix = parts.group("suffix")
+
+    # Write out this module's source code
+    tmp = path.with_suffix(".tmp.py")
+    tmp.write_text(f"{prefix}PlatformNames = (\n{listing}\n){suffix}", encoding="utf8")
+    tmp.replace(path)
+
+
+if __name__ == "__main__":
+    # Configure logging
+    logging.Formatter.default_msec_format = "%s.%03d"
+    logging.basicConfig(
+        format='%(asctime)s︙%(process)d︙%(name)s︙%(levelname)s︙%(message)s',
+        filename="shantay.log",
+        encoding="utf8",
+        level=logging.DEBUG,
+    )
+
+    # Sync platform names
+    action = sync_web_platforms()
+    assert action != "disk"
+
+    # Update this module's source code
+    _update_self()
