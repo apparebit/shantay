@@ -25,6 +25,11 @@ del polars
 
 
 class Period(metaclass=ABCMeta):
+    """
+    The abstract base for all entities with specific start and end dates.
+    Concrete subclasses include daily and monthly releases, release ranges, and
+    date ranges.
+    """
 
     @property
     @abstractmethod
@@ -33,6 +38,16 @@ class Period(metaclass=ABCMeta):
     @property
     @abstractmethod
     def end_date(self) -> dt.date: ...
+
+    @property
+    def date(self) -> None | dt.date:
+        """Get the only date, if this period covers just one day. Otherwise,
+        return None."""
+        return self.start_date if self.start_date == self.end_date else None
+
+    def date_range(self) -> "DateRange":
+        """Get this period's date range."""
+        return DateRange(self.start_date, self.end_date)
 
 
 _RELEASE = re.compile(r"(?P<year>[0-9]{4})-(?P<month>[0-9]{2})(?:-(?P<day>[0-9]{2}))?")
@@ -88,11 +103,6 @@ class Release(Period):
 
     @property
     @abstractmethod
-    def date(self) -> None | dt.date:
-        """The only date if this release is a daily one. Otherwise `None`."""
-
-    @property
-    @abstractmethod
     def parent_directory(self) -> Path:
         """The parent directory"""
 
@@ -114,9 +124,6 @@ class Release(Period):
     @property
     @abstractmethod
     def batch_glob(self) -> str: ...
-
-    @abstractmethod
-    def to_monthly(self) -> "Monthly": ...
 
     @abstractmethod
     def next(self) -> Self: ...
@@ -204,9 +211,6 @@ class Daily(Release):
             monthly = monthly.previous()
         return monthly
 
-    def to_monthly(self) -> "Monthly":
-        return Monthly(self.year, self.month)
-
     def __sub__(self, other: object) -> int:
         if type(other) is Daily:
             return (
@@ -290,9 +294,6 @@ class Monthly(Release):
         """Get a glob for all batch files for the release."""
         return f"{self.year}/{self.month:02}/??/{self.year}-{self.month:02}-??-?????.parquet"
 
-    def to_monthly(self) -> Self:
-        return self
-
     def previous(self) -> Self:
         year = self.year
         month = self.month - 1
@@ -325,7 +326,7 @@ class ReleaseRange[R: Release](Period):
     last: R
 
     def __post_init__(self) -> None:
-        assert self.first <= self.last
+        assert self.first <= self.last, "first must come before last"
 
     @property
     def duration(self) -> int:
@@ -338,15 +339,6 @@ class ReleaseRange[R: Release](Period):
     @property
     def end_date(self) -> dt.date:
         return self.last.end_date
-
-    def date_range(self) -> 'DateRange':
-        return DateRange(self.start_date, self.end_date)
-
-    def to_monthly(self) -> "ReleaseRange[Monthly]":
-        if self.first.frequency == "monthly":
-            return cast(ReleaseRange[Monthly], self)
-        else:
-            return ReleaseRange(self.first.to_monthly(), self.last.to_monthly())
 
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
@@ -380,9 +372,6 @@ class DateRange(Period):
         """
         return self.last
 
-    def __contains__(self, day: dt.date) -> bool:
-        return self.first <= day <= self.last
-
     # Explicitly passing empty_ok=False buys us a tighter return type
     @overload
     def intersection(self, other: Self, *, empty_ok: Literal[False]) -> Self:
@@ -409,16 +398,6 @@ class DateRange(Period):
         """Compute the union between two date ranges."""
         return type(self)(min(self.first, other.first), max(self.last, other.last))
 
-    def __and__(self, other: object) -> None | Self:
-        if isinstance(other, type(self)):
-            return self.intersection(other)
-        return NotImplemented
-
-    def __or__(self, other: object) -> Self:
-        if isinstance(other, type(self)):
-            return self.union(other)
-        return NotImplemented
-
     def uncovered_near_past(self) -> None | Self:
         """
         Compute the date range following this date range up to two days before
@@ -428,7 +407,7 @@ class DateRange(Period):
         last = dt.date.today() - dt.timedelta(days=3)
         return type(self)(first, last) if first <= last else None
 
-    def to_tuple(self) -> tuple[dt.date, dt.date]:
+    def to_limits(self) -> tuple[dt.date, dt.date]:
         """Convert the date range to a tuple of the first and last dates."""
         return self.first, self.last
 
@@ -442,6 +421,19 @@ class DateRange(Period):
             Daily.of(self.first).to_first_full_month(),
             Daily.of(self.last).to_last_full_month(),
         )
+
+    def __and__(self, other: object) -> None | Self:
+        if isinstance(other, type(self)):
+            return self.intersection(other)
+        return NotImplemented
+
+    def __or__(self, other: object) -> Self:
+        if isinstance(other, type(self)):
+            return self.union(other)
+        return NotImplemented
+
+    def __len__(self) -> int:
+        return (self.last - self.first).days + 1
 
     def __iter__(self) -> Iterator[dt.date]:
         cursor = self.first
@@ -491,7 +483,7 @@ class FullMetadataEntry(MetadataEntry):
 
 
 @dataclass(frozen=True, slots=True)
-class Coverage[R: Release]:
+class Coverage[R: Release](Period):
     """The matter of interest."""
 
     first: R
@@ -499,15 +491,23 @@ class Coverage[R: Release]:
     category: None | str
 
     @classmethod
-    def of(cls, range: ReleaseRange, category: None | str) -> Self:
+    def of(cls, range: ReleaseRange, category: None | str = None) -> Self:
         return cls(range.first, range.last, category)
+
+    def __post_init__(self) -> None:
+        assert self.first <= self.last
+
+    @property
+    def start_date(self) -> dt.date:
+        return self.first.start_date
+
+    @property
+    def end_date(self) -> dt.date:
+        return self.last.end_date
 
     def frequency(self) -> Literal["daily", "monthly"]:
         assert self.first.frequency == self.last.frequency
         return self.first.frequency
-
-    def __post_init__(self) -> None:
-        assert self.first <= self.last
 
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
@@ -519,9 +519,6 @@ class Coverage[R: Release]:
 
     def __len__(self) -> int:
         return self.last - self.first + 1
-
-    def to_date_range(self) -> DateRange:
-        return DateRange(self.first.start_date, self.last.end_date)
 
     def stem(self) -> str:
         return "db" if self.category is None else file_stem_for(self.category)
@@ -646,42 +643,42 @@ def _select_dir_entries(
     )
 
 
-def _find_coverage_date(
-    directory: Path,
-    position: Literal["first", "last"],
-    day_pattern: re.Pattern,
-    day_key: Callable[[Path], int],
-) -> None | dt.date:
-    index = 0 if position == "first" else -1
+def _find_coverage(directory: Path, is_extract: bool) -> None | DateRange:
+    day_pattern = _TWO_DIGITS if is_extract else _ARCHIVE
+    day_key = _file_as_number if is_extract else _archive_as_number
 
     years = _select_dir_entries(directory, _FOUR_DIGITS, _file_as_number)
-    if len(years) == 0:
+    year_number = len(years)
+    if year_number == 0:
         return None
-    months = _select_dir_entries(years[index], _TWO_DIGITS, _file_as_number)
-    if len(months) == 0:
+    months = _select_dir_entries(years[0], _TWO_DIGITS, _file_as_number)
+    month_number = len(months)
+    if month_number == 0:
         return None
-    days = _select_dir_entries(months[index], day_pattern, day_key)
+    days = _select_dir_entries(months[0], day_pattern, day_key)
     if len(days) == 0:
         return None
 
-    return dt.date(
-        _file_as_number(years[index]),
-        _file_as_number(months[index]),
-        day_key(days[index]),
+    first = dt.date(
+        _file_as_number(years[0]),
+        _file_as_number(months[0]),
+        day_key(days[0])
     )
 
+    if 1 < year_number:
+        months = _select_dir_entries(years[-1], _TWO_DIGITS, _file_as_number)
+        if len(months) == 0:
+            return None
+    if 1 < year_number or 1 == year_number and 1 < month_number:
+        days = _select_dir_entries(months[-1], day_pattern, day_key)
+        if len(days) == 0:
+            return None
 
-def _find_coverage(directory: Path, is_extract: bool) -> None | DateRange:
-    pattern = _TWO_DIGITS if is_extract else _ARCHIVE
-    key = _file_as_number if is_extract else _archive_as_number
-
-    first = _find_coverage_date(directory, "first", pattern, key)
-    if first is None:
-        return None
-
-    last = _find_coverage_date(directory, "last", pattern, key)
-    if last is None:
-        return None
+    last = dt.date(
+        _file_as_number(years[-1]),
+        _file_as_number(months[-1]),
+        day_key(days[-1])
+    )
 
     return DateRange(first, last)
 
@@ -721,6 +718,14 @@ class Storage:
         if self.extract_root is None:
             raise ValueError('no extract root available')
         return self.extract_root
+
+    @property
+    def best_available_root(self) -> Path:
+        if self.extract_root is not None:
+            return self.extract_root
+        if self.archive_root is not None:
+            return self.archive_root
+        return self.staging_root
 
     def coverage_of_archive(self) -> None | DateRange:
         """Determine the date coverage of the archive based on directory names."""
