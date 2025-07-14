@@ -1,6 +1,7 @@
 from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable
 import datetime as dt
+from io import StringIO
 import logging
 from pathlib import Path
 import re
@@ -12,10 +13,10 @@ import mistune
 import polars as pl
 
 from .color import (
-    BLUE, GRAY, GREEN, LIGHT_BLUE, ORANGE, PINK, PURPLE, RED
+    BLUE, CYAN, GRAY, GREEN, LIGHT_BLUE, ORANGE, PURPLE, RED
 )
 from .framing import (
-    aggregates, is_row_within_period, NOT_NULL, predicate
+    aggregates, is_row_within_period, NO_ARGUMENT_PROVIDED, NOT_NULL, predicate
 )
 from .model import ConfigError, Coverage, file_stem_for, Storage
 from .schema import (
@@ -25,7 +26,7 @@ from .schema import (
     DecisionTypeMetric, DecisionVisibilityMetric, humanize,
     IncompatibleContentIllegalMetric, InformationSourceMetric,
     KeywordChildSexualAbuseMaterial, make_metric, MetaPlatforms, MetricDeclaration,
-    PlatformValueType, ProcessingDelayMetric, SCHEMA,
+    ModerationDelayMetric, PlatformValueType, ProcessingDelayMetric, SCHEMA,
     StatementCategoryProtectionOfMinors, StatementCountMetric, TerritorialScopeMetric,
     TextColumns
 )
@@ -48,13 +49,14 @@ FRAME_CLASS = re.compile(r'<table class="dataframe">')
 FRAME_QUOT = re.compile(r"&quot;")
 FRAME_SHAPE = re.compile(r"<small>shape:[^<]*</small>")
 FRAME_STYLE = re.compile(r"<style>[^<]*</style>")
+FRAME_HEAD = re.compile(r"<thead>.*?</thead>")
 FRAME_EOL = re.compile(
     r"(<thead>|<tbody>|<tr>|</th>|</td>|</tr>|</thead>|</tbody>|</table>)"
 )
 
 SVG_ATTRIBUTES = re.compile(r' class="marks" width="[0-9]+" height="[0-9]+"')
 
-DOC_HEADER = """\
+DOC_HEAD = """\
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -63,7 +65,13 @@ DOC_HEADER = """\
 <meta property="og:article:published_time" content="{0}">
 """
 
-DOC_HEADER_TOO = """\
+DOC_SCRIPTS = """\
+<script src="https://cdn.jsdelivr.net/npm/vega@6"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-lite@6"></script>
+<script src="https://cdn.jsdelivr.net/npm/vega-embed@7"></script>
+"""
+
+DOC_STYLE = """\
 <style>
 /* ----------------------------------- General ----------------------------------- */
 *::before, *, *::after {
@@ -78,27 +86,34 @@ DOC_HEADER_TOO = """\
     --white: #f5f5f8;
 }
 body {
-    margin: 3rem;
+    margin: 3rem 0.5rem;
 }
 
 svg {
     display: block;
 }
+.vega-embed {
+    display: block !important;
+}
 
-main > :where(details, h1, h2, h3, ol, p, svg, table, ul) {
+main > :where(details, div, h1, h2, h3, ol, p, svg, table, ul, .vega-embed) {
     margin-left: auto;
     margin-right: auto;
 }
 
-main > :where(details, h1, h2, h3, ol, p, ul) { max-width:  75rch; }
-main > :where(table)                          { max-width:  90rch; }
-main > :where(svg)                            { max-width: 100rch; }
+main > :where(details, div, h1, h2, h3, ol, p, ul) {
+    max-width:  75rch;
+}
+main > :where(table) { max-width:  90rch; }
+main > :where(.vega-embed) { width: 100rch; }
+main > :where(svg)   { max-width: 100rch; }
 
 h2 {
     margin-top: 3rem;
 }
-svg + :where(div, svg, table) {
-    margin-top: 1.5rem;
+
+:where(div, script, svg, table) + :where(div, svg, table) {
+    margin-top: 2.5rem;
 }
 
 /* ----------------------------------- Table ----------------------------------- */
@@ -135,9 +150,9 @@ thead > tr {
 }
 thead > tr:last-of-type > :where(th, td) {
     padding-bottom: 0.35em;
+    border-top: solid 0.15em var(--black);
 }
 tbody > tr:first-of-type > :where(th, td) {
-    border-top: solid 0.15em var(--black);
     padding-top: 0.35em;
 }
 tbody > tr:nth-child(even) {
@@ -165,10 +180,9 @@ tbody > tr.highlight > td {
     text-align: center;
 }
 </style>
-</head>
-<body>
-<main>
 """
+
+CHART_OPTIONS = '{"renderer": "canvas", "actions": true}'
 
 DOC_FOOTER = """\
 </main>
@@ -231,7 +245,7 @@ class Renderer(metaclass=ABCMeta):
     def frame(self, frame: pl.DataFrame) -> None: ...
 
     @abstractmethod
-    def chart(self, name: str, chart: Chart) -> None: ...
+    def chart(self, name: str, chart: str | Chart) -> None: ...
 
 
 TAG = re.compile(r"<[^>]+>")
@@ -254,8 +268,11 @@ class PlainTextRenderer(Renderer):
         print(frame)
         print()
 
-    def chart(self, name: str, chart: Chart) -> None:
-        chart.save(self._charts / name)
+    def chart(self, name: str, chart: str | Chart) -> None:
+        if isinstance(chart, str):
+            (self._charts / name).write_text(chart, encoding="utf8")
+        else:
+            chart.save(self._charts / name)
 
 
 try:
@@ -281,9 +298,12 @@ else:
         def frame(self, frame: pl.DataFrame) -> None:
             display(frame) # pyright: ignore[reportOptionalCall]
 
-        def chart(self, name: str, chart: Chart) -> None:
+        def chart(self, name: str, chart: str | Chart) -> None:
             display(chart) # pyright: ignore[reportOptionalCall]
-            chart.save(self._charts / name)
+            if isinstance(chart, str):
+                (self._charts / name).write_text(chart, encoding="utf8")
+            else:
+                chart.save(self._charts / name)
 
 
 # --------------------------------------------------------------------------------------
@@ -310,24 +330,20 @@ class Visualizer:
         self._chart_num = 0
         self._is_meta = False
 
+    def emit_interactive_charts(self) -> bool:
+        return False
+
+    def timeline_width(self) -> int | str:
+        return TIMELINE_WIDTH
+
+    def timeline_height(self, short: bool = False) -> int:
+        return TIMELINE_HEIGHT * (2 // 3 if short else 1)
+
     def has_all_sors(self) -> bool:
         return self._coverage.category is None
 
     def is_monthly(self) -> bool:
         return self._frequency == "monthly"
-
-    @property
-    def persistent_root(self) -> Path:
-        """
-        Get root directory for the current visualization. If neither the archive
-        nor extract root are available, the staging root will do as well.
-        """
-        root = (
-            self._storage.archive_root
-            if self.has_all_sors()
-            else self._storage.extract_root
-        )
-        return root or self._storage.staging_root
 
     @staticmethod
     def configure_display() -> None:
@@ -352,7 +368,7 @@ class Visualizer:
 
         assert self._document is not None
         self._document.write(markup)
-        self._document.write("\n\n")
+        self._document.write("\n\n\n")
 
     def markdown(
         self,
@@ -376,7 +392,7 @@ class Visualizer:
         hn = HTML_HEADLINE.match(html)
         if not disclosure or hn is None:
             self._document.write(html)
-            self._document.write("\n\n")
+            self._document.write("\n\n\n")
             return
 
         summary = hn.group(2)
@@ -384,7 +400,7 @@ class Visualizer:
         self._document.write("<details>\n")
         self._document.write(f"<summary>{summary}</summary>\n")
         self._document.write(html)
-        self._document.write("</details>\n\n")
+        self._document.write("</details>\n\n\n")
 
     def frame(
         self,
@@ -392,6 +408,7 @@ class Visualizer:
         caption: None | str = None,
         klass: None | str = None,
         with_index: bool = True,
+        with_head: bool = True,
     ) -> None:
         if with_index:
             frame = frame.with_row_index(offset=1)
@@ -409,6 +426,8 @@ class Visualizer:
         html = FRAME_QUOT.sub("", html)
         html = FRAME_SHAPE.sub("", html)
         html = FRAME_STYLE.sub("", html)
+        if not with_head:
+            html = FRAME_HEAD.sub("", html)
         html = html.replace("<td>", "  <td>").replace("<th>", "  <th>")
         html = FRAME_EOL.sub(r"\1\n", html)
         html = html.replace("<td>null</td>", "<td></td>")
@@ -417,31 +436,54 @@ class Visualizer:
         self._document.write("\n\n\n")
 
     def chart(self, name: str, chart: Chart) -> None:
-        filename = f"{self.chartno()}-{name}.svg"
-        self._renderer.chart(filename, chart)
+        if self.emit_interactive_charts():
+            self.dynamic_chart(name, chart)
+        else:
+            self.svg_chart(name, chart)
 
-        with open(self._renderer.charts / filename, mode="r", encoding="utf8") as file:
-            svg = file.read()
+    def svg_chart(self, name: str, chart: Chart) -> None:
+        buffer = StringIO()
+        chart.save(buffer, format="svg")
+        svg = buffer.getvalue()
+
+        filename = f"{self.chartno()}-{name}.svg"
+        self._renderer.chart(filename, svg)
 
         if name != "keyword-pie":
             svg = SVG_ATTRIBUTES.sub("", svg)
 
         assert self._document is not None
         self._document.write(svg)
-        self._document.write("\n\n")
+        self._document.write("\n\n\n")
+
+    def dynamic_chart(self, name: str, chart: Chart) -> None:
+        filename = f"{self.chartno()}-{name}.svg"
+        self._renderer.chart(filename, chart)
+
+        id = f"chart-{self.chartno()}-{name}"
+        assert self._document is not None
+        self._document.write(f'<div id={id}></div>\n')
+        self._document.write('<script>\n')
+        self._document.write(
+            f'vegaEmbed("#{id}", {chart.to_json()}, {CHART_OPTIONS});\n'
+        )
+        self._document.write('</script>\n\n\n')
 
     # ==================================================================================
 
     def run(self) -> pl.DataFrame:
-        path = (self._storage.staging_root / f"{self._coverage.stem()}.html")
         self.configure_display()
         self.ingest()
 
+        path = (self._storage.staging_root / f"{self._coverage.stem()}.html")
         with open(path, mode="w", encoding="utf8") as document:
             try:
                 self._document = document
-                document.write(DOC_HEADER.format(self._timestamp.isoformat()))
-                document.write(DOC_HEADER_TOO)
+                document.write(DOC_HEAD.format(self._timestamp.isoformat()))
+                if self.emit_interactive_charts():
+                    document.write(DOC_SCRIPTS)
+                document.write(DOC_STYLE)
+                document.write("</head>\n<body>\n<main>\n")
 
                 self.render_heading()
                 self.render_charts()
@@ -454,20 +496,20 @@ class Visualizer:
         return self._statistics.frame()
 
     def ingest(self) -> None:
-        # Ingest summary statistics
-        path = self.persistent_root / f"{self._coverage.stem()}.parquet"
-        if not path.exists():
-            _logger.info('ingesting built-in statistics')
-            statistics = Statistics.builtin()
-        else:
-            _logger.info('ingesting statistics file="%s"', path)
+        path = self._storage.best_available_root / f"{self._coverage.stem()}.parquet"
+        try:
             statistics = Statistics.read(path)
+            _logger.info('using statistics file="%s"', path)
+        except FileNotFoundError:
+            _logger.info('using built-in statistics')
+            statistics = Statistics.builtin()
+            self._coverage = Coverage.of(statistics.date_range().dailies())
 
         # Capture frequency, tags, date range
         self._frequency = self._coverage.frequency()
         self._tags = get_tags(statistics.frame())
-        self._date_range = statistics.range().intersection(
-            self._coverage.to_date_range(), empty_ok=False
+        self._date_range = statistics.date_range().intersection(
+            self._coverage.date_range(), empty_ok=False
         ).monthlies().date_range() # Restrict to full months
 
         within_range = is_row_within_period(self._date_range)
@@ -545,7 +587,8 @@ class Visualizer:
                 pl.col(
                     "start_date", "end_date",
                     "tag", "column", "entity", "variant", "text"
-                )
+                ),
+                maintain_order=True,
             ).agg(
                 pl.lit(None, dtype=PlatformValueType).alias("platform"),
                 *aggregates()
@@ -638,12 +681,12 @@ class Visualizer:
         self.frame(
             pl.DataFrame({
                 "Description": [
-                    "Covers",
-                    "Out of",
-                    "Submitted by",
-                    "Over",
-                    "Including",
-                    "With",
+                    "covers",
+                    "out of",
+                    "submitted by",
+                    "over",
+                    "including",
+                    "with",
                 ],
                 "Quantity": [
                     batch_rows,
@@ -665,6 +708,7 @@ class Visualizer:
             caption="This Report…",
             klass="left-except-2",
             with_index=False,
+            with_head=False,
         )
 
         self.html(
@@ -933,10 +977,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             AutomatedDetectionMetric,
             AutomatedDecisionMetric,
             ProcessingDelayMetric,
+            "moderation-delays",
         ])
 
         for metric in metrics:
-            allow_cutoff = True
+            name = None
 
             if isinstance(metric, tuple):
                 caption, column = metric
@@ -946,12 +991,19 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                     klass="right-except-2-3",
                 )
                 continue
-            elif isinstance(metric, str):
-                assert metric == "keywords"
-                allow_cutoff = False
-                metric = self._keyword_metric.without_null()
 
-            chart = self.render_timeline(metric, tag, platform, allow_cutoff)
+            elif metric == "keywords":
+                metric = self._keyword_metric.without_null()
+                chart = self.render_timeline(metric, tag, platform, allow_cutoff=False)
+
+            elif metric == "moderation-delays":
+                metric = ModerationDelayMetric
+                chart = self.render_moderation_delays(tag, platform)
+
+            else:
+                assert isinstance(metric, MetricDeclaration)
+                chart = self.render_timeline(metric, tag, platform, allow_cutoff=True)
+
             if chart is None:
                 self.html(
                     f"<p><em>No Data Available on {metric.label}!</em></p>"
@@ -1018,6 +1070,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             monthly_table = table.group_by(
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
+                maintain_order=True,
             ).agg(
                 pl.col("start_date").first().dt.month_start().dt.offset_by("5d"),
                 pl.col("start_date").first().dt.month_end().dt.offset_by("-5d").alias("end_date"),
@@ -1038,7 +1091,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             title += f"{rolling_mean_days}-Day Rolling "
             title += "Percentage" if percentage else "Mean"
 
-        if rolling_mean_days is None:
+        if rolling_mean_days is None and not with_monthly_sum:
             chart = alt.Chart(table, title=title).mark_bar(color=GREEN, size=1.3)
         else:
             chart = alt.Chart(table, title=title).mark_line(color=GREEN, size=1.5)
@@ -1047,17 +1100,17 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if with_monthly_sum:
             daily_axis = "Daily " + daily_axis
         chart = chart.encode(
-            alt.X("start_date:T").scale(domain=self._date_range.to_tuple()).title("Date"),
+            alt.X("start_date:T").scale(domain=self._date_range.to_limits()).title("Date"),
             alt.Y(f"{source}:Q").title(daily_axis),
         ).properties(
-            height=TIMELINE_HEIGHT,
-            width=TIMELINE_WIDTH,
+            width=self.timeline_width(),
+            height=self.timeline_height(),
         )
 
         if with_monthly_sum:
             assert monthly_table is not None
             monthly = alt.Chart(monthly_table, title=title).mark_bar(
-                color=LIGHT_BLUE,
+                color=f"{CYAN}A0",
             ).encode(
                 alt.X("start_date:T"),
                 alt.X2("end_date:T"),
@@ -1210,11 +1263,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.Y("pct:Q").title("Percent (Statements of Reasons)"),
             alt.Color("Kind:N").scale(
                 domain=column_names,
-                range=[f"{PINK}A0" if with_monthly_mean else PINK, BLUE],
+                range=[BLUE, RED],
             ),
         ).properties(
-            height=TIMELINE_HEIGHT,
-            width=TIMELINE_WIDTH,
+            width=self.timeline_width(),
+            height=self.timeline_height(),
         )
 
         if not with_monthly_mean:
@@ -1230,7 +1283,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             monthly_frame,
         ).mark_bar(
             tooltip=True,
-            color=f"{PURPLE}80",
+            color=LIGHT_BLUE,
         ).encode(
             alt.X("start_date:T"),
             alt.X2("end_date:T"),
@@ -1253,7 +1306,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             align="left",
             baseline="bottom",
             text=text,
-            color=PURPLE,
+            color=BLUE,
         )
 
         chart = monthly_chart + daily_chart + label
@@ -1270,7 +1323,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
     ) -> None | alt.Chart | alt.LayerChart | alt.VConcatChart:
         table = self.timeline_data(spec, tag=tag, platform=platform)
 
-        if spec.quantity != "count" or not spec.has_variants():
+        if not spec.has_variants():
             return self.timeline_chart(
                 spec,
                 table,
@@ -1280,9 +1333,19 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             )
 
         ranking = self.variant_ranking(spec, table)
-        count = ranking.height
-        if count == 0:
+        categories = ranking.height
+        if categories == 0:
             return None
+
+        pct = ranking.get_column("cum_pct")
+        if categories > 1 and pct[0] > 95:
+            cut = 1
+        elif categories > 2 and pct[1] > 90:
+            cut = 2
+        elif categories > 3 and pct[2] > 75:
+            cut = 3
+        else:
+            cut = None
 
         spec2, table2 = self.apply_ranking(
             spec, table, ranking.get_column(spec.selector)
@@ -1292,18 +1355,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             table2,
             tag=tag,
             platform=platform,
-            allow_cutoff=allow_cutoff
+            allow_cutoff=allow_cutoff,
+            with_x_title=cut is None,
         )
-
-        pct = ranking.get_column("cum_pct")
-
-        cut = None
-        if count > 1 and pct[0] > 95:
-            cut = 1
-        elif count > 2 and pct[1] > 90:
-            cut = 2
-        elif count > 3 and pct[2] > 80:
-            cut = 3
 
         if cut is None:
             return chart
@@ -1352,6 +1406,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
                 *spec.groupings(),
+                maintain_order=True,
             ).agg(
                 pl.col("start_date").first().dt.month_start().dt.offset_by("5d"),
                 pl.col("start_date").first().dt.month_start().dt.offset_by("14d")
@@ -1362,7 +1417,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             )
 
             total_counts = table.group_by(
-                pl.col("year", "month")
+                pl.col("year", "month"),
+                maintain_order=True,
             ).agg(
                 pl.col("count").sum().alias("total_count")
             )
@@ -1374,12 +1430,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             table = table.group_by(
                 pl.col("start_date"),
                 *spec.groupings(),
+                maintain_order=True,
             ).agg(
                 *aggregates(),
             )
 
             total_counts = table.group_by(
-                pl.col("start_date")
+                pl.col("start_date"),
+                maintain_order=True,
             ).agg(
                 pl.col("count").sum().alias("total_count")
             )
@@ -1402,7 +1460,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 .alias("data_label")
             )
 
-        if spec.quantity != "count" and spec.label == "Delays":
+        if spec.quantity == "mean" and spec.is_duration():
             table = table.with_columns(
                 pl.col(spec.quantity) / (24 * 60 * 60)
             )
@@ -1415,21 +1473,30 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         table: pl.DataFrame,
     ) -> pl.DataFrame:
         """Rank variants by overall popularity."""
-        assert spec.quantity == "count"
         assert spec.has_variants()
 
-        return table.lazy().group_by(
-            spec.selector
+        ranking = table.lazy().group_by(
+            spec.selector,
+            maintain_order=True,
         ).agg(
-            pl.col("count").sum(),
-        ).filter(
-            pl.col("count").gt(0)
-        ).sort(
-            "count", descending=True
+            *aggregates()
+        )
+
+        if spec.quantity == "count":
+            ranking = ranking.filter(
+                pl.col(spec.quantity).gt(0)
+            )
+        else:
+            ranking = ranking.filter(
+                pl.col(spec.quantity).is_not_null()
+            )
+
+        return ranking.sort(
+            spec.quantity, descending=True
         ).with_columns(
-            pl.col("count").sum().alias("total"),
+            pl.col(spec.quantity).sum().alias("total"),
         ).with_columns(
-            (pl.col("count") / pl.col("total") * 100).alias("pct"),
+            (pl.col(spec.quantity) / pl.col("total") * 100).alias("pct"),
         ).with_columns(
             pl.col("pct").cum_sum().alias("cum_pct")
         ).collect()
@@ -1455,6 +1522,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         platform: None | str = None,
         allow_cutoff: bool = True,
         with_title: bool = True,
+        with_x_title: bool = True,
         with_full_height: bool = True,
     ) -> alt.Chart | alt.LayerChart:
         """
@@ -1469,19 +1537,16 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         }[spec.quantity]
 
         # X-Axis
+        xtitle = ("Month" if self.is_monthly() else "Day") if with_x_title else None
         encoding: list[Any] = [
-            alt.X("start_date:T").scale(domain=self._date_range.to_tuple())
-            .title("Month" if self.is_monthly() else "Day"),
+            alt.X("start_date:T").scale(domain=self._date_range.to_limits())
+            .title(xtitle),
         ]
         if self.is_monthly():
             encoding.append(alt.X2("end_date:T").title(""))
 
         # Variant Order
-        order = alt.Undefined
-        if spec.has_variants() and spec.quantity == "count":
-            order = spec.variant_labels()
-        elif spec is ProcessingDelayMetric:
-            order = ["Moderation", "Disclosure", "—none—"]
+        order = spec.variant_labels() if spec.has_variants() else alt.Undefined
 
         # Y-Axis
         yaxis = alt.Y(f"sum({spec.quantity}):Q", sort=order).title(spec.quant_label)
@@ -1538,8 +1603,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).encode(
             *encoding
         ).properties(
-            height=TIMELINE_HEIGHT if with_full_height else TIMELINE_HEIGHT * 2 // 3,
-            width=TIMELINE_WIDTH,
+            width=self.timeline_width(),
+            height=self.timeline_height(not with_full_height),
         )
 
         # Charts
@@ -1578,7 +1643,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
             chart = chart + warnings
 
-        if spec is ProcessingDelayMetric:
+        if with_full_height and spec.quantity == "mean" and spec.label == "Delays":
             chart = chart + self.processing_delay_signage(tag, platform)
 
         return chart
@@ -1669,6 +1734,74 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
     # ----------------------------------------------------------------------------------
 
+    def render_moderation_delays(
+        self,
+        tag: None | str = None,
+        platform: None | str = None,
+    ) -> None | alt.VConcatChart:
+        table = self._statistics.frame().lazy().filter(
+            predicate(
+                "moderation_delay",
+                entity=None,
+                variant=None,
+                tag=tag,
+                platform=NO_ARGUMENT_PROVIDED if platform is None else platform,
+            )
+        ).group_by(
+            pl.col("start_date").dt.year().alias("year"),
+            pl.col("start_date").dt.month().alias("month"),
+            maintain_order=True,
+        ).agg(
+            pl.col("start_date").first().dt.month_start().dt.offset_by("5d"),
+            pl.col("start_date").first().dt.month_start().dt.offset_by("14d")
+            .alias("mid_date"),
+            pl.col("start_date").first().dt.month_end().dt.offset_by("-5d")
+            .alias("end_date"),
+            *aggregates(),
+        ).with_columns(
+            pl.col("min", "mean", "max") / (24 * 60 * 60)
+        ).collect()
+
+        if table.select(pl.col("mean").sum()).item() == 0:
+            return None
+
+        title = "Moderation Delay"
+        if platform is not None:
+            title = f"{platform}: {title}"
+        elif self._is_meta:
+            title = f"Meta: {title}"
+        if tag is not None:
+            title += f" for {humanize(tag)}"
+        title += " — Monthly Mean & Maximum"
+
+        max = alt.Chart(table, title=title).encode(
+            alt.X("start_date:T").scale(domain=self._date_range.to_limits()).title(None),
+            alt.X2("end_date:T"),
+            alt.Y("sum(max):Q").title("Maximum Days"),
+        ).mark_bar(
+            color=BLUE,
+        ).properties(
+            width=self.timeline_width(),
+            height=self.timeline_height() * 2 // 3,
+        )
+
+        mean = alt.Chart(table).encode(
+            alt.X("start_date:T").title("Month"),
+            alt.X2("end_date:T"),
+            alt.Y("sum(mean):Q").title("Mean Days"),
+        ).mark_bar(
+            color=LIGHT_BLUE,
+        ).properties(
+            width=self.timeline_width(),
+            height=self.timeline_height() // 2,
+        )
+
+        return alt.vconcat(max, mean, spacing=5).resolve_scale(
+            x="shared",
+        )
+
+    # ----------------------------------------------------------------------------------
+
     def cumulative_platform_counts(self, keyword: None | str = None) -> alt.Chart:
         ALL = "All Platforms"
         KEY = "Platforms w/ Keywords"
@@ -1749,8 +1882,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                     range=[GRAY, ORANGE, RED],
                 ),
             ).properties(
-                height=TIMELINE_HEIGHT,
-                width=TIMELINE_WIDTH,
+                width=self.timeline_width(),
+                height=self.timeline_height(),
             ).interactive()
         )
 
@@ -1809,8 +1942,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             tooltip=True,
             color=f"{PURPLE}90" if threshold else PURPLE,
         ).properties(
-            width=TIMELINE_WIDTH,
-            height=TIMELINE_HEIGHT,
+            width=self.timeline_width(),
+            height=self.timeline_height(),
         )
 
         if threshold is None or threshold < 50_000:
@@ -1885,8 +2018,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.Y(y_data).title(y_title),
             color,
         ).properties(
-            height=TIMELINE_HEIGHT,
-            width=TIMELINE_WIDTH,
+            width=self.timeline_width(),
+            height=self.timeline_height(),
         )
 
     def overall_keyword_usage(self) -> alt.Chart:
@@ -1951,13 +2084,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.col("column").eq("rows")
         ).group_by(
             pl.col("start_date"),
-            pl.col("platform")
+            pl.col("platform"),
+            maintain_order=True,
         ).agg(
             pl.col("count").sum()
         ).sort(
             pl.col("start_date")
         ).group_by(
-            pl.col("platform"), maintain_order=True
+            pl.col("platform"),
+            maintain_order=True,
         ).agg(
             pl.len().alias("days_with_sors"),
             pl.col("start_date").filter(
