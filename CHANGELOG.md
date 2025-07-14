@@ -1,6 +1,6 @@
 # Version History for Shantay
 
-## v0.4.0 (June 30, 2025)
+## v0.4.0 (July 14, 2025)
 
 In addition to simplifying and refactoring the implementation, this release
 makes the following changes:
@@ -14,13 +14,19 @@ makes the following changes:
     extract root only after completing the task.
   - Do not require metadata to check whether a release has already been
     distilled.
+  - Remove table header from overview table at beginning of report introduction.
+  - Add support for detail panel to timelines with moderation and disclosure
+    delays; also add timeline with mean and maximum moderation delays.
+  - Use more readable colors for timelines that show both daily and monthly
+    statements of reasons, with or without keywords.
   - Extend the `info` task to emit the coverage of metadata and summary
     statistics in the staging directory as well.
   - Remove `batch_memory` entry from summary statistics.
     [fixmem.py](script/fixmem.py) patches existing metadata and summary
     statistics.
   - Add tests for summarizing the entire database as well as a category-specific
-    subset.
+    subset. Ensure that tests work even if the list of platforms has been
+    updated.
 
 
 ## v0.3.0 (June 24, 2025)
