@@ -157,7 +157,7 @@ class Processor[R: Release]:
         emit_rule(strong=True)
         emit_pair("archive.path", "<builtin>")
         emit_rule()
-        emit_range("archive", "db.parquet", Statistics.builtin().range())
+        emit_range("archive", "db.parquet", Statistics.builtin().date_range())
 
         if self._storage.archive_root is not None:
             emit_rule(strong=True)
@@ -178,7 +178,7 @@ class Processor[R: Release]:
             path = self._storage.archive_root / "db.parquet"
             if path.exists():
                 try:
-                    stats_range = Statistics.read(path).range()
+                    stats_range = Statistics.read(path).date_range()
                 except FileNotFoundError:
                     stats_range = None
 
@@ -206,7 +206,7 @@ class Processor[R: Release]:
 
             path = self._storage.extract_root / f"{self._coverage.stem()}.parquet"
             if path.exists():
-                stats_range = Statistics.read(path).range()
+                stats_range = Statistics.read(path).date_range()
 
                 emit_rule()
                 emit_range("extract", path.name, stats_range)
@@ -215,7 +215,7 @@ class Processor[R: Release]:
         # Staging Root
 
         emit_rule(strong=True)
-        emit_pair("staging.path", str(self._storage.extract_root))
+        emit_pair("staging.path", str(self._storage.staging_root))
 
         for file in sorted(self._storage.staging_root.glob("*.json")):
             if file.name != "db.json" and not is_category_file(file.stem):
@@ -234,7 +234,7 @@ class Processor[R: Release]:
                 continue
 
             emit_rule()
-            emit_range("staging", file.name, Statistics.read(file).range())
+            emit_range("staging", file.name, Statistics.read(file).date_range())
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Actually emit the output
@@ -728,7 +728,7 @@ class Processor[R: Release]:
         archive = self._storage.the_archive_root / self.stats_file
 
         if not stats.is_empty():
-            range = stats.range()
+            range = stats.date_range()
             _logger.info(
                 'existing statistics cover start_date="%s", end_date="%s"',
                 range.first, range.last
@@ -820,7 +820,12 @@ class Processor[R: Release]:
 
             # Check_db_platforms only probes the data frame for hereto unknown
             # platform names, raising a MissingPlatformError with such names.
-            check_db_platforms(release.id, index, frame)
+            path = (
+                self._storage.staging_root
+                / release.parent_directory
+                / self._dataset.archive_name(release)
+            )
+            check_db_platforms(path , frame)
 
             # We process each batch by itself. When the summary statistics are
             # finalized, those unit counts add up.s
