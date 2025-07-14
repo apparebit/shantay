@@ -960,8 +960,8 @@ class Statistics:
         elif s2 is None:
             return s1
 
-        r1 = s1.range()
-        r2 = s2.range()
+        r1 = s1.date_range()
+        r2 = s2.date_range()
         if r1.first != r2.first:
             raise ValueError(
                 f"inconsistent start dates {r1.first.isoformat()} "
@@ -987,7 +987,7 @@ class Statistics:
         # Pola.rs error messages tend to be less than helpful. So instead we
         # check for unknown platform names ourselves. That way, we can initiate
         # largely automatic recovery as well.
-        check_stats_platforms(frame)
+        check_stats_platforms(path, frame)
 
         return cls(
             path.name,
@@ -1079,7 +1079,7 @@ class Statistics:
             pl.col("start_date").le(date).and_(pl.col("end_date").ge(date))
         ).height
 
-    def range(self) -> DateRange:
+    def date_range(self) -> DateRange:
         """
         Determine the range from minimum start date to maximum end date
         covered by the summary statistics.
