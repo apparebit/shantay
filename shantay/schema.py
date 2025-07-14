@@ -363,6 +363,9 @@ class MetricDeclaration:
     def has_null_variant(self) -> bool:
         return None in self.variants
 
+    def is_duration(self) -> bool:
+        return self.quant_label == "Days"
+
     def variant_names(self) -> list[str]:
         return [k for k in self.variants.keys() if k is not None]
 
@@ -588,12 +591,23 @@ from ._platform import (
 )
 
 
+ModerationDelayMetric = MetricDeclaration(
+    "moderation_delay",
+    "Moderation Delays",
+    {},
+    selector="column",
+    quantity="mean",
+    quant_label="Days",
+)
+
+
 ProcessingDelayMetric = MetricDeclaration(
     ["moderation_delay", "disclosure_delay"],
     "Delays",
     {
         "moderation_delay": ("Moderation", LIGHT_BLUE),
-        "disclosure_delay": ("Disclosure", RED),
+        "disclosure_delay": ("Disclosure", ORANGE),
+        #"release_delay": ("Release", RED),
         None: ("—none—", GRAY),
     },
     selector="column",
@@ -839,6 +853,7 @@ TRANSFORMS = {
     "moderation_delay": DurationTransform("content_date", "application_date"),
     "territorial_scope": TransformType.LIST_VALUE_COUNTS,
     "disclosure_delay": DurationTransform("application_date", "created_at"),
+    #"release_delay": DurationTransform("created_at", "released_on"),
     "source_type": TransformType.VALUE_COUNTS,
     "automated_detection": TransformType.VALUE_COUNTS,
     "automated_decision": TransformType.VALUE_COUNTS,
@@ -882,6 +897,7 @@ ColumnValueType = pl.Enum((
     "account_restriction_duration",
     "moderation_delay",
     "disclosure_delay",
+    #"release_delay",
     *(c for c in SCHEMA.names())
 ))
 
