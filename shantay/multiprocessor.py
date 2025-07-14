@@ -88,40 +88,35 @@ class Multiprocessor:
         start_time = time.time()
 
         # Determine cursor's first and final values as well as increment
-        if task == "download":
-            cover = self._coverage.to_date_range()
-        elif task == "distill":
-            cover = self._coverage.to_date_range()
+        if task in ("download", "distill"):
+            pass
         elif task == "summarize-category":
             self._stats = Statistics.from_storage(
                 self.stats_file,
                 self._storage.staging_root,
                 self._storage.the_extract_root,
             )
-            cover = self._coverage.to_date_range()
         elif task == "summarize-all":
             self._stats = Statistics.from_storage(
                 self.stats_file,
                 self._storage.staging_root,
                 self._storage.the_archive_root,
             )
-            cover = self._coverage.to_date_range()
         else:
             raise ValueError(f"invalid task {task}")
 
         if task.startswith("summarize"):
             assert self._stats is not None
             if not self._stats.is_empty():
-                date_range = self._stats.range()
+                date_range = self._stats.date_range()
                 _logger.info(
                     'existing statistics cover start_date="%s", end_date="%s"',
                     date_range.first, date_range.last
                 )
 
-        assert cover is not None
-        self._iter = iter(cover.dailies())
-        _logger.info('    key="iter.first",           value="%s"', cover.first)
-        _logger.info('    key="iter.last",            value="%s"', cover.last)
+        self._iter = iter(self._coverage)
+        _logger.info('    key="iter.first",           value="%s"', self._coverage.first)
+        _logger.info('    key="iter.last",            value="%s"', self._coverage.last)
 
         self._pool.run(self._task_iter(), self._done_with_task)
 
