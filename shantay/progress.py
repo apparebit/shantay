@@ -78,8 +78,8 @@ class Progress:
     @contextmanager
     def nested(self) -> Iterator[Self]:
         """
-        Pause the current activity, perform another activity afresh, and then
-        resume the current activity.
+        Pause the current activity on context entry, perform another activity,
+        and then resume the current activity on context exit.
         """
         saved_label = self._label
         saved_unit = self._unit
@@ -106,7 +106,7 @@ class Progress:
             self._rate = saved_rate
 
     def activity(self, description: str, label: str, unit: str, with_rate: bool) -> Self:
-        """Update the configuration of this progress tracker."""
+        """Prepare to start a new activity."""
         self._label = label
         self._unit = unit
         self._with_rate = with_rate
@@ -116,7 +116,7 @@ class Progress:
         return self
 
     def start(self, total: None | int = None) -> Self:
-        """Start an activity with total steps."""
+        """Start the activity with total steps."""
         assert self._label is not None, "Progress.activity() must precede Progress.start()"
 
         self._timestamp = self._timer()
@@ -182,7 +182,7 @@ class Progress:
         return self
 
     def perform(self, description: str) -> Self:
-        """Update a one-shot activity."""
+        """Perform a one-shot activity."""
         if self._label is not None:
             self._reset_activity()
         self._render(f"{self._prefix}{description}{self._suffix}")

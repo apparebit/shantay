@@ -27,6 +27,12 @@ _LOCK_FILE = None
 
 
 def acquire_staging_lock(staging: Path) -> None:
+    """
+    Acquire the file system lock in the staging directory. Or die trying.
+    Arguably, we should do the same for the archive and extract roots, since
+    Shantay may very well write to them. But that seems less urgent than the
+    staging directory, which has a well-known default.
+    """
     global _LOCK_FILE
 
     # Acquire lock file for staging
@@ -78,6 +84,9 @@ you can safely delete the lock file and run Shantay again.
 def get_configuration(
     options: Any
 ) -> tuple[Storage, Coverage, Metadata]:
+    """
+    Turn the command line options into internal configuration objects.
+    """
     # Handle --archive, --extract, and --staging options
     storage = Storage(
         archive_root=options.archive,
@@ -216,6 +225,10 @@ def get_configuration(
 
 
 def configure_printing() -> None:
+    """
+    Configure Pola.rs to print more columns, more rows, and longer strings, also
+    include a thousands separator, and align numeric cells to the right.
+    """
     # As of April 2025, the transparency database contains data for 102
     # platforms, which define around 600 other reasons for moderating
     # visibility.
@@ -289,6 +302,8 @@ _RESET_STYLE = "\x1b[m"
 
 
 def run(options: Any) -> int:
+    """Run Shantay with the given options and return the appropriate
+    exit code."""
     no_color = os.getenv("NO_COLOR")
     happy = "" if no_color else _HAPPY_STYLE
     error = "" if no_color else _ERROR_STYLE

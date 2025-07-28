@@ -32,6 +32,7 @@ _logger = logging.getLogger(__spec__.parent)
 
 
 class Processor[R: Release]:
+    """The single-process implementation of Shantay's tasks."""
 
     CHUNK_SIZE = 64 * 1_024
 
@@ -55,6 +56,7 @@ class Processor[R: Release]:
 
     @property
     def stats_file(self) -> str:
+        """The name of the statistics file."""
         return f"{self._coverage.stem()}.parquet"
 
     @property
@@ -63,6 +65,7 @@ class Processor[R: Release]:
         return self._running_time
 
     def run(self, task: str) -> None | DataFrameType:
+        """Run the given task."""
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"',
@@ -112,6 +115,7 @@ class Processor[R: Release]:
         return result
 
     def info(self) -> None:
+        """Print information about all known root directories."""
         keys = []
         values = []
 
@@ -256,6 +260,7 @@ class Processor[R: Release]:
             _logger.debug(line)
 
     def distill_category(self) -> None:
+        """Extract category-specific data for all covered releases."""
         for release in self._coverage:
             # Ensure graceful termination in offline mode
             if self._offline and not self.is_archive_downloaded(release):
@@ -280,6 +285,7 @@ class Processor[R: Release]:
         )
 
     def distill_category_release(self, release: Daily, cleanup: bool = True) -> None:
+        """Extract the category-specific data for the given release."""
         if (
             release in self._metadata
             and distilled_category_exists(
@@ -307,6 +313,7 @@ class Processor[R: Release]:
         return
 
     def download(self) -> None:
+        """Download the archives for this processor's coverage."""
         if self._offline:
             raise ValueError("can't download daily distributions in offline mode")
 
@@ -315,6 +322,7 @@ class Processor[R: Release]:
             shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
     def download_archive(self, release: Daily) -> None:
+        """Download the archive for the given release."""
         if self._offline:
             raise ValueError("can't download daily distributions in offline mode")
         if self.is_archive_downloaded(release):
@@ -412,6 +420,7 @@ class Processor[R: Release]:
 
     @annotate_error(filename_arg="root")
     def validate_archive(self, root: Path, release: Daily) -> None:
+        """Validate the SHA1 hash of the downloaded archive."""
         digest = root / release.parent_directory / self._dataset.digest_name(release)
         archive = root / release.parent_directory / self._dataset.archive_name(release)
         _logger.debug('validate release="%s", file="%s"', release.id, archive)
@@ -587,7 +596,10 @@ class Processor[R: Release]:
                 _logger.debug('unarchived type="%s", file="%s"', kind, name)
 
     def category_data_exists(self, root: Path, release: Daily) -> bool:
-        """Determine whether all batch files exist under the given root directory."""
+        """
+        Determine whether the category-specific parquet files exist under the
+        given root directory.
+        """
         return distilled_category_exists(root, release, self._metadata)
 
     @annotate_error(filename_arg="target")
@@ -610,6 +622,7 @@ class Processor[R: Release]:
             self._progress.step(index)
 
     def stage_category_data(self, release: Daily) -> None:
+        """Stage the category-specific data for the given release."""
         batch_count = self._metadata[release]["batch_count"]
         if self.category_data_exists(self._storage.staging_root, release):
             return
@@ -640,7 +653,7 @@ class Processor[R: Release]:
         _logger.info('validated extract for release="%s"', release)
 
     def summarize_category(self) -> DataFrameType:
-        """Analyze the data distilled into the extract root."""
+        """Determine summary statistics for the category-specific subset."""
         # Prepare progress tracker
         self._progress.activity(
             "summarizing category data", "summarizing category", "batch", with_rate=False
@@ -704,7 +717,8 @@ class Processor[R: Release]:
         metadata_entry: MetadataEntry,
         collector: CollectorProtocol,
     ) -> None:
-        """Analyze the category-specific data for the given release."""
+        """Determine summary statistics for the category-specific subset of the
+        given release."""
         self.stage_category_data(release)
 
         assert isinstance(self._coverage.category, str)
@@ -719,7 +733,7 @@ class Processor[R: Release]:
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
     def summarize_database(self) -> DataFrameType:
-        """Analyze the full data set."""
+        """Determine summary statistics for the full database."""
         stats = Statistics.from_storage(
             self.stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
@@ -784,7 +798,7 @@ class Processor[R: Release]:
         release: Daily,
         collector: CollectorProtocol,
     ) -> None:
-        """Analyze the full data for the given release."""
+        """Determine summary statistics for the given release of the full database."""
         _logger.info('summarizing release="%s"', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)

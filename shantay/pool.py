@@ -190,6 +190,7 @@ class Pool:
         tasks: Iterator[Task],
         on_completion: Callable[[Task, Future], None],
     ) -> None:
+        """Run this pool."""
         # Loosely based on https://github.com/alexwlchan/concurrently
         with self:
             futures = {}

@@ -33,11 +33,13 @@ class Period(metaclass=ABCMeta):
 
     @property
     @abstractmethod
-    def start_date(self) -> dt.date: ...
+    def start_date(self) -> dt.date:
+        """The period's start date."""
 
     @property
     @abstractmethod
-    def end_date(self) -> dt.date: ...
+    def end_date(self) -> dt.date:
+        """The period's end date."""
 
     @property
     def date(self) -> None | dt.date:
@@ -53,6 +55,7 @@ class Period(metaclass=ABCMeta):
 _RELEASE = re.compile(r"(?P<year>[0-9]{4})-(?P<month>[0-9]{2})(?:-(?P<day>[0-9]{2}))?")
 
 class Release(Period):
+    """A specific, dated release."""
 
     @overload
     @staticmethod
@@ -73,6 +76,11 @@ class Release(Period):
         day: None | int = None,
         /
     ) -> "Release":
+        """
+        Create a new daily or monthly release from the year/month/day or
+        year/month components, a dash-separated year-month-day or year-month
+        string, or a date.
+        """
         if isinstance(year, dt.date):
             return Daily(year.year, year.month, year.day)
         if isinstance(year, int):
@@ -104,16 +112,17 @@ class Release(Period):
     @property
     @abstractmethod
     def parent_directory(self) -> Path:
-        """The parent directory"""
+        """The directory for monthly artifacts relative to some root."""
 
     @property
     @abstractmethod
     def directory(self) -> Path:
-        """The directory for per-"""
+        """The directory for daily artifacts relative to some root."""
 
     @property
     @abstractmethod
-    def temp_directory(self) -> Path: ...
+    def temp_directory(self) -> Path:
+        """The temporary directory for per-release files relative to some root."""
 
     def batch_file(self, index: int) -> str:
         """Get the name for the batch file with the given index."""
@@ -123,13 +132,16 @@ class Release(Period):
 
     @property
     @abstractmethod
-    def batch_glob(self) -> str: ...
+    def batch_glob(self) -> str:
+        """The glob for the batch files of this release."""
 
     @abstractmethod
-    def next(self) -> Self: ...
+    def next(self) -> Self:
+        """The next daily or monthly release."""
 
     @abstractmethod
-    def __sub__(self, other: object) -> int: ...
+    def __sub__(self, other: object) -> int:
+        """Compute the number of releases between the two."""
 
     @abstractmethod
     def __eq__(self, other: object) -> bool: ...
@@ -148,6 +160,7 @@ class Release(Period):
 
 @dataclass(frozen=True, slots=True, eq=True, order=True)
 class Daily(Release):
+    """A daily release."""
 
     year: int # type: ignore
     month: int # type: ignore
@@ -160,7 +173,6 @@ class Daily(Release):
 
     @property
     def id(self) -> str:
-        """The ID."""
         return f"{self.year}-{self.month:02}-{self.day:02}"
 
     @property
@@ -181,22 +193,18 @@ class Daily(Release):
 
     @property
     def parent_directory(self) -> Path:
-        """The directory for monthly artifacts."""
         return Path(f"{self.year}") / f"{self.month:02}"
 
     @property
     def directory(self) -> Path:
-        """The directory for daily artifacts."""
         return Path(f"{self.year}") / f"{self.month:02}" / f"{self.day:02}"
 
     @property
     def temp_directory(self) -> Path:
-        """A temporary directory for grouping *per* period files."""
         return Path(f"{self.year}") / f"{self.month:02}" / f"{self.day:02}.tmp"
 
     @property
     def batch_glob(self) -> str:
-        """Get a glob for all batch files for the release."""
         return f"{self.id}-?????.parquet"
 
     def to_first_full_month(self) -> "Monthly":
@@ -246,6 +254,7 @@ class Daily(Release):
 
 @dataclass(frozen=True, slots=True, eq=True, order=True)
 class Monthly(Release):
+    """A monthly release."""
 
     year: int
     month: int
@@ -276,22 +285,18 @@ class Monthly(Release):
 
     @property
     def parent_directory(self) -> Path:
-        """The directory for monthly artifacts."""
         return Path(f"{self.year}")
 
     @property
     def directory(self) -> Path:
-        """The directory for daily artifacts."""
         return Path(f"{self.year}") / f"{self.month:02}"
 
     @property
     def temp_directory(self) -> Path:
-        """A temporary directory for grouping *per* period files."""
         return Path(f"{self.year}") / f"{self.month:02}.tmp"
 
     @property
     def batch_glob(self) -> str:
-        """Get a glob for all batch files for the release."""
         return f"{self.year}/{self.month:02}/??/{self.year}-{self.month:02}-??-?????.parquet"
 
     def previous(self) -> Self:
@@ -321,6 +326,7 @@ class Monthly(Release):
 
 @dataclass(frozen=True, slots=True)
 class ReleaseRange[R: Release](Period):
+    """An inclusive range of releases."""
 
     first: R
     last: R
@@ -330,14 +336,17 @@ class ReleaseRange[R: Release](Period):
 
     @property
     def duration(self) -> int:
+        """The number of releases in the range."""
         return self.last - self.first + 1
 
     @property
     def start_date(self) -> dt.date:
+        """The start date."""
         return self.first.start_date
 
     @property
     def end_date(self) -> dt.date:
+        """The end date."""
         return self.last.end_date
 
     def __iter__(self) -> Iterator[R]:
@@ -352,6 +361,7 @@ class ReleaseRange[R: Release](Period):
 
 @dataclass(frozen=True, slots=True)
 class DateRange(Period):
+    """An inclusive range of dates."""
 
     first: dt.date
     last: dt.date
@@ -462,12 +472,14 @@ DIGEST_FILE = "sha256.txt"
 
 
 def file_stem_for(entity: str) -> str:
+    """Convert the statement category label into a file name stem."""
     if entity.startswith("STATEMENT_CATEGORY_"):
         entity = entity[len("STATEMENT_CATEGORY_"):]
     return entity.lower().replace("_", "-").replace(" ", "-")
 
 
 class MetadataEntry(TypedDict, total=False):
+    """The metadata associated with a release."""
     batch_count: Required[int]
     total_rows: Optional[int]
     batch_rows: Optional[int]
@@ -479,6 +491,7 @@ class MetadataEntry(TypedDict, total=False):
 
 
 class FullMetadataEntry(MetadataEntry):
+    """The metadata associated with a release, including the release."""
     release: str
 
 
@@ -492,6 +505,7 @@ class Coverage[R: Release](Period):
 
     @classmethod
     def of(cls, range: ReleaseRange, category: None | str = None) -> Self:
+        """Create a new coverage record from the given release range and category."""
         return cls(range.first, range.last, category)
 
     def __post_init__(self) -> None:
@@ -499,13 +513,16 @@ class Coverage[R: Release](Period):
 
     @property
     def start_date(self) -> dt.date:
+        """The start date."""
         return self.first.start_date
 
     @property
     def end_date(self) -> dt.date:
+        """The end date."""
         return self.last.end_date
 
     def frequency(self) -> Literal["daily", "monthly"]:
+        """The release frequency."""
         assert self.first.frequency == self.last.frequency
         return self.first.frequency
 
@@ -521,6 +538,7 @@ class Coverage[R: Release](Period):
         return self.last - self.first + 1
 
     def stem(self) -> str:
+        """The file name stem."""
         return "db" if self.category is None else file_stem_for(self.category)
 
 
