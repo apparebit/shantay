@@ -101,6 +101,17 @@ def get_parser() -> ArgumentParser:
         action="store_false",
         help="disable verbose logging (optional)",
     )
+    group.add_argument(
+        "--interactive-report",
+        action="store_true",
+        help="dynamically generate interactive charts with JavaScript"
+        " instead of embedding SVG",
+    )
+    group.add_argument(
+        "--clamp_outliers",
+        action="store_true",
+        help="if one or two months have more SoRs than the rest, clamp those outliers"
+    )
 
     parser.add_argument(
         "task",

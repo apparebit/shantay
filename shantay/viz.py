@@ -25,36 +25,38 @@ from .schema import (
     IncompatibleContentIllegalMetric, InformationSourceMetric,
     KeywordChildSexualAbuseMaterial, make_metric, MetaPlatforms, MetricDeclaration,
     ModerationDelayMetric, PlatformValueType, ProcessingDelayMetric, SCHEMA,
-    StatementCategoryProtectionOfMinors, StatementCountMetric, TerritorialScopeMetric,
+    StatementCountMetric, TerritorialScopeMetric,
     TextColumns
 )
 from .stats import get_tags, Statistics
-from .util import minify, to_markdown_table
+from .util import minify, to_markdown_table, upper_limit
 
 
-TIMELINE_WIDTH = 600
-TIMELINE_HEIGHT = 400
-SPACING = 30
+_CUTOFF_FACTOR = 1.9
 
-HTML_HEADLINE = re.compile(r"<h([1-3])(?: id=[^>]+)?>([^<]*)</h[1-3]>")
-HTML_TABLEROW = re.compile(
+_TIMELINE_WIDTH = 600
+_TIMELINE_HEIGHT = 400
+_SPACING = 30
+
+_HTML_HEADLINE = re.compile(r"<h([1-3])(?: id=[^>]+)?>([^<]*)</h[1-3]>")
+_HTML_TABLEROW = re.compile(
     r'<tr>\n  <td style="text-align:left"><em><strong>(—+)([^—]+)(—+)</strong></em></td>'
     r'\n  <td style="text-align:right">⠀</td>'
 )
 
-FRAME_BORDER = re.compile(r' border="1"')
-FRAME_CLASS = re.compile(r'<table class="dataframe">')
-FRAME_QUOT = re.compile(r"&quot;")
-FRAME_SHAPE = re.compile(r"<small>shape:[^<]*</small>")
-FRAME_STYLE = re.compile(r"<style>[^<]*</style>")
-FRAME_HEAD = re.compile(r"<thead>.*?</thead>")
-FRAME_EOL = re.compile(
+_FRAME_BORDER = re.compile(r' border="1"')
+_FRAME_CLASS = re.compile(r'<table class="dataframe">')
+_FRAME_QUOT = re.compile(r"&quot;")
+_FRAME_SHAPE = re.compile(r"<small>shape:[^<]*</small>")
+_FRAME_STYLE = re.compile(r"<style>[^<]*</style>")
+_FRAME_HEAD = re.compile(r"<thead>.*?</thead>")
+_FRAME_EOL = re.compile(
     r"(<thead>|<tbody>|<tr>|</th>|</td>|</tr>|</thead>|</tbody>|</table>)"
 )
 
-SVG_ATTRIBUTES = re.compile(r' class="marks" width="[0-9]+" height="[0-9]+"')
+_SVG_ATTRIBUTES = re.compile(r' class="marks" width="[0-9]+" height="[0-9]+"')
 
-DOC_HEAD = """\
+_DOC_HEAD = """\
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -68,13 +70,13 @@ DOC_HEAD = """\
 <meta property="og:article:published_time" content="{time}">
 """
 
-DOC_SCRIPTS = """\
+_DOC_SCRIPTS = """\
 <script src="https://cdn.jsdelivr.net/npm/vega@6"></script>
 <script src="https://cdn.jsdelivr.net/npm/vega-lite@6"></script>
 <script src="https://cdn.jsdelivr.net/npm/vega-embed@7"></script>
 """
 
-DOC_STYLE = """\
+_DOC_STYLE = """\
 <style>
 /* ----------------------------------- General ----------------------------------- */
 *::before, *, *::after {
@@ -153,7 +155,7 @@ thead > tr {
 }
 thead > tr:last-of-type > :where(th, td) {
     padding-bottom: 0.35em;
-    border-top: solid 0.15em var(--black);
+    border-bottom: solid 0.15em var(--black);
 }
 tbody > tr:first-of-type > :where(th, td) {
     padding-top: 0.35em;
@@ -185,9 +187,9 @@ tbody > tr.highlight > td {
 </style>
 """
 
-CHART_OPTIONS = '{"renderer": "canvas", "actions": true}'
+_CHART_OPTIONS = '{"renderer": "canvas", "actions": true}'
 
-DOC_FOOTER = """\
+_DOC_FOOTER = """\
 </main>
 </body>
 </html>
@@ -200,32 +202,9 @@ _logger = logging.getLogger(__spec__.parent)
 # --------------------------------------------------------------------------------------
 
 
-def visualize(
-    storage: Storage,
-    coverage: Coverage,
-    notebook: bool = False,
-    with_cutoff: bool = True,
-) -> pl.DataFrame:
-    charts = storage.staging_root / "charts" / coverage.stem()
-    if charts.exists():
-        shutil.rmtree(charts)
-    charts.mkdir(parents=True)
+type _ChartT = alt.Chart | alt.LayerChart | alt.VConcatChart
 
-    renderer = NotebookRenderer(charts) if notebook else PlainTextRenderer(charts)
-    visualizer = Visualizer(
-        storage,
-        coverage,
-        renderer,
-        with_cutoff=with_cutoff
-    )
-    return visualizer.run()
-
-
-# --------------------------------------------------------------------------------------
-
-type Chart = alt.Chart | alt.LayerChart | alt.VConcatChart
-
-class Renderer(metaclass=ABCMeta):
+class _Renderer(metaclass=ABCMeta):
 
     def __init__(self, charts: Path) -> None:
         self._charts = charts
@@ -248,19 +227,19 @@ class Renderer(metaclass=ABCMeta):
     def frame(self, frame: pl.DataFrame) -> None: ...
 
     @abstractmethod
-    def chart(self, name: str, chart: str | Chart) -> None: ...
+    def chart(self, name: str, chart: str | _ChartT) -> None: ...
 
 
-TAG = re.compile(r"<[^>]+>")
+_TAG = re.compile(r"<[^>]+>")
 
-class PlainTextRenderer(Renderer):
+class _PlainTextRenderer(_Renderer):
 
     @property
     def plain(self) -> bool:
         return True
 
     def html(self, markup: str) -> None:
-        print(TAG.sub("", markup))
+        print(_TAG.sub("", markup))
         print()
 
     def md(self, markdown: str) -> None:
@@ -271,7 +250,7 @@ class PlainTextRenderer(Renderer):
         print(frame)
         print()
 
-    def chart(self, name: str, chart: str | Chart) -> None:
+    def chart(self, name: str, chart: str | _ChartT) -> None:
         if isinstance(chart, str):
             (self._charts / name).write_text(chart, encoding="utf8")
         else:
@@ -284,9 +263,9 @@ except ImportError:
     display = HTML = Markdown = None
 
 if display is None:
-    NotebookRenderer = None # pyright: ignore[reportAssignmentType]
+    _NotebookRenderer = None # pyright: ignore[reportAssignmentType]
 else:
-    class NotebookRenderer(Renderer):
+    class _NotebookRenderer(_Renderer):
 
         @property
         def plain(self) -> bool:
@@ -301,7 +280,7 @@ else:
         def frame(self, frame: pl.DataFrame) -> None:
             display(frame) # pyright: ignore[reportOptionalCall]
 
-        def chart(self, name: str, chart: str | Chart) -> None:
+        def chart(self, name: str, chart: str | _ChartT) -> None:
             display(chart) # pyright: ignore[reportOptionalCall]
             if isinstance(chart, str):
                 (self._charts / name).write_text(chart, encoding="utf8")
@@ -313,72 +292,98 @@ else:
 
 
 class Visualizer:
+    """
+    Class to generate HTML reports of previously collected statistics. A report
+    includes charts on the daily volume of statements of reasons, on the
+    per-platform totals, on the attributes of statements of reasons, and on
+    outages in platforms' filings. It also includes breakdowns of SoR attributes
+    for Meta, TikTok, X, YouTube, and the five most popular remaining platforms.
+    Summary tables and schemas complete each report.
+
+    In addition to an HTML document, this class also emits a separate SVG file
+    for each chart.
+
+    The following options customize HTML reports:
+
+      - If `with_no_outliers` is `True`, the topmost one or two outliers are cut
+        off to improve readability of the remaining months.
+      - If `with_interaction` is `True`, charts are dynamically created with
+        JavaScript instead of statically as SVG and hence are interactive.
+
+    By default, this class generates two panels for each timeline breaking down
+    an attribute. The first panel shows all attribute values, which makes small
+    values hard if not impossible to discern. However, because it shows all
+    attribute values, all attribute timelines' first panels have the same
+    overall monthly bars. The second panel excludes the topmost one to three
+    values and then zooms into the remaining ones. Because of this two-panel
+    approach, `with_no_outliers` typically should not be necessary.
+    """
 
     def __init__(
         self,
         storage: Storage,
         coverage: Coverage,
-        renderer: Renderer,
-        with_extras: bool = False,
-        with_cutoff: bool = False,
+        with_no_outliers: bool = False,
+        with_interaction: bool = False,
+        with_notebook: bool = False,
     ) -> None:
         self._storage = storage
         self._coverage = coverage
-        self._with_extras = with_extras
-        self._with_cutoff = with_cutoff
-        self._renderer = renderer
+        self._with_no_outliers = with_no_outliers
+        self._with_interaction = with_interaction
+        self._chart_dir = storage.staging_root / "charts" / coverage.stem()
+        if with_notebook:
+            self._renderer = _NotebookRenderer(self._chart_dir)
+        else:
+            self._renderer = _PlainTextRenderer(self._chart_dir)
         self._timelines = False
         self._timestamp = dt.datetime.now()
         self._section_num = 0
         self._chart_num = 0
         self._is_meta = False
 
-    def emit_interactive_charts(self) -> bool:
-        return False
+    def _timeline_width(self) -> int | str:
+        return _TIMELINE_WIDTH
 
-    def timeline_width(self) -> int | str:
-        return TIMELINE_WIDTH
+    def _timeline_height(self, short: bool = False) -> int:
+        return _TIMELINE_HEIGHT * (2 // 3 if short else 1)
 
-    def timeline_height(self, short: bool = False) -> int:
-        return TIMELINE_HEIGHT * (2 // 3 if short else 1)
-
-    def has_all_sors(self) -> bool:
+    def _has_all_sors(self) -> bool:
         return self._coverage.category is None
 
-    def is_monthly(self) -> bool:
+    def _is_monthly(self) -> bool:
         return self._frequency == "monthly"
 
-    @staticmethod
-    def configure_display() -> None:
-        alt.theme.enable("default")
+    # ==================================================================================
 
-        from .tool import configure_printing
-        configure_printing()
-
-    def secno(self) -> int:
+    def _secno(self) -> int:
+        """Get next document section number."""
         self._section_num += 1
         return self._section_num
 
-    def chartno(self) -> str:
+    def _chartno(self) -> str:
+        """Get next chart number."""
         self._chart_num += 1
         return f"{self._chart_num:03d}"
 
-    def html(self, markup: str) -> None:
-        if self._renderer.plain and (hn := HTML_HEADLINE.fullmatch(markup)) is not None:
+    def _html(self, markup: str) -> None:
+        """Add HTML markup to report."""
+        if self._renderer.plain and (hn := _HTML_HEADLINE.fullmatch(markup)) is not None:
             self._renderer.md(f"{'#' * int(hn.group(1))} {hn.group(2)}")
         else:
-            self._renderer.html(FRAME_STYLE.sub("", markup))
+            self._renderer.html(_FRAME_STYLE.sub("", markup))
 
         assert self._document is not None
         self._document.write(markup)
         self._document.write("\n\n\n")
 
-    def markdown(
+    def _markdown(
         self,
         markdown: str,
         render: bool = True,
         disclosure: bool = False,
     ) -> None:
+        """Render Markdown to HTML and add to report."""
         if render:
             self._renderer.md(markdown)
 
@@ -390,9 +395,9 @@ class Visualizer:
                 f'<tr class=highlight>\n  <td colspan=2><em><strong>{match.group(1)}'
                 f'{match.group(2)}{match.group(3)}</strong></em></td>'
             )
-        html = HTML_TABLEROW.sub(replace, html)
+        html = _HTML_TABLEROW.sub(replace, html)
 
-        hn = HTML_HEADLINE.match(html)
+        hn = _HTML_HEADLINE.match(html)
         if not disclosure or hn is None:
             self._document.write(html)
             self._document.write("\n\n\n")
@@ -405,7 +410,7 @@ class Visualizer:
         self._document.write(html)
         self._document.write("</details>\n\n\n")
 
-    def frame(
+    def _frame(
         self,
         frame: pl.DataFrame,
         caption: None | str = None,
@@ -413,6 +418,7 @@ class Visualizer:
         with_index: bool = True,
         with_head: bool = True,
     ) -> None:
+        """Render data frame to HTML and add to report."""
         if with_index:
             frame = frame.with_row_index(offset=1)
         self._renderer.frame(frame)
@@ -421,86 +427,107 @@ class Visualizer:
         html = frame._repr_html_().strip()
         if html.startswith("<div>") and html.endswith("</div>"):
             html = html[len("<div>"): -len("</div>")]
-        html = FRAME_BORDER.sub("", html)
+        html = _FRAME_BORDER.sub("", html)
         table_head = '<table>' if klass is None else f'<table class="{klass}">\n'
         if caption is not None:
             table_head += f'<caption>{caption}</caption>\n'
-        html = FRAME_CLASS.sub(table_head, html)
-        html = FRAME_QUOT.sub("", html)
-        html = FRAME_SHAPE.sub("", html)
-        html = FRAME_STYLE.sub("", html)
+        html = _FRAME_CLASS.sub(table_head, html)
+        html = _FRAME_QUOT.sub("", html)
+        html = _FRAME_SHAPE.sub("", html)
+        html = _FRAME_STYLE.sub("", html)
         if not with_head:
-            html = FRAME_HEAD.sub("", html)
+            html = _FRAME_HEAD.sub("", html)
         html = html.replace("<td>", "  <td>").replace("<th>", "  <th>")
-        html = FRAME_EOL.sub(r"\1\n", html)
+        html = _FRAME_EOL.sub(r"\1\n", html)
         html = html.replace("<td>null</td>", "<td></td>")
 
         self._document.write(html)
         self._document.write("\n\n\n")
 
-    def chart(self, name: str, chart: Chart) -> None:
-        if self.emit_interactive_charts():
-            self.dynamic_chart(name, chart)
+    def _chart(self, name: str, chart: _ChartT) -> None:
+        """
+        Add chart to report. Depending on this visualizer's configuration, this
+        method adds either static SVG markup or dynamic JavaScript.
+        """
+        if self._with_interaction:
+            self._dynamic_chart(name, chart)
         else:
-            self.svg_chart(name, chart)
+            self._svg_chart(name, chart)
 
-    def svg_chart(self, name: str, chart: Chart) -> None:
+    def _svg_chart(self, name: str, chart: _ChartT) -> None:
         buffer = StringIO()
         chart.save(buffer, format="svg")
         svg = buffer.getvalue()
 
-        filename = f"{self.chartno()}-{name}.svg"
+        filename = f"{self._chartno()}-{name}.svg"
         self._renderer.chart(filename, svg)
 
         if name != "keyword-pie":
-            svg = SVG_ATTRIBUTES.sub("", svg)
+            svg = _SVG_ATTRIBUTES.sub("", svg)
 
         assert self._document is not None
         self._document.write(svg)
         self._document.write("\n\n\n")
 
-    def dynamic_chart(self, name: str, chart: Chart) -> None:
-        filename = f"{self.chartno()}-{name}.svg"
+    def _dynamic_chart(self, name: str, chart: _ChartT) -> None:
+        filename = f"{self._chartno()}-{name}.svg"
         self._renderer.chart(filename, chart)
 
-        id = f"chart-{self.chartno()}-{name}"
+        id = f"chart-{self._chartno()}-{name}"
         assert self._document is not None
         self._document.write(f'<div id={id}></div>\n')
         self._document.write('<script>\n')
         self._document.write(
-            f'vegaEmbed("#{id}", {chart.to_json()}, {CHART_OPTIONS});\n'
+            f'vegaEmbed("#{id}", {chart.to_json()}, {_CHART_OPTIONS});\n'
         )
         self._document.write('</script>\n\n\n')
 
     # ==================================================================================
 
     def run(self) -> pl.DataFrame:
-        self.configure_display()
-        self.ingest()
+        """Run this visualizer and return the underlying statistics."""
+        self._configure_display()
+        shutil.rmtree(self._chart_dir, ignore_errors=True)
+        self._chart_dir.mkdir(parents=True, exist_ok=True)
+        self._ingest()
 
         path = (self._storage.staging_root / f"{self._coverage.stem()}.html")
         with open(path, mode="w", encoding="utf8") as document:
             try:
                 self._document = document
-                title = self.render_head()
-                self.render_intro(title)
-                self.render_charts()
-                self.render_tables()
-                document.write(DOC_FOOTER)
+                title = self._render_head()
+                self._render_intro(title)
+                self._render_charts()
+                self._render_tables()
+                document.write(_DOC_FOOTER)
             finally:
                 self._document = None
 
         return self._statistics.frame()
 
-    def ingest(self) -> None:
-        path = self._storage.best_available_root / f"{self._coverage.stem()}.parquet"
-        try:
-            statistics = Statistics.read(path)
-            _logger.info('using statistics file="%s"', path)
-        except FileNotFoundError:
-            _logger.info('using built-in statistics')
+    def _configure_display(self) -> None:
+        alt.theme.enable("default")
+
+        from .tool import configure_printing
+        configure_printing()
+
+    def _ingest(self) -> None:
+        # Load the right statistics
+        if self._coverage.stem() == "db":
+            if self._storage.archive_root is None:
+                path = None
+            else:
+                path = self._storage.the_archive_root
+        else:
+            path = self._storage.the_extract_root
+
+        if path is None:
+            path = "«builtin»"
             statistics = Statistics.builtin()
-            self._coverage = Coverage.of(statistics.date_range().dailies())
+        else:
+            statistics = Statistics.read(path / f"{self._coverage.stem()}.parquet")
+
+        _logger.info('using statistics file="%s"', path)
 
         # Capture frequency, tags, date range
         self._frequency = self._coverage.frequency()
@@ -594,7 +621,7 @@ class Visualizer:
 
         # We want to show top_num platforms in addition to Meta's and selected ones
         top_num = 5
-        select_platforms = ("X", "YouTube")
+        select_platforms = ("TikTok", "X", "YouTube")
 
         top = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None)
@@ -623,30 +650,30 @@ class Visualizer:
             top[:top_num] + ["Meta", *meta_platforms, *select_platforms]
         )
 
-    def render_head(self) -> str:
+    def _render_head(self) -> str:
         _logger.debug('render HTML <head>')
 
         main_tag = self._tags[0]
         description = "All Data" if main_tag is None else humanize(main_tag)
         title = f"The DSA Transparency Database: {description}"
 
-        self.html(DOC_HEAD.format(
+        self._html(_DOC_HEAD.format(
             time=self._timestamp.isoformat(),
             title=title,
         ))
-        if self.emit_interactive_charts():
-            self.html(DOC_SCRIPTS)
-        self.html(DOC_STYLE)
-        self.html("</head>")
+        if self._with_interaction:
+            self._html(_DOC_SCRIPTS)
+        self._html(_DOC_STYLE)
+        self._html("</head>")
 
         return title
 
-    def render_intro(self, title: str) -> None:
+    def _render_intro(self, title: str) -> None:
         _logger.debug('render introduction')
         main_tag = self._tags[0]
 
-        self.html(f'<body>\n<main>')
-        self.html(f'<h1>{title}</h1>')
+        self._html(f'<body>\n<main>')
+        self._html(f'<h1>{title}</h1>')
 
         row = self._statistics.frame().lazy().select(
             pl.col("count").filter(predicate("batch_rows", tag=main_tag)).sum()
@@ -654,15 +681,21 @@ class Visualizer:
             pl.col("count").filter(predicate("total_rows", tag=None)).sum()
             .alias("total_rows"),
             pl.col("platform").n_unique(),
-            pl.col("end_date").max() - pl.col("start_date").min() + dt.timedelta(days=1),
+            (
+                pl.col("end_date").max()
+                - pl.col("start_date").min()
+                + dt.timedelta(days=1)
+            )
+            .alias("days"),
+            pl.col("start_date").min(),
+            pl.col("end_date").max(),
             pl.col("text").filter(predicate(tag=main_tag)).is_null().not_().sum()
             .alias("other_entries"),
             pl.col("text").filter(predicate(tag=main_tag)).n_unique()
             .alias("unique_other_entries"),
         ).collect().row(0)
-        batch_rows, total_rows, platform, days, other_entries, unique_other_entries = (
-            row
-        )
+        batch_rows, total_rows, platform, days, start_date, end_date, *rest = row
+        other_entries, unique_other_entries = rest
 
         tag_toc = "\n            ".join(
             f'<li><a href="#{t}">{humanize(cast(str, t))}</a></li>'
@@ -672,7 +705,7 @@ class Visualizer:
             f'<li><a href="#{p.lower().replace(" ", "_")}">{p}</a></li>'
             for p in self._top_platforms
         )
-        self.html(
+        self._html(
             f"""
             <ol>
             <li><a href="#intro">Introduction</a></li>
@@ -690,43 +723,49 @@ class Visualizer:
             """
         )
 
-        secno = self.secno()
-        self.html(f"<h2 id=intro>{secno}. Introduction</h2>")
+        secno = self._secno()
+        self._html(f"<h2 id=intro>{secno}. Introduction</h2>")
 
-        self.frame(
+        self._frame(
             pl.DataFrame({
                 "Description": [
                     "covers",
                     "out of",
                     "submitted by",
                     "over",
+                    "from",
+                    "to",
                     "including",
                     "with",
                 ],
-                "Quantity": [
+                "Quantity": [(f"{el:,}" if isinstance(el, int) else f"{el}") for el in [
                     batch_rows,
                     total_rows,
                     platform,
                     days.days,
+                    start_date,
+                    end_date,
                     other_entries,
                     unique_other_entries,
-                ],
+                ]],
                 "Entity": [
                     "statements of reasons",
                     "statements of reasons",
                     "platforms",
                     "days",
+                    "",
+                    "",
                     "free-text entries",
                     "unique values",
                 ],
-            }),
+            }, strict=False),
             caption="This Report…",
             klass="left-except-2",
             with_index=False,
             with_head=False,
         )
 
-        self.html(
+        self._html(
             f"""
             <p><strong><a
             href="https://github.com/apparebit/shantay">Shantay</a></strong>
@@ -789,13 +828,13 @@ class Visualizer:
             """
         )
 
-    def render_tables(self) -> None:
+    def _render_tables(self) -> None:
         _logger.debug('render data tables')
 
-        self.html(f"<h2 id=data>{self.secno()}. The Data</h2>")
-        self.markdown(self._statistics.summary(markdown=True))
+        self._html(f"<h2 id=data>{self._secno()}. The Data</h2>")
+        self._markdown(self._statistics.summary(markdown=True))
 
-        self.html(f"<h2 id=platform-ranking>{self.secno()}. Platform Ranking</h2>")
+        self._html(f"<h2 id=platform-ranking>{self._secno()}. Platform Ranking</h2>")
         table = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None, tag=self._tags[0])
         ).group_by(
@@ -806,114 +845,114 @@ class Visualizer:
             "count", descending=True
         ).collect()
 
-        self.frame(table, klass="right-except-2")
+        self._frame(table, klass="right-except-2")
 
-        self.html(f"<h2 id=keyword-ranking>{self.secno()}. Keyword Ranking</h2>")
-        self.html(
+        self._html(f"<h2 id=keyword-ranking>{self._secno()}. Keyword Ranking</h2>")
+        self._html(
             '''\
 <p>The percentage for the "null" keyword denotes the fraction of <em>all</em> SoRs,
 whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ''')
-        self.frame(self._keyword_usage, klass="right-except-2")
-        pie = self.overall_keyword_usage()
-        self.chart("keyword-pie", pie)
+        self._frame(self._keyword_usage, klass="right-except-2")
+        pie = self._render_overall_keyword_usage()
+        self._chart("keyword-pie", pie)
 
-        self.html(f"<h2 id=schemas>{self.secno()}. Schemas</h2>")
+        self._html(f"<h2 id=schemas>{self._secno()}. Schemas</h2>")
         remark = (
             '\nAlso see [the official '
             'documentation](https://transparency.dsa.ec.europa.eu/page/api-documentation)'
         )
-        self.markdown(
+        self._markdown(
             format_schema(SCHEMA, title="Source Data") + remark,
             disclosure=True,
             render=not self._renderer.plain
         )
-        self.markdown(
+        self._markdown(
             format_schema(self._statistics.frame(), title=self._statistics.file()),
             disclosure=True,
             render=not self._renderer.plain,
         )
 
-    def render_charts(self) -> None:
+    def _render_charts(self) -> None:
         main_tag = self._tags[0]
         _logger.debug('render charts tag="%s"', "" if main_tag is None else main_tag)
 
         if main_tag is None:
-            title = f"<h2 id=dailies>{self.secno()}. Daily Statements of Reasons</h2>"
+            title = f"<h2 id=dailies>{self._secno()}. Daily Statements of Reasons</h2>"
         else:
             title = (
-                f"<h2 id=dailies>{self.secno()}. Daily Statements of Reasons: "
+                f"<h2 id=dailies>{self._secno()}. Daily Statements of Reasons: "
                 f"{humanize(main_tag)}</h2>"
             )
-        self.html(title)
-        self.chart("daily-sors", self.daily_statements_of_reasons(tag=main_tag))
-        self.chart(
+        self._html(title)
+        self._chart("daily-sors", self._daily_statements_of_reasons(tag=main_tag))
+        self._chart(
             "daily-and-monthly-sors",
-            self.daily_statements_of_reasons(tag=main_tag, with_monthly_sum=True),
+            self._daily_statements_of_reasons(tag=main_tag, with_monthly_sum=True),
         )
-        self.chart("daily-sors-rolling-mean", alt.vconcat(
-            self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=7),
-            self.daily_statements_of_reasons(tag=main_tag, rolling_mean_days=30),
-            spacing=SPACING,
+        self._chart("daily-sors-rolling-mean", alt.vconcat(
+            self._daily_statements_of_reasons(tag=main_tag, rolling_mean_days=7),
+            self._daily_statements_of_reasons(tag=main_tag, rolling_mean_days=30),
+            spacing=_SPACING,
         ).resolve_scale(
             x="shared",
             color="independent",
         ))
 
-        self.chart("daily-sors-with-keywords", alt.vconcat(
-            self.chart_sor_fraction_with_keywords(
+        self._chart("daily-sors-with-keywords", alt.vconcat(
+            self._chart_sor_fraction_with_keywords(
                 tag=main_tag, with_total=main_tag is not None
             ),
-            self.chart_sor_fraction_with_keywords(
+            self._chart_sor_fraction_with_keywords(
                 tag=main_tag, with_monthly_mean=True
             ),
-            spacing=SPACING,
+            spacing=_SPACING,
         ).resolve_scale(
             x="shared",
             color="independent",
         ))
 
-        self.html(f"<h2 id=platforms>{self.secno()}. The Platforms Filing SoRs</h2>")
-        self.chart("platforms", self.cumulative_platform_counts())
+        self._html(f"<h2 id=platforms>{self._secno()}. The Platforms Filing SoRs</h2>")
+        self._chart("platforms", self._render_cumulative_platform_counts())
 
-        self.chart("sors-by-platform", alt.vconcat(
-            self.overall_statements_by_platform(tag=main_tag),
-            self.overall_statements_by_platform(
+        self._chart("sors-by-platform", alt.vconcat(
+            self._render_overall_statements_by_platform(tag=main_tag),
+            self._render_overall_statements_by_platform(
                 tag=main_tag,
-                threshold=10_000_000 if self.has_all_sors() else 50_000
+                threshold=10_000_000 if self._has_all_sors() else 50_000
             ),
-            spacing=SPACING,
+            spacing=_SPACING,
         ).resolve_scale(
             color="shared",
         ).configure_scale(
             barBandPaddingInner=0.05,
         ))
 
-        if not self.has_all_sors():
-            self.chart("keywords-by-platform", alt.vconcat(
-                self.overall_keyword_usage_by_platform(percent=True, tag=main_tag),
-                self.overall_keyword_usage_by_platform(percent=False, tag=main_tag),
-                spacing=SPACING,
+        if not self._has_all_sors():
+            self._chart("keywords-by-platform", alt.vconcat(
+                self._render_overall_keyword_usage_by_platform(percent=True, tag=main_tag),
+                self._render_overall_keyword_usage_by_platform(percent=False, tag=main_tag),
+                spacing=_SPACING,
             ).resolve_scale(color='independent'))
 
-        self.html(f"<h2 id=sors>{self.secno()}. The Statements of Reasons</h2>")
-        self.render_standard_timelines(None, tag=main_tag)
+        self._html(f"<h2 id=sors>{self._secno()}. The Statements of Reasons</h2>")
+        self._render_standard_timelines(None, tag=main_tag)
 
-        self.html(f"<h2 id=outages>{self.secno()}. Outages</h2>")
-        self.render_outages()
+        self._html(f"<h2 id=outages>{self._secno()}. Outages</h2>")
+        self._render_outages()
 
         for tag in self._tags[1:]:
             assert tag is not None
             _logger.debug('render charts tag="%s"', tag)
-            self.html(f"<h2 id={tag}>{self.secno()}. Focus on {humanize(tag)}</h2>")
-            self.render_standard_timelines(
+            self._html(f"<h2 id={tag}>{self._secno()}. Focus on {humanize(tag)}</h2>")
+            self._render_standard_timelines(
                 file_stem_for(tag), tag=tag
             )
 
         for platform in self._top_platforms:
-            self.render_platform(platform)
+            self._render_platform(platform)
 
-    def render_platform(self, platform: str) -> None:
+    def _render_platform(self, platform: str) -> None:
         main_tag = self._tags[0]
         _logger.debug(
             'render charts tag="%s", platform="%s"',
@@ -922,16 +961,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         platform_id = platform.lower().replace(" ", "_")
-        self.html(f"<h2 id={platform_id}>{self.secno()}. {platform}</h2>")
+        self._html(f"<h2 id={platform_id}>{self._secno()}. {platform}</h2>")
 
         # Meta stands for combination of Facebook, Instagram, Other Meta
         # Product, Threads, and WhatsApp.
         stats = None
-        cutoff = None
         effective_platform = platform
         if platform == "Meta":
             stats, self._statistics = self._statistics, self._meta
-            cutoff, self._with_cutoff = self._with_cutoff, False
             self._is_meta = True
             effective_platform = None
 
@@ -941,34 +978,53 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if self._statistics.frame().filter(predicate(**filter)).height == 0:
             _logger.debug('due to lack of data, skipping platform="%s"', platform)
-            self.html("<p>No data available for platform</p>")
+            self._html("<p>No data available for platform</p>")
             return
 
         try:
-            self.chart(
+            self._chart(
                 f"{file_stem_for(platform)}-daily-sors",
-                self.daily_statements_of_reasons(
+                self._daily_statements_of_reasons(
                     tag=main_tag,
                     platform=platform,
                     use_rows_as_source=platform == "Meta",
                 )
             )
-            self.render_standard_timelines(
+            self._render_standard_timelines(
                 file_stem_for(platform), tag=main_tag, platform=effective_platform
             )
         finally:
             if platform == "Meta":
                 assert stats is not None
                 self._statistics = stats
-                self._with_cutoff = cutoff
                 self._is_meta = False
 
-    def render_standard_timelines(
+    def _render_standard_timelines(
         self, prefix: None | str, tag: None | str = None, platform: None | str = None
     ) -> None:
-        metrics: list[MetricDeclaration | str | tuple[str, str]] = [
-            StatementCountMetric
-        ]
+        def emit(metric: MetricDeclaration, chart: None | _ChartT) -> None:
+            if chart is None:
+                self._html(f'<p><em>No Data Available on {metric.label}!</em></p>')
+                return
+
+            if metric is ProcessingDelayMetric:
+                name = "delays"
+            else:
+                assert isinstance(metric.field, str)
+                name = metric.field.replace("_", "-")
+            if prefix is not None:
+                name = f"{prefix}-{name}"
+            self._chart(name, chart)
+
+        table = self._prepare_timeline_data(
+            StatementCountMetric, tag=tag, platform=platform
+        )
+        cutoff = self._compute_cutoff(table)
+        emit(StatementCountMetric, self._create_timeline_chart(
+            StatementCountMetric, table, tag=tag, platform=platform, cutoff=cutoff
+        ))
+
+        metrics: list[MetricDeclaration | str | tuple[str, str]] = []
         if tag is None:
             metrics.append(CategoryMetric)
         metrics.extend([
@@ -996,47 +1052,30 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ])
 
         for metric in metrics:
-            name = None
-
             if isinstance(metric, tuple):
                 caption, column = metric
-                self.frame(
-                    self.text_usage(column, tag, platform),
+                self._frame(
+                    self._prepare_text_usage(column, tag, platform),
                     caption=caption,
                     klass="right-except-2-3",
                 )
                 continue
-
             elif metric == "keywords":
                 metric = self._keyword_metric.without_null()
-                chart = self.render_timeline(metric, tag, platform, allow_cutoff=False)
-
+                chart = self._render_timeline(metric, tag, platform, cutoff=None)
             elif metric == "moderation-delays":
                 metric = ModerationDelayMetric
-                chart = self.render_moderation_delays(tag, platform)
-
+                chart = self._render_moderation_delays(tag, platform)
             else:
                 assert isinstance(metric, MetricDeclaration)
-                chart = self.render_timeline(metric, tag, platform, allow_cutoff=True)
+                ko = None if metric.quantity != "count" else cutoff
+                chart = self._render_timeline(metric, tag, platform, cutoff=ko)
 
-            if chart is None:
-                self.html(
-                    f"<p><em>No Data Available on {metric.label}!</em></p>"
-                )
-                continue
-
-            if metric is ProcessingDelayMetric:
-                name = "delays"
-            else:
-                assert isinstance(metric.field, str)
-                name = metric.field.replace("_", "-")
-            if prefix is not None:
-                name = f"{prefix}-{name}"
-            self.chart(name, chart)
+            emit(metric, chart)
 
     # ==================================================================================
 
-    def daily_statements_of_reasons(
+    def _daily_statements_of_reasons(
         self,
         *,
         rolling_mean_days: None | int = None,
@@ -1045,7 +1084,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         platform: None | str = None,
         use_rows_as_source: bool = False,
         with_monthly_sum: bool = False,
-    ) -> alt.Chart | alt.LayerChart:
+    ) -> _ChartT:
         if use_rows_as_source:
             source = "rows"
             filter = predicate("rows", tag=tag)
@@ -1122,14 +1161,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.X("start_date:T").scale(domain=self._date_range.to_limits()).title("Date"),
             alt.Y(f"{source}:Q").title(daily_axis),
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height(),
+            width=self._timeline_width(),
+            height=self._timeline_height(),
         )
 
         if with_monthly_sum:
             assert monthly_table is not None
             monthly = alt.Chart(monthly_table, title=title).mark_bar(
-                color=f"{CYAN}A0",
+                color=f"{Palette.CYAN}A0",
             ).encode(
                 alt.X("start_date:T"),
                 alt.X2("end_date:T"),
@@ -1143,9 +1182,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 color="independent"
             )
 
-        return chart
+        return chart.interactive()
 
-    def sor_fraction_with_keywords_data(
+    def _sor_fraction_with_keywords_data(
         self,
         *,
         tag: None | str = None,
@@ -1242,15 +1281,15 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             value_name="pct",
         )
 
-    def chart_sor_fraction_with_keywords(
+    def _chart_sor_fraction_with_keywords(
         self,
         *,
         rolling_mean_days: None | int = None,
         with_total: bool = False,
         with_monthly_mean: bool = False,
         tag: None | str = None,
-    ) -> alt.Chart | alt.LayerChart:
-        daily_frame = self.sor_fraction_with_keywords_data(
+    ) -> _ChartT:
+        daily_frame = self._sor_fraction_with_keywords_data(
             tag=tag,
             rolling_mean_days=rolling_mean_days,
             with_total=with_total,
@@ -1285,14 +1324,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 range=[Palette.BLUE, Palette.RED],
             ),
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height(),
+            width=self._timeline_width(),
+            height=self._timeline_height(),
         )
 
         if not with_monthly_mean:
-            return daily_chart
+            return daily_chart.interactive()
 
-        monthly_frame = self.sor_fraction_with_keywords_data(
+        monthly_frame = self._sor_fraction_with_keywords_data(
             tag=tag,
             rolling_mean_days=None,
             with_monthly_mean=True,
@@ -1329,29 +1368,29 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         chart = monthly_chart + daily_chart + label
-        return chart
+        return chart.interactive()
 
     # ----------------------------------------------------------------------------------
 
-    def render_timeline(
+    def _render_timeline(
         self,
         spec: MetricDeclaration,
         tag: None | str = None,
         platform: None | str = None,
-        allow_cutoff: bool = True,
-    ) -> None | alt.Chart | alt.LayerChart | alt.VConcatChart:
-        table = self.timeline_data(spec, tag=tag, platform=platform)
+        cutoff: None | int = None,
+    ) -> None | _ChartT:
+        table = self._prepare_timeline_data(spec, tag=tag, platform=platform)
 
         if not spec.has_variants():
-            return self.timeline_chart(
+            return self._create_timeline_chart(
                 spec,
                 table,
                 tag=tag,
                 platform=platform,
-                allow_cutoff=allow_cutoff
+                cutoff=cutoff,
             )
 
-        ranking = self.variant_ranking(spec, table)
+        ranking = self._compute_ranking(spec, table)
         categories = ranking.height
         if categories == 0:
             return None
@@ -1366,30 +1405,30 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         else:
             cut = None
 
-        spec2, table2 = self.apply_ranking(
+        spec2, table2 = self._apply_ranking(
             spec, table, ranking.get_column(spec.selector)
         )
-        chart = self.timeline_chart(
+        chart = self._create_timeline_chart(
             spec2,
             table2,
             tag=tag,
             platform=platform,
-            allow_cutoff=allow_cutoff,
+            cutoff=cutoff,
             with_x_title=cut is None,
         )
 
         if cut is None:
-            return chart
+            return chart.interactive()
 
-        spec2, table2 = self.apply_ranking(
+        spec2, table2 = self._apply_ranking(
             spec, table, ranking.get_column(spec.selector).to_list()[cut:]
         )
-        chart2 = self.timeline_chart(
+        chart2 = self._create_timeline_chart(
             spec2,
             table2,
             tag=tag,
             platform=platform,
-            allow_cutoff=False,
+            cutoff=None,
             with_title=False,
             with_full_height=False,
         )
@@ -1397,9 +1436,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         return alt.vconcat(chart, chart2, spacing=0).resolve_scale(
             x="shared",
             color="shared",
-        )
+        ).interactive()
 
-    def timeline_data(
+    def _prepare_timeline_data(
         self,
         spec: MetricDeclaration,
         tag: None | str = None,
@@ -1420,7 +1459,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             predicate(**filters)
         )
 
-        if self.is_monthly():
+        if self._is_monthly():
             table = table.group_by(
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
@@ -1486,7 +1525,19 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         return table.collect()
 
-    def variant_ranking(
+    def _compute_cutoff(self, table: pl.DataFrame) -> None | int:
+        if not self._with_no_outliers or not self._is_monthly():
+            return None
+
+        v3, v2, v1 = table.get_column("count").top_k(3).sort()
+        if v1 / v3 >= _CUTOFF_FACTOR and v2 / v3 >= _CUTOFF_FACTOR:
+            return upper_limit(v3, leading=2)
+        if v1 / v2 >= _CUTOFF_FACTOR:
+            return upper_limit(v2, leading=2)
+
+        return None
+
+    def _compute_ranking(
         self,
         spec: MetricDeclaration,
         table: pl.DataFrame,
@@ -1520,7 +1571,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.col("pct").cum_sum().alias("cum_pct")
         ).collect()
 
-    def apply_ranking(
+    def _apply_ranking(
         self, spec: MetricDeclaration, table: pl.DataFrame, names: Iterable[None | str]
     ) -> tuple[MetricDeclaration, pl.DataFrame]:
         """Apply the ranking to the metric and its data."""
@@ -1533,17 +1584,17 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         table2 = table.filter(filter)
         return spec2, table2
 
-    def timeline_chart(
+    def _create_timeline_chart(
         self,
         spec: MetricDeclaration,
         table: pl.DataFrame,
         tag: None | str = None,
         platform: None | str = None,
-        allow_cutoff: bool = True,
+        cutoff: None | int = None,
         with_title: bool = True,
         with_x_title: bool = True,
         with_full_height: bool = True,
-    ) -> alt.Chart | alt.LayerChart:
+    ) -> _ChartT:
         """
         Generate the standard timeline chart. The data frame may contain daily
         or monthly summary statistics.
@@ -1556,12 +1607,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         }[spec.quantity]
 
         # X-Axis
-        xtitle = ("Month" if self.is_monthly() else "Day") if with_x_title else None
+        xtitle = ("Month" if self._is_monthly() else "Day") if with_x_title else None
         encoding: list[Any] = [
             alt.X("start_date:T").scale(domain=self._date_range.to_limits())
             .title(xtitle),
         ]
-        if self.is_monthly():
+        if self._is_monthly():
             encoding.append(alt.X2("end_date:T").title(""))
 
         # Variant Order
@@ -1569,25 +1620,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         # Y-Axis
         yaxis = alt.Y(f"sum({spec.quantity}):Q", sort=order).title(spec.quant_label)
-
-        cutoff = None
-        signage = None
-        if (
-            self._with_cutoff
-            and allow_cutoff
-            and self.is_monthly()
-            and spec.quantity == "count"
-            and platform is None
-        ):
-            if tag is None:
-                cutoff = 2_000_000_000
-            elif tag == StatementCategoryProtectionOfMinors:
-                cutoff = 5_000_000
-
-            if cutoff is not None:
-                yaxis = yaxis.scale(domain=(0, cutoff), clamp=True)
-                signage = self.warning_signage(cutoff, table)
-
+        if cutoff is not None:
+            yaxis = yaxis.scale(domain=(0, cutoff), clamp=True)
         encoding.append(yaxis)
 
         # (Variant) Colors
@@ -1613,7 +1647,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             title = f"Meta: {title}"
         if tag is not None:
             title += f" for {humanize(tag)}"
-        title += f" — {"Monthly" if self.is_monthly() else "Daily"} {quantity}"
+        title += f" — {"Monthly" if self._is_monthly() else "Daily"} {quantity}"
 
         # Base Chart
         base = alt.Chart(
@@ -1622,12 +1656,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).encode(
             *encoding
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height(not with_full_height),
+            width=self._timeline_width(),
+            height=self._timeline_height(not with_full_height),
         )
 
         # Charts
-        if self.is_monthly():
+        if self._is_monthly():
             chart = base.mark_bar(**mark_props)
 
             if spec is StatementCountMetric:
@@ -1646,9 +1680,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = base.mark_area(**mark_props)
 
         if cutoff is not None:
-            assert signage is not None
             warnings = alt.Chart(
-                signage
+                self._compute_cutoff_warnings(cutoff, table)
             ).encode(
                 alt.X("mid_date:T"),
                 alt.Y("cutoff:Q"),
@@ -1663,11 +1696,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             chart = chart + warnings
 
         if with_full_height and spec.quantity == "mean" and spec.label == "Delays":
-            chart = chart + self.processing_delay_signage(tag, platform)
+            chart = chart + self._add_average_delays(tag, platform)
 
         return chart
 
-    def warning_signage(self, cutoff: int, frame: pl.DataFrame) -> pl.DataFrame:
+    def _compute_cutoff_warnings(self, cutoff: int, frame: pl.DataFrame) -> pl.DataFrame:
         return frame.with_columns(
             pl.lit(cutoff).alias("cutoff"),
             pl.when(
@@ -1679,7 +1712,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ).alias("warning"),
         )
 
-    def processing_delay_signage(
+    def _add_average_delays(
         self, tag: None | str = None, platform: None | str = None
     ) -> alt.LayerChart:
         constraints = {
@@ -1753,7 +1786,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
     # ----------------------------------------------------------------------------------
 
-    def render_moderation_delays(
+    def _render_moderation_delays(
         self,
         tag: None | str = None,
         platform: None | str = None,
@@ -1800,8 +1833,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).mark_bar(
             color=Palette.BLUE,
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height() * 2 // 3,
+            width=self._timeline_width(),
+            height=self._timeline_height() * 2 // 3,
         )
 
         mean = alt.Chart(table).encode(
@@ -1811,17 +1844,17 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).mark_bar(
             color=Palette.LIGHT_BLUE,
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height() // 2,
+            width=self._timeline_width(),
+            height=self._timeline_height() // 2,
         )
 
         return alt.vconcat(max, mean, spacing=5).resolve_scale(
             x="shared",
-        )
+        ).interactive()
 
     # ----------------------------------------------------------------------------------
 
-    def cumulative_platform_counts(self, keyword: None | str = None) -> alt.Chart:
+    def _render_cumulative_platform_counts(self, keyword: None | str = None) -> _ChartT:
         ALL = "All Platforms"
         KEY = "Platforms w/ Keywords"
         metrics = [ALL, KEY]
@@ -1832,7 +1865,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             predicate("category_specification", entity=None, tag=self._tags[0])
         )
 
-        if self.is_monthly():
+        if self._is_monthly():
             table = table.group_by(
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
@@ -1884,7 +1917,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             value_name="Count",
         ).collect()
 
-        freq = "Monthly" if self.is_monthly() else "Daily"
+        freq = "Monthly" if self._is_monthly() else "Daily"
         return (
             alt.Chart(
                 table,
@@ -1894,21 +1927,21 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 tooltip=True
             ).encode(
                 alt.X("mid_date:T")
-                .title("Month" if self.is_monthly() else "Day"),
+                .title("Month" if self._is_monthly() else "Day"),
                 alt.Y("Count:Q").title("Number of Platforms"),
                 alt.Color("Kind:N").scale(
                     domain=metrics,
                     range=[Palette.GRAY, Palette.ORANGE, Palette.RED],
                 ),
             ).properties(
-                width=self.timeline_width(),
-                height=self.timeline_height(),
+                width=self._timeline_width(),
+                height=self._timeline_height(),
             ).interactive()
         )
 
-    def overall_statements_by_platform(
+    def _render_overall_statements_by_platform(
         self, threshold: None | int = None, tag: None | str = None
-    ) -> alt.Chart | alt.LayerChart:
+    ) -> _ChartT:
         table = self._statistics.frame().lazy().filter(
             predicate("rows", entity=None, tag=tag)
         ).group_by(
@@ -1940,7 +1973,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 alt.Y("count:Q")
                 .scale(type="log", domain=(
                     10_000,
-                    30_000_000_000 if self.has_all_sors() else 100_000_000
+                    30_000_000_000 if self._has_all_sors() else 100_000_000
                 ), clamp=True)
                 .title("log(Statements of Reasons)"),
                 alt.Text("label"),
@@ -1961,23 +1994,23 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             tooltip=True,
             color=f"{Palette.PURPLE}90" if threshold else Palette.PURPLE,
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height(),
+            width=self._timeline_width(),
+            height=self._timeline_height(),
         )
 
         if threshold is None or threshold < 50_000:
-            return chart
+            return chart.interactive()
         else:
             text = base.mark_text(
                 yOffset=30,
                 fontWeight="bold",
             )
 
-            return chart + text
+            return (chart + text).interactive()
 
-    def overall_keyword_usage_by_platform(
+    def _render_overall_keyword_usage_by_platform(
         self, percent: bool, tag: None | str = None
-    ) -> alt.Chart:
+    ) -> _ChartT:
         frame = self._statistics.frame().lazy().filter(
             predicate(
                 "category_specification",
@@ -2037,11 +2070,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.Y(y_data).title(y_title),
             color,
         ).properties(
-            width=self.timeline_width(),
-            height=self.timeline_height(),
-        )
+            width=self._timeline_width(),
+            height=self._timeline_height(),
+        ).interactive()
 
-    def overall_keyword_usage(self) -> alt.Chart:
+    def _render_overall_keyword_usage(self) -> _ChartT:
         table = self._keyword_usage.filter(
             pl.col("keyword").is_in(self._frequent_keywords)
         ).with_columns(
@@ -2064,7 +2097,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ).interactive()
         )
 
-    def text_usage(
+    def _prepare_text_usage(
         self,
         column: None | str = None,
         tag: None | str = None,
@@ -2098,7 +2131,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.col("text").fill_null("␀")
         )
 
-    def render_outages(self) -> None:
+    def _render_outages(self) -> None:
         outages = self._statistics.frame().filter(
             pl.col("column").eq("rows")
         ).group_by(
@@ -2161,7 +2194,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             pl.exclude("sortkey")
         )
 
-        self.html(
+        self._html(
             """
             <p><strong>An outage</strong> is a period of at least a day for
             which a platform did not report any SoRs, despite reporting SoRs
@@ -2170,12 +2203,12 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             """
         )
 
-        self.frame(
+        self._frame(
             summary,
             caption="Platforms and Days with/without SoRs",
             klass="right-except-2"
         )
-        self.frame(
+        self._frame(
             outages,
             caption="Outages of More Than One Day",
             klass="right-except-2"

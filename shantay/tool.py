@@ -220,6 +220,11 @@ def get_configuration(
     if options.task in ("info", "recover", "visualize") or storage.archive_root is None:
         options.workers = 1
 
+    if options.interactive_report and options.task != "visualize":
+        raise ConfigError("please only use --interactive-report with `visualize` task")
+    if options.clamp_outliers and options.task != "visualize":
+        raise ConfigError("please only use --clamp-outliers with `visualize` task")
+
     # Finish it all up
     return storage, coverage, metadata
 
@@ -281,6 +286,8 @@ def _run(options: Any) -> None:
             coverage=coverage,
             metadata=metadata,
             offline=options.offline,
+            interactive=options.interactive_report,
+            clamp_outliers=options.clamp_outliers,
             progress=Progress(),
         )
         frame = processor.run(task)

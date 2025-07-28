@@ -25,7 +25,7 @@ from .schema import (
 )
 from .stats import Statistics
 from .util import annotate_error, scale_time
-from .viz import visualize
+from .viz import Visualizer
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -44,6 +44,8 @@ class Processor[R: Release]:
         coverage: Coverage[Daily],
         metadata: Metadata,
         offline: bool = False,
+        interactive: bool = False,
+        clamp_outliers: bool = False,
         progress: Progress = NO_PROGRESS,
     ) -> None:
         self._dataset = dataset
@@ -51,6 +53,8 @@ class Processor[R: Release]:
         self._coverage = coverage
         self._metadata = metadata
         self._offline = offline
+        self._interactive = interactive
+        self._clamp_outliers = clamp_outliers
         self._progress = progress
         self._running_time = 0.0
 
@@ -862,12 +866,13 @@ class Processor[R: Release]:
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
     def visualize(self) -> None:
-        """Visualize the analysis results."""
-        visualize(
+        """Visualize summary statistics."""
+        Visualizer(
             storage=self._storage,
             coverage=self._coverage,
-            notebook=False,
-        )
+            with_interaction=self._interactive,
+            with_no_outliers=self._clamp_outliers,
+        ).run()
 
 
 def distilled_category_exists(root: Path, release: Daily, metadata: Metadata) -> bool:
