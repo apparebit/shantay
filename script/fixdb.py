@@ -146,11 +146,10 @@ def recompute(storage: Storage, release: Daily) -> tuple[int, int, int, int]:
         total_rows_with_keywords1 += counter["total_rows_with_keywords"]
 
         path = storage.staging_root / release.temp_directory
-        csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
-        ttl, kw = dataset.get_total_row_counts(csv_files, index, name)
-
-        total_rows2 += ttl
-        total_rows_with_keywords2 += kw
+        for csv_file in path.glob(f"sor-global-{release.id}-full-{index:05}-*.csv"):
+            ttl, kw = dataset.get_total_row_counts(csv_file)
+            total_rows2 += ttl
+            total_rows_with_keywords2 += kw
 
         shutil.rmtree(storage.staging_root / release.temp_directory)
 

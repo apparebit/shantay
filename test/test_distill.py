@@ -88,9 +88,17 @@ class TestDistill(unittest.TestCase):
 
         with self.subTest("determine row counts"):
             glob = f"{STAGING / release.temp_directory}/*.csv"
-            count1, count2 = dataset.get_total_row_counts(glob, 0, ZIP_FILES[0])
-            self.assertEqual(count1, 100)
-            self.assertEqual(count2, 12)
+
+            total_rows = keyword_rows = 0
+            for csv_file in sorted(
+                (STAGING / release.temp_directory).glob("*.csv")
+            ):
+                tl, kw = dataset.get_total_row_counts(csv_file)
+                total_rows += tl
+                keyword_rows += kw
+
+            self.assertEqual(total_rows, 100)
+            self.assertEqual(keyword_rows, 12)
 
         with self.subTest("distill first batch of category data"):
             frame = dataset._read_rows(
@@ -103,7 +111,9 @@ class TestDistill(unittest.TestCase):
             dataset._validate_schema(frame)
 
             counters = Counter(batch_count=2)
-            counters += dataset._assemble_frame_counters(frame, count1, count2)
+            counters += dataset._assemble_frame_counters(
+                frame, total_rows, keyword_rows
+            )
             self.assertEqual(counters["batch_count"], 2)
             self.assertEqual(counters["total_rows"], 100)
             self.assertEqual(counters["total_rows_with_keywords"], 12)

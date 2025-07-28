@@ -115,9 +115,13 @@ class StatementsOfReasons(Dataset):
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
         progress.step(index, extra="count rows")
-        total_rows, total_rows_with_keywords = self.get_total_row_counts(
-            csv_files, index, name
-        )
+        total_rows = keyword_rows = 0
+        for csv_file in sorted(
+            path.glob(f"sor-global-{release.id}-full-{index:05}-*.csv")
+        ):
+            tl, kw = self.get_total_row_counts(csv_file)
+            total_rows += tl
+            keyword_rows += kw
 
         frame = self._read_rows(
             csv_files=csv_files,
@@ -140,42 +144,40 @@ class StatementsOfReasons(Dataset):
         with open(path, mode="rb") as file:
             digest = hashlib.file_digest(file, "sha256").hexdigest()
 
-        return digest, self._assemble_frame_counters(
-            frame, total_rows, total_rows_with_keywords
-        )
+        return digest, self._assemble_frame_counters(frame, total_rows, keyword_rows)
 
-    def get_total_row_counts(
-        self, csv_files: str, index: int, name: str
-    ) -> tuple[int, int]:
+    def get_total_row_counts(self, path: Path) -> tuple[int, int]:
         """
-        Determine number of rows (`total_rows`) and rows with keywords
-        (`total_rows_with_keywords`) across all CSV files in the batch.
+        Determine the number of rows and rows with keywords in the CSV file with
+        the given path.
+
+        In the common case of CSV files being parsed with Pola.rs, this method
+        does another pass over the CSV file. That obviously is less than ideal.
+        But since we can't interpose on the parsing of individual rows, that
+        also seems unavoidable.
+
+        This function used to read files with Pola.rs' `scan_csv()` and then
+        also parse the category_specification column; the latter was a
+        workaround to badly formatted entries in about 20 out of 600 releases.
+        But when `scan_csv()` became stricter with v1.31.0 (and hence failed on
+        some DSA DB releases), I switched the implementation to a much simpler
+        textual scan. To avoid running the full data through the processor cache
+        twice, the new implementation interleaves scanning for end-of-line with
+        scanning for "KEYWORD" followed by an underscore.
         """
-        # It's too bad that we parse this column twice, once for the full frame
-        # and once for the filtered version. But since ingesting the full frame
-        # has two levels of fall back, adding the logic for also parsing the
-        # full frame doesn't seem to fit. Previously, this function avoided
-        # parsing and used a simpler syntactic test. Alas, that failed for maybe
-        # twenty out of 600 something releases.
-        rows, rows_with_keywords = (
-            pl.scan_csv(csv_files, infer_schema=False)
-            .select(
-                parse_list("category_specification"),
-            ).with_columns(
-                empty_list_to_null("category_specification"),
-            ).select(
-                pl.len(),
-                pl.col("category_specification").is_not_null().sum(),
-            )
-            .collect()
-            .row(0)
-        )
-        _logger.debug('counted filter="none", rows=%d, file="%s"', rows, name)
+        total_rows = keyword_rows = 0
+        with open(path, mode="r", encoding="utf8") as file:
+            file.readline()
+            while (line := file.readline()):
+                total_rows += 1
+                if "KEYWORD_" in line:
+                    keyword_rows += 1
+
         _logger.debug(
-            'counted filter="with_keywords", rows=%d, file="%s"',
-            rows_with_keywords, name
+            'counted rows=%d, rows-with-keywords=%s, file="%s"',
+            total_rows, keyword_rows, path.name
         )
-        return rows, rows_with_keywords
+        return total_rows, keyword_rows
 
     def _read_rows(
         self,
@@ -245,10 +247,8 @@ class StatementsOfReasons(Dataset):
                 )
 
             try:
-                frame = self.finish_frame(
-                    release,
-                    self._read_csv_row_by_row(file_path, category).lazy()
-                ).collect()
+                frame = self._read_csv_row_by_row(file_path, category)
+                frame = self.finish_frame(release, frame.lazy()).collect()
                 frames.append(frame)
 
                 _logger.debug(
@@ -308,12 +308,18 @@ class StatementsOfReasons(Dataset):
             header = next(reader)
 
             if isinstance(category, str):
-                category_index = header.index("category")
-                addition_index = header.index("category_addition")
-                if category_index < 0:
-                    raise ValueError(f'"{path}" does not include "category" column')
-                if addition_index < 0:
-                    raise ValueError(f'"{path}" does not include "category_addition" column')
+                try:
+                    category_index = header.index("category")
+                except ValueError as x:
+                    raise ValueError(
+                        f'"{path}" does not include "category" column'
+                    ) from x
+                try:
+                    addition_index = header.index("category_addition")
+                except ValueError as x:
+                    raise ValueError(
+                        f'"{path}" does not include "category_addition" column'
+                    ) from x
 
                 predicate = (
                     lambda row: row[category_index] == category or category in row[addition_index]
