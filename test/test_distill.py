@@ -1,7 +1,10 @@
 from collections import Counter
 import datetime as dt
 from pathlib import Path
-import unittest
+
+import polars as pl
+
+from .runtime import TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
@@ -33,13 +36,7 @@ CSV_FILES = [
 ]
 
 
-class TestDistill(unittest.TestCase):
-
-    def assertFileEqual(self, path1: Path, path2: Path) -> None:
-        data1 = path1.read_bytes()
-        data2 = path2.read_bytes()
-        self.assertEqual(len(data1), len(data2), "file contents must have equal length")
-        self.assertEqual(data1, data2, "file contents must be equal")
+class TestDistill(TestCase):
 
     def test_extraction(self):
         self.maxDiff = None  # When something goes wrong, we want to see *all* about it
@@ -124,9 +121,13 @@ class TestDistill(unittest.TestCase):
             self.assertFalse(framedir.exists())
             framedir.mkdir(parents=True)
             batch0 = framedir / release.batch_file(0)
+            # Ensure that writing does not fail
             frame.write_parquet(batch0)
 
-            self.assertFileEqual(batch0, FIXTURE / release.batch_file(0))
+            self.assertFrameEqual(
+                frame,
+                pl.read_parquet(FIXTURE / release.batch_file(0))
+            )
 
         with self.subTest("extract second batch of category data"):
             batch1 = STAGING / release.directory / release.batch_file(1)
@@ -141,11 +142,6 @@ class TestDistill(unittest.TestCase):
                 category=StatementCategoryProtectionOfMinors,
             )
 
-            self.assertEqual(
-                digest,
-                "941a8be34ef1c5124b85182377d673b1fe7a9bf7c260fcb8995d9e620fa6a271",
-            )
-
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
             self.assertFileEqual(workdir / CSV_FILES[2], FIXTURE / "csv" / CSV_FILES[2])
             self.assertFileEqual(workdir / CSV_FILES[3], FIXTURE / "csv" / CSV_FILES[3])
@@ -158,7 +154,10 @@ class TestDistill(unittest.TestCase):
             self.assertEqual(counters["batch_rows_with_keywords"], 2 + 0)
 
             self.assertTrue(batch1.exists())
-            self.assertFileEqual(batch1, FIXTURE / release.batch_file(1))
+            self.assertFrameEqual(
+                pl.read_parquet(batch1),
+                pl.read_parquet(FIXTURE / release.batch_file(1))
+            )
 
         with self.subTest("analyze release data"):
             collector = Collector()
@@ -202,12 +201,28 @@ class TestDistill(unittest.TestCase):
             self.assertIn("validate release", lines[offset + 1])
             self.assertIn("validated release", lines[offset + 2])
             self.assertIn('unarchived type="nested archive"', lines[offset + 3])
-            self.assertIn('counted filter="none", rows=100', lines[offset + 4])
-            self.assertIn('counted filter="with_keywords", rows=12', lines[offset + 5])
+            self.assertIn(
+                'counted rows=50, rows-with-keywords=4, file='
+                '"sor-global-2024-03-14-full-00000-00000.csv"',
+                lines[offset + 4]
+            )
+            self.assertIn(
+                'counted rows=50, rows-with-keywords=8, file='
+                '"sor-global-2024-03-14-full-00000-00001.csv"',
+                lines[offset + 5]
+            )
             self.assertIn("ingested rows=8", lines[offset + 6])
             self.assertIn('unarchived type="nested archive"', lines[offset + 7])
-            self.assertIn('counted filter="none", rows=102', lines[offset + 8])
-            self.assertIn('counted filter="with_keywords", rows=1', lines[offset + 9])
+            self.assertIn(
+                'counted rows=50, rows-with-keywords=0, file='
+                '"sor-global-2024-03-14-full-00001-00000.csv"',
+                lines[offset + 8]
+            )
+            self.assertIn(
+                'counted rows=52, rows-with-keywords=1, file='
+                '"sor-global-2024-03-14-full-00001-00001.csv"',
+                lines[offset + 9]
+            )
             offset += 10
             # Trying to parse both CSV files in one Pola.rs operation fails:
             self.assertIn(

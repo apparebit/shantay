@@ -1,26 +1,94 @@
 """
-A nicer unittest runtime. Compared to pytest, unittest seems the less terrible
-option because it is much simpler and doesn't have all the unpredictable magic.
-But it still is pretty terrible, too. Notably, its implementation does not
-separate the logic for running tests and tabulating results from the code that
-tracks progress and displays results to users. Furthermore, while subtests are
-an incredibly useful feature, they aren't treated as first class. Generally
-nesting tests within tests would have been a cleaner model. Because of this
-mingling of concerns, this module must necessarily access some private
-attributes and mirror some gnarly aspects of the original. All that code is
-hidden in the `testunit` adapter.
+A nicer `unittest` runtime.
+
+Compared to pytest, unittest seems the less terrible option because it is much
+simpler and has less unpredictable magic. But it is pretty terrible, too.
+Notably, its implementation does not separate the logic for running tests and
+tabulating results from the code that tracks progress and displays results to
+users. Furthermore, while subtests are an incredibly useful feature, they aren't
+treated as first class. Nesting tests within tests is a far simpler and cleaner
+model, implemented by many JavaScript testing frameworks.
+
+This runtime offers a partial solution. Notably, it introduces a new `TestCase`
+base class with additional assertions, notably for comparing data frames with
+the same data but different types, such as one enumeration having more variants
+than the other. The runtime also improves on progress tracking and test
+reporting. However, to do so, it needs to access some private attributes of the
+`unittest` implementation and hence mirror some gnarly aspects of a badly
+encapsulated original. All that code is hidden in the `testunit` adapter. Since
+the Python core team has shown little interest in improving the state of
+`unittest`, violating encapsulation seems mostly safe as well.
 """
 import dataclasses
 import inspect
 import json
 import os
+from pathlib import Path
 from types import TracebackType
 from typing import Any, Callable, TextIO, TypeAlias, TYPE_CHECKING
 import unittest
 
+import polars as pl
+
+from shantay.metadata import Metadata
+
 
 ExcInfo: TypeAlias = tuple[type[BaseException], BaseException, TracebackType]
 OptExcInfo: TypeAlias = ExcInfo | tuple[None, None, None]
+
+
+class TestCase(unittest.TestCase):
+    """A more suitable test case with methods to make assertions about meta data
+    and data."""
+
+    def assertFileEqual(self, path1: Path, path2: Path) -> None:
+        data1 = path1.read_bytes()
+        data2 = path2.read_bytes()
+        self.assertEqual(len(data1), len(data2), "file contents must have equal length")
+        self.assertEqual(data1, data2, "file contents must be equal")
+
+    def assertMetaDataEqual(self, meta1: Metadata, meta2: Metadata) -> None:
+        """Assert that the two meta data instances describe the same data,
+        ignoring digests."""
+        self.assertEqual(meta1.category, meta2.category, "metadata must have same category")
+        self.assertEqual(meta1.range, meta2.range, "metadata must have the same date range")
+        for item1, item2 in zip(meta1.records, meta2.records):
+            item1["sha256"] = None
+            item2["sha256"] = None
+            self.assertDictEqual(item1, item2, "per-release dictionaries must be the same")
+
+    def assertFrameEqual(self, frame1: pl.DataFrame, frame2: pl.DataFrame) -> None:
+        """
+        Assert that the two Pola.rs data frames are effectively equal. Unlike
+        the corresponding Pola.rs method, this method ignores the schema and
+        hence does not trip up when one of the enumerations gained additional
+        variants not present in the test frames.
+        """
+        self.assertIsInstance(frame1, pl.DataFrame, "first argument must be a data frame")
+        self.assertIsInstance(frame2, pl.DataFrame, "second argument must be a data frame")
+
+        self.assertSetEqual(set(frame1.columns), set(frame2.columns))
+        for column in frame1.columns:
+            series1 = frame1.get_column(column)
+            series2 = frame2.get_column(column)
+
+            self.assertIsInstance(series1, pl.Series)
+            self.assertIsInstance(series2, pl.Series)
+
+            self.assertEqual(series1.dtype, series2.dtype)
+            self.assertEqual(series1.len(), series2.len())
+
+            for it1, it2 in zip(series1, series2):
+                if isinstance(it1, pl.Series):
+                    # The data frames with extracted database data have
+                    # list-valued columns, i.e., the cells are series as well.
+                    self.assertIsInstance(it2, pl.Series)
+                    for it11, it22 in zip(it1, it2):
+                        self.assertEqual(it11, it22)
+                else:
+                    # Meanwhile, the data frames with summary statistics and the
+                    # remaining columns with extracted data aren't as fancy.
+                    self.assertEqual(it1, it2)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)

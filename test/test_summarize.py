@@ -1,8 +1,9 @@
 from pathlib import Path
 import shutil
-import unittest
 
 import polars as pl
+
+from .runtime import TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
@@ -20,7 +21,7 @@ ARCHIVE = STAGING / "summarize-archive"
 EXTRACT = STAGING / "summarize-extract"
 
 
-class TestSummarize(unittest.TestCase):
+class TestSummarize(TestCase):
 
     @classmethod
     def setUpClass(cls):
@@ -29,23 +30,6 @@ class TestSummarize(unittest.TestCase):
     @classmethod
     def tearDownClass(cls):
         pass
-
-    def assertFileEqual(self, path1: Path, path2: Path) -> None:
-        data1 = path1.read_bytes()
-        data2 = path2.read_bytes()
-        self.assertEqual(len(data1), len(data2), "file contents must have equal length")
-        self.assertEqual(data1, data2, "file contents must be equal")
-
-    def assertFrameEqual(self, frame1: pl.DataFrame, frame2: pl.DataFrame) -> None:
-        self.assertSetEqual(set(frame1.columns), set(frame2.columns))
-        for column in frame1.columns:
-            series1 = frame1.get_column(column)
-            series2 = frame2.get_column(column)
-
-            self.assertEqual(series1.dtype, series2.dtype)
-            self.assertEqual(series1.len(), series2.len())
-            for it1, it2 in zip(series1, series2):
-                self.assertEqual(it1, it2)
 
     def test_summarize_db(self):
         dataset = StatementsOfReasons()
@@ -97,9 +81,18 @@ class TestSummarize(unittest.TestCase):
 
         processor.run("summarize-category")
 
-        meta_json = FIXTURE / "protection-of-minors.json"
-        self.assertFileEqual(STAGING / "protection-of-minors.json", meta_json)
-        self.assertFileEqual(EXTRACT / "protection-of-minors.json", meta_json)
+        self.assertFileEqual(
+            STAGING / "protection-of-minors.json",
+            EXTRACT / "protection-of-minors.json"
+        )
+
+        # The per-release digests may differ between from the fixture since the
+        # schema may incorporate additional platforms. Hence, we need to compare
+        # ignoring the digests.
+        self.assertMetaDataEqual(
+            Metadata.read_json(STAGING / "protection-of-minors.json"),
+            Metadata.read_json(FIXTURE / "protection-of-minors.json")
+        )
 
         frame1 = pl.read_parquet(STAGING / "protection-of-minors.parquet")
         frame2 = pl.read_parquet(EXTRACT / "protection-of-minors.parquet")

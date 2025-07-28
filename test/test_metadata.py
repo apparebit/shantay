@@ -13,6 +13,7 @@ CATEGORY = "protection_of_minors"
 
 
 class TestMetadata(unittest.TestCase):
+
     def test_category(self) -> None:
         self.assertEqual(
             normalize_category(CATEGORY),
