@@ -40,7 +40,7 @@ jobs:
       run: python runtest.py
 
     - name: Build Wheel
-      run: flit build --wheel
+      run: flit build --format wheel
 
     - name: Upload Wheel
       uses: actions/upload-artifact@v4
