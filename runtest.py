@@ -38,8 +38,8 @@ if __name__ == "__main__":
 
     # Recreate staging directory and configure logging
     STAGING = Path(__file__).parent / "test" / "tmp"
-    shutil.rmtree(STAGING)
-    STAGING.mkdir(exist_ok=True)
+    shutil.rmtree(STAGING, ignore_errors=True)
+    STAGING.mkdir(parents=True)
     configure_logging(str(STAGING / "log.log"), verbose=True)
 
     try:
