@@ -9,3 +9,4 @@ target
 test/shantay.log
 test/tmp
 docs/_build
+docs/apidocs
