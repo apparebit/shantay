@@ -1,7 +1,7 @@
 # Version History for Shantay
 
 
-## v0.5.0 (??? ??, 2025)
+## v0.5.0 (July 28, 2025)
 
 When given the new `--interactive-report` command line option, Shantay emits
 JavaScript code for interactive charts instead of static SVG markup.
