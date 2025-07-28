@@ -1,5 +1,30 @@
 # Version History for Shantay
 
+
+## v0.5.0 (??? ??, 2025)
+
+When given the new `--interactive-report` command line option, Shantay emits
+JavaScript code for interactive charts instead of static SVG markup.
+
+When given the new `--clamp-outliers` command line option, if one or two months
+have an unusually large number of SoRs—currently, 1.9× more SoRs than the month
+with the next largest number—Shantay clamps the monthly bars for the outlier
+months. Clipped bars are clearly marked with a ⚠️.
+
+Pola.rs v1.31.0 changed the behavior of `scan_csv()`. That broke Shantay's
+second pass over CSV files while extracting category-specific data. While that
+second pass seems unavoidable, this release dispenses with CSV parsing during
+the second pass altogether and extracts the same statistics with a simple
+textual scan. That makes for a more robust and, hopefully, faster implementation
+as well. The first pass is not impacted by this change because it transparently
+falls back onto a different CSV parser already.
+
+This release further improves coverage and robustness of Shantay's testing
+harness. It also enables CI with GitHub actions. The documentation of internal
+APIs has been somewhat improved and can be automatically generated with
+[Sphinx](https://www.sphinx-doc.org/en/master/).
+
+
 ## v0.4.0 (July 14, 2025)
 
 In addition to simplifying and refactoring the implementation, this release
