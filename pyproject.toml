@@ -40,11 +40,12 @@ shantay = "shantay.__main__:main"
 
 [project.optional-dependencies]
 dev = [
+    "flit",
     "sphinx",
-    "sphinxcontrib-autoprogram",
-    "sphinx-copybutton",
     "sphinx_design",
     "sphinx-rtd-theme",
+    "sphinx-autodoc2",
+    "myst-parser",
 ]
 
 

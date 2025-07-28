@@ -3,6 +3,7 @@ __pycache__
 tmp
 dsa-db-*
 docs/_build
+docs/apidocs
 node_modules/
 shantay.log
 dist

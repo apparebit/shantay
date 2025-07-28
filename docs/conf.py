@@ -41,7 +41,7 @@ copyright = '2025 Robert Grimm'
 author = 'Robert Grimm'
 
 # Source order is nicer than alphabetizing fields and methods.
-autodoc_member_order = 'bysource'
+#autodoc_member_order = 'bysource'
 
 # Known types are linked, so the fully qualified name adds mostly noise.
 python_use_unqualified_type_names = True
@@ -50,21 +50,32 @@ python_use_unqualified_type_names = True
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-    "sphinx.ext.napoleon",
-    "sphinx.ext.autodoc",
-    #"sphinx.ext.intersphinx",
-    #"sphinx.ext.extlinks",
-    "sphinx.ext.viewcode",
-    "sphinx_copybutton",
     "sphinx_design",
     "sphinx_rtd_theme",
+    "autodoc2",
     "myst_parser",
 ]
+
+myst_enable_extensions = [
+    "smartquotes",
+]
+
+autodoc2_packages = [
+    "../shantay",
+]
+
+autodoc2_render_plugin = "myst"
+
+autodoc2_hidden_objects = [
+    "private",
+    "inherited",
+]
+
+autodoc2_sort_names = False
 
 napoleon_include_init_with_doc = True
 templates_path = ['_templates']
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
-copybutton_exclude = '.linenos, .gp, .go'
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
