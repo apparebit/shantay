@@ -1,0 +1,41 @@
+# This CITATION.cff file was generated with cffinit.
+# Visit https://bit.ly/cffinit to generate yours today!
+
+cff-version: 1.2.0
+title: Shantay
+message: >-
+  If you use this software, please cite it using the
+  metadata from this file.
+type: software
+authors:
+  - given-names: Robert
+    family-names: Grimm
+    orcid: 'https://orcid.org/0000-0002-8300-2153'
+repository-code: 'https://github.com/apparebit/shantay'
+repository-artifact: 'https://pypi.org/project/shantay/'
+abstract: >-
+  Shantay is a command line tool for analyzing the EU's
+  Digital Services Act Transparency Database. Said database
+  collects so-called statements of reasons by platforms and
+  search engines for every content moderation decision they
+  make, as required by the DSA. In contrast to the EU's
+  tooling, which isn't developed in the open and is targeted
+  at cluster environments, Shantay is designed to run on
+  consumer-level hardware. In other words, a consumer laptop
+  with a suitably large external drive suffices, with the
+  first two years of statements taking up almost 2T. Shantay
+  downloads daily distributions, extracts comprehensive
+  statistics either for the entire database or a
+  topic-specific subset, and visualizes those statistics as
+  HTML reports.
+keywords:
+  - DSA
+  - Digital Services Act
+  - European Union
+  - EU
+  - Transparency Database
+  - Content Moderation
+  - Digital Platform
+  - Search Engine
+  - Statement of Reason
+license: Apache-2.0
