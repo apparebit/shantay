@@ -1,6 +1,7 @@
 from collections.abc import Iterable, Sequence
 import functools
 import inspect
+import math
 from typing import Callable
 
 
@@ -81,6 +82,10 @@ def scale(value: float) -> tuple[float, str]:
 
 
 def scale_time(value: float) -> tuple[float, str]:
+    """
+    Turn the duration in seconds into minutes, hours, or days if it is at least
+    one minute, hour, or day long, respectively.
+    """
     if value < 0:
         sign = -1
         value *= -1
@@ -97,19 +102,67 @@ def scale_time(value: float) -> tuple[float, str]:
         return sign * value / (24* 60 * 60), "day"
 
 
+def upper_limit(n: int, *, leading: int = 2, minimum: int = 100) -> int:
+    """
+    Ensure that the given, non-negative integer is at least the positive
+    `minimum` and has at most the positive `leading` non-zero digits. If that's
+    not the case, round up the maximum of the integer `n` and `minimum` to the
+    next integer with at most `leading` non-zero digits.
+
+    For example:
+
+    >>> upper_limit(123, leading=1)
+    200
+    >>> upper_limit(123, leading=2)
+    130
+    >>> upper_limit(123, leading=3)
+    123
+    >>> upper_limit(123, leading=1, minimum=999)
+    1000
+
+    This function comes in handy for setting the upper limit of the y-axis of a
+    chart.
+    """
+    if n < 0:
+        raise ValueError(f'number {n} is negative')
+    if leading <= 0:
+        raise ValueError(f'number of leading digits {leading} is not positive')
+    if minimum <= 0:
+        raise ValueError(f'minimum value {minimum} is not positive')
+
+    n = max(n, minimum)
+    width = math.ceil(math.log10(n + 1))
+    if width <= leading:
+        return n
+
+    factor = 10 ** (width - leading)
+    return math.ceil(n / factor) * factor
+
+
 def to_markdown_table(
     *rows: Sequence[object],
     columns: Sequence[str],
     title: None | str = None,
-    alignments: None | Sequence[bool] = None,
+    left_alignments: None | Sequence[bool] = None,
 ) -> str:
+    """
+    Format the rows of values as a Markdown table with the given column
+    headings. The generated Markdown is nicely formatted so that column
+    boundaries are aligned across rows.
+
+    By default, columns with integers and floats are right-aligned and all other
+    columns are left-aligned. `None` values are ignored for determining
+    alignment.
+    """
     column_data = [[it for it in column] for column in zip(*rows)]
     if len(column_data) == 0:
         raise ValueError("no data columns to format")
     if len(column_data) != len(columns):
         raise ValueError(f"{len(column_data)} columns but {len(columns)} column names")
-    if alignments is not None and len(alignments) != len(columns):
-        raise ValueError(f"{len(columns)} columns but {len(alignments)} alignment values")
+    if left_alignments is not None and len(left_alignments) != len(columns):
+        raise ValueError(
+            f"{len(columns)} columns but {len(left_alignments)} left alignment values"
+        )
 
     types = [_get_type(column) for column in column_data]
     column_data = [
@@ -120,22 +173,22 @@ def to_markdown_table(
         max(len(name) + 2, *(l + 2 for it in column if (l := len(it)) < 50))
         for name, column in zip(columns, column_data)
     ]
-    if alignments is None:
-        alignments = [tp is str for tp in types]
+    if left_alignments is None:
+        left_alignments = [tp is str for tp in types]
 
     def format_row(data: Iterable[str]) -> str:
         items = (
             (f"{it:<{w-2}}" if al else f"{it:>{w}}")
-            for it, w, al in zip(data, widths, alignments)
+            for it, w, al in zip(data, widths, left_alignments)
         )
         return f'| {" | ".join(items)} |'
 
     def format_div() -> str:
         items = []
-        for width, al in zip(widths, alignments):
-            before = ":" if al else ""
+        for width, is_left_aligned in zip(widths, left_alignments):
+            before = ":" if is_left_aligned else ""
             dashes = "-" * (width - 3)
-            after = "" if al else ":"
+            after = "" if is_left_aligned else ":"
             items.append(f"{before}{dashes}{after}")
         return f'| {" | ".join(items)} |'
 
