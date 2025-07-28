@@ -33,10 +33,7 @@ from typing import Any, cast, get_args, get_origin, Literal, overload, Self
 
 import polars as pl
 
-from .color import (
-    BLUE, CYAN, GRAY, GREEN, LIGHT_BLUE, MAGENTA, OLIVE, ORANGE, PALETTE, PINK, PURPLE,
-    RED
-)
+from .color import Palette
 
 
 # ======================================================================================
@@ -411,11 +408,10 @@ class MetricDeclaration:
         colors can be the original ones or be drawn from the standard palette.
         """
         if use_palette:
-            color_count = len(PALETTE) - 1
             variants = {
                 key: (
                     self.variants[key][0],
-                    GRAY if key is None else PALETTE[index % color_count]
+                    Palette.GRAY if key is None else Palette.cycle(index)
                 )
                 for index, key in enumerate(names)
             }
@@ -438,9 +434,8 @@ def make_metric(
     variants: Iterable[None | str],
     quant_label: str = "Statements of Reasons",
 ) -> MetricDeclaration:
-    color_count = len(PALETTE) - 1
     variant_decl = cast(VariantNamesAndColors, {
-        v: (humanize(v), GRAY if v is None else PALETTE[i % color_count])
+        v: (humanize(v), Palette.GRAY if v is None else Palette.cycle(i))
         for i, v in enumerate(variants)
     })
     return MetricDeclaration(field, label, variant_decl, quant_label=quant_label)
@@ -450,24 +445,24 @@ def make_metric(
 
 
 AccountTypeMetric = MetricDeclaration("account_type", "Account Types", {
-    "ACCOUNT_TYPE_BUSINESS": ("Business", ORANGE),
-    "ACCOUNT_TYPE_PRIVATE": ("Individual", BLUE),
-    None: ("—none—", GRAY),
+    "ACCOUNT_TYPE_BUSINESS": ("Business", Palette.ORANGE),
+    "ACCOUNT_TYPE_PRIVATE": ("Individual", Palette.BLUE),
+    None: ("—none—", Palette.GRAY),
 })
 
 
 AutomatedDecisionMetric = MetricDeclaration("automated_decision", "Automated Decisions", {
-    "AUTOMATED_DECISION_FULLY": ("Fully Automated", CYAN),
-    "AUTOMATED_DECISION_PARTIALLY": ("Partially Automated", BLUE),
-    "AUTOMATED_DECISION_NOT_AUTOMATED": ("Not Automated", GREEN),
-    None: ("—none—", GRAY),
+    "AUTOMATED_DECISION_FULLY": ("Fully Automated", Palette.CYAN),
+    "AUTOMATED_DECISION_PARTIALLY": ("Partially Automated", Palette.BLUE),
+    "AUTOMATED_DECISION_NOT_AUTOMATED": ("Not Automated", Palette.GREEN),
+    None: ("—none—", Palette.GRAY),
 })
 
 
 AutomatedDetectionMetric = MetricDeclaration("automated_detection", "Automated Detection", {
-    "Yes": ("Automated", LIGHT_BLUE),
-    "No": ("Not Automated", PURPLE),
-    None: ("—none—", GRAY),
+    "Yes": ("Automated", Palette.LIGHT_BLUE),
+    "No": ("Not Automated", Palette.PURPLE),
+    None: ("—none—", Palette.GRAY),
 })
 
 
@@ -480,96 +475,96 @@ ContentLanguageMetric = make_metric("content_language", "Content Language",
 
 
 ContentTypeMetric = MetricDeclaration("content_type", "Content Types", {
-    "CONTENT_TYPE_APP": ("App", CYAN),
-    "CONTENT_TYPE_AUDIO": ("Audio", GREEN),
-    "CONTENT_TYPE_IMAGE": ("Image", BLUE),
-    "CONTENT_TYPE_PRODUCT": ("Product", RED),
-    "CONTENT_TYPE_SYNTHETIC_MEDIA": ("Synthetic Media", PINK),
-    "CONTENT_TYPE_TEXT": ("Text", ORANGE),
-    "CONTENT_TYPE_VIDEO": ("Video", PURPLE),
-    "CONTENT_TYPE_OTHER": ("Other", LIGHT_BLUE),
-    None: ("—none—", GRAY),
+    "CONTENT_TYPE_APP": ("App", Palette.CYAN),
+    "CONTENT_TYPE_AUDIO": ("Audio", Palette.GREEN),
+    "CONTENT_TYPE_IMAGE": ("Image", Palette.BLUE),
+    "CONTENT_TYPE_PRODUCT": ("Product", Palette.RED),
+    "CONTENT_TYPE_SYNTHETIC_MEDIA": ("Synthetic Media", Palette.PINK),
+    "CONTENT_TYPE_TEXT": ("Text", Palette.ORANGE),
+    "CONTENT_TYPE_VIDEO": ("Video", Palette.PURPLE),
+    "CONTENT_TYPE_OTHER": ("Other", Palette.LIGHT_BLUE),
+    None: ("—none—", Palette.GRAY),
 })
 
 
 DecisionAccountMetric = MetricDeclaration("decision_account", "Account Decisions", {
-    "DECISION_ACCOUNT_SUSPENDED": ("Suspended", ORANGE),
-    "DECISION_ACCOUNT_TERMINATED": ("Terminated", RED),
-    None: ("—none—", GRAY),
+    "DECISION_ACCOUNT_SUSPENDED": ("Suspended", Palette.ORANGE),
+    "DECISION_ACCOUNT_TERMINATED": ("Terminated", Palette.RED),
+    None: ("—none—", Palette.GRAY),
 })
 
 
 DecisionGroundMetric = MetricDeclaration("decision_ground", "Decision Grounds", {
-    "DECISION_GROUND_ILLEGAL_CONTENT": ("Illegal", RED),
-    "DECISION_GROUND_INCOMPATIBLE_CONTENT": ("Incompatible", ORANGE),
+    "DECISION_GROUND_ILLEGAL_CONTENT": ("Illegal", Palette.RED),
+    "DECISION_GROUND_INCOMPATIBLE_CONTENT": ("Incompatible", Palette.ORANGE),
 })
 
 
 DecisionMonetaryMetric = MetricDeclaration("decision_monetary", "Monetary Decisions", {
-   "DECISION_MONETARY_SUSPENSION": ("Suspended", ORANGE),
-   "DECISION_MONETARY_TERMINATION": ("Terminated", RED),
-   "DECISION_MONETARY_OTHER": ("Other", PINK),
-   None: ("—none—", GRAY),
+   "DECISION_MONETARY_SUSPENSION": ("Suspended", Palette.ORANGE),
+   "DECISION_MONETARY_TERMINATION": ("Terminated", Palette.RED),
+   "DECISION_MONETARY_OTHER": ("Other", Palette.PINK),
+   None: ("—none—", Palette.GRAY),
 })
 
 
 DecisionProvisionMetric = MetricDeclaration("decision_provision", "Service Provision Decisions", {
-    "DECISION_PROVISION_PARTIAL_SUSPENSION": ("Partially Suspended", LIGHT_BLUE),
-    "DECISION_PROVISION_TOTAL_SUSPENSION": ("Suspended", BLUE),
-    "DECISION_PROVISION_PARTIAL_TERMINATION": ("Partially Terminated", ORANGE),
-    "DECISION_PROVISION_TOTAL_TERMINATION": ("Terminated", RED),
-    None: ("—none—", GRAY),
+    "DECISION_PROVISION_PARTIAL_SUSPENSION": ("Partially Suspended", Palette.LIGHT_BLUE),
+    "DECISION_PROVISION_TOTAL_SUSPENSION": ("Suspended", Palette.BLUE),
+    "DECISION_PROVISION_PARTIAL_TERMINATION": ("Partially Terminated", Palette.ORANGE),
+    "DECISION_PROVISION_TOTAL_TERMINATION": ("Terminated", Palette.RED),
+    None: ("—none—", Palette.GRAY),
 })
 
 
 DecisionTypeMetric = MetricDeclaration("decision_type", "Decision Types", {
-    "vis": ("Visibility", BLUE),
-    "mon": ("Monetary", OLIVE),
-    "vis_mon": ("Visibility & Monetary", MAGENTA),
-    "pro": ("Provision", LIGHT_BLUE),
-    "vis_pro": ("Visibility & Provision", ORANGE),
-    "mon_pro": ("Monetary & Provision", GREEN),
-    "vis_mon_pro": ("Visibility, Monetary, Provision", CYAN),
-    "acc": ("Account", PURPLE),
-    "vis_acc": ("Visibility & Account", PINK),
-    "mon_acc": ("Monetary & Account", GREEN),
-    "vis_mon_acc": ("Visibility, Monetary, Account", CYAN),
-    "pro_acc": ("Provision & Account", GREEN),
-    "vis_pro_acc": ("Visibility, Provision, Account", RED),
-    "mon_pro_acc": ("Monetary, Provision, Account", CYAN),
-    "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", GREEN),
-    "is_null": ("—none—", GRAY),
+    "vis": ("Visibility", Palette.BLUE),
+    "mon": ("Monetary", Palette.PINK),
+    "vis_mon": ("Visibility & Monetary", Palette.PURPLE),
+    "pro": ("Provision", Palette.LIGHT_BLUE),
+    "vis_pro": ("Visibility & Provision", Palette.ORANGE),
+    "mon_pro": ("Monetary & Provision", Palette.GREEN),
+    "vis_mon_pro": ("Visibility, Monetary, Provision", Palette.CYAN),
+    "acc": ("Account", Palette.PURPLE),
+    "vis_acc": ("Visibility & Account", Palette.PINK),
+    "mon_acc": ("Monetary & Account", Palette.GREEN),
+    "vis_mon_acc": ("Visibility, Monetary, Account", Palette.CYAN),
+    "pro_acc": ("Provision & Account", Palette.GREEN),
+    "vis_pro_acc": ("Visibility, Provision, Account", Palette.RED),
+    "mon_pro_acc": ("Monetary, Provision, Account", Palette.CYAN),
+    "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", Palette.GREEN),
+    "is_null": ("—none—", Palette.GRAY),
 }, selector="entity")
 
 
 DecisionVisibilityMetric = MetricDeclaration("decision_visibility", "Visibility Decisions", {
-    "DECISION_VISIBILITY_CONTENT_REMOVED": ("Removed", LIGHT_BLUE),
-    "DECISION_VISIBILITY_CONTENT_DISABLED": ("Disabled", RED),
-    "DECISION_VISIBILITY_CONTENT_DEMOTED": ("Demoted", ORANGE),
-    "DECISION_VISIBILITY_CONTENT_AGE_RESTRICTED": ("Age-Restricted", GREEN),
-    "DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED": ("Interaction Restricted", PURPLE),
-    "DECISION_VISIBILITY_CONTENT_LABELLED": ("Labelled", PINK),
-    "DECISION_VISIBILITY_OTHER": ("Other", BLUE),
-    None: ("—none—", GRAY),
+    "DECISION_VISIBILITY_CONTENT_REMOVED": ("Removed", Palette.LIGHT_BLUE),
+    "DECISION_VISIBILITY_CONTENT_DISABLED": ("Disabled", Palette.RED),
+    "DECISION_VISIBILITY_CONTENT_DEMOTED": ("Demoted", Palette.ORANGE),
+    "DECISION_VISIBILITY_CONTENT_AGE_RESTRICTED": ("Age-Restricted", Palette.GREEN),
+    "DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED": ("Interaction Restricted", Palette.PURPLE),
+    "DECISION_VISIBILITY_CONTENT_LABELLED": ("Labelled", Palette.PINK),
+    "DECISION_VISIBILITY_OTHER": ("Other", Palette.BLUE),
+    None: ("—none—", Palette.GRAY),
 })
 
 
 IncompatibleContentIllegalMetric = MetricDeclaration(
     "incompatible_content_illegal",
     "Incompatible Is Illegal", {
-        "Yes": ("Yes", RED),
-        "No": ("No", GREEN),
-        None: ("—none—", GRAY),
+        "Yes": ("Yes", Palette.RED),
+        "No": ("No", Palette.GREEN),
+        None: ("—none—", Palette.GRAY),
     }
 )
 
 
 InformationSourceMetric = MetricDeclaration("source_type", "Information Sources", {
-    "SOURCE_ARTICLE_16": ("Article 16", LIGHT_BLUE),
-    "SOURCE_TRUSTED_FLAGGER": ("Trusted Flagger", BLUE),
-    "SOURCE_TYPE_OTHER_NOTIFICATION": ("Other Notification", ORANGE),
-    "SOURCE_VOLUNTARY": ("Voluntary", GREEN),
-    None: ("—none—", GRAY),
+    "SOURCE_ARTICLE_16": ("Article 16", Palette.LIGHT_BLUE),
+    "SOURCE_TRUSTED_FLAGGER": ("Trusted Flagger", Palette.BLUE),
+    "SOURCE_TYPE_OTHER_NOTIFICATION": ("Other Notification", Palette.ORANGE),
+    "SOURCE_VOLUNTARY": ("Voluntary", Palette.GREEN),
+    None: ("—none—", Palette.GRAY),
 })
 
 
@@ -605,10 +600,10 @@ ProcessingDelayMetric = MetricDeclaration(
     ["moderation_delay", "disclosure_delay"],
     "Delays",
     {
-        "moderation_delay": ("Moderation", LIGHT_BLUE),
-        "disclosure_delay": ("Disclosure", ORANGE),
-        #"release_delay": ("Release", RED),
-        None: ("—none—", GRAY),
+        "moderation_delay": ("Moderation", Palette.LIGHT_BLUE),
+        "disclosure_delay": ("Disclosure", Palette.ORANGE),
+        #"release_delay": ("Release", Palette.RED),
+        None: ("—none—", Palette.GRAY),
     },
     selector="column",
     quantity="mean",

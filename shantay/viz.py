@@ -12,9 +12,7 @@ import altair as alt
 import mistune
 import polars as pl
 
-from .color import (
-    BLUE, CYAN, GRAY, GREEN, LIGHT_BLUE, ORANGE, PURPLE, RED
-)
+from .color import Palette
 from .framing import (
     aggregates, is_row_within_period, NO_ARGUMENT_PROVIDED, NOT_NULL, predicate
 )
@@ -1109,9 +1107,13 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             title += "Percentage" if percentage else "Mean"
 
         if rolling_mean_days is None and not with_monthly_sum:
-            chart = alt.Chart(table, title=title).mark_bar(color=GREEN, size=1.3)
+            chart = alt.Chart(table, title=title).mark_bar(
+                color=Palette.GREEN, size=1.3
+            )
         else:
-            chart = alt.Chart(table, title=title).mark_line(color=GREEN, size=1.5)
+            chart = alt.Chart(table, title=title).mark_line(
+                color=Palette.GREEN, size=1.5
+            )
 
         daily_axis = "Statements of Reasons (Thousands)"
         if with_monthly_sum:
@@ -1280,7 +1282,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.Y("pct:Q").title("Percent (Statements of Reasons)"),
             alt.Color("Kind:N").scale(
                 domain=column_names,
-                range=[BLUE, RED],
+                range=[Palette.BLUE, Palette.RED],
             ),
         ).properties(
             width=self.timeline_width(),
@@ -1300,7 +1302,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             monthly_frame,
         ).mark_bar(
             tooltip=True,
-            color=LIGHT_BLUE,
+            color=Palette.LIGHT_BLUE,
         ).encode(
             alt.X("start_date:T"),
             alt.X2("end_date:T"),
@@ -1323,7 +1325,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             align="left",
             baseline="bottom",
             text=text,
-            color=BLUE,
+            color=Palette.BLUE,
         )
 
         chart = monthly_chart + daily_chart + label
@@ -1601,7 +1603,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 alt.Order("color_variant_label_sort_index:Q")
             )
         else:
-            mark_props["color"] = GRAY
+            mark_props["color"] = Palette.GRAY
 
         # Title
         title = spec.label
@@ -1712,7 +1714,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         base = alt.Chart(total)
         moderation_rule = base.mark_rule(
-            color=BLUE,
+            color=Palette.BLUE,
             size=2.5,
         ).encode(
             alt.Y("moderation:Q")
@@ -1725,11 +1727,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             align="left",
             baseline="bottom",
             text=["Mean Moderation", f"Delay: {total.item(0, 0):.1f} Days"],
-            color=BLUE,
+            color=Palette.BLUE,
         )
 
         disclosure_rule = base.mark_rule(
-            color=RED,
+            color=Palette.RED,
             size=2.5,
         ).encode(
             alt.Y("disclosure:Q")
@@ -1742,7 +1744,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             align="left",
             baseline="bottom",
             text=["Mean Disclosure", f"Delay {total.item(0, 1):.1f} Days"],
-            color=RED,
+            color=Palette.RED,
         )
 
         return (
@@ -1796,7 +1798,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.X2("end_date:T"),
             alt.Y("sum(max):Q").title("Maximum Days"),
         ).mark_bar(
-            color=BLUE,
+            color=Palette.BLUE,
         ).properties(
             width=self.timeline_width(),
             height=self.timeline_height() * 2 // 3,
@@ -1807,7 +1809,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.X2("end_date:T"),
             alt.Y("sum(mean):Q").title("Mean Days"),
         ).mark_bar(
-            color=LIGHT_BLUE,
+            color=Palette.LIGHT_BLUE,
         ).properties(
             width=self.timeline_width(),
             height=self.timeline_height() // 2,
@@ -1896,7 +1898,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 alt.Y("Count:Q").title("Number of Platforms"),
                 alt.Color("Kind:N").scale(
                     domain=metrics,
-                    range=[GRAY, ORANGE, RED],
+                    range=[Palette.GRAY, Palette.ORANGE, Palette.RED],
                 ),
             ).properties(
                 width=self.timeline_width(),
@@ -1957,7 +1959,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         chart = base.mark_bar(
             tooltip=True,
-            color=f"{PURPLE}90" if threshold else PURPLE,
+            color=f"{Palette.PURPLE}90" if threshold else Palette.PURPLE,
         ).properties(
             width=self.timeline_width(),
             height=self.timeline_height(),
