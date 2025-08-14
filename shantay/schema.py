@@ -834,6 +834,11 @@ TRANSFORMS = {
     ),
     "account_type": TransformType.VALUE_COUNTS,
     "decision_ground": TransformType.VALUE_COUNTS,
+    "decision_ground_reference_url": TransformType.TEXT_VALUE_COUNTS,
+    "illegal_content_legal_ground": TransformType.TEXT_VALUE_COUNTS,
+    "illegal_content_explanation": TransformType.TEXT_VALUE_COUNTS,
+    "incompatible_content_ground": TransformType.TEXT_VALUE_COUNTS,
+    "incompatible_content_explanation": TransformType.TEXT_VALUE_COUNTS,
     "incompatible_content_illegal": TransformType.VALUE_COUNTS,
     "category": (
         TransformType.CATEGORY_NAME if STRATIFY_BY_CATEGORY
@@ -849,7 +854,9 @@ TRANSFORMS = {
     "territorial_scope": TransformType.LIST_VALUE_COUNTS,
     "disclosure_delay": DurationTransform("application_date", "created_at"),
     #"release_delay": DurationTransform("created_at", "released_on"),
+    "decision_facts": TransformType.TEXT_VALUE_COUNTS,
     "source_type": TransformType.VALUE_COUNTS,
+    "source_identity": TransformType.TEXT_VALUE_COUNTS,
     "automated_detection": TransformType.VALUE_COUNTS,
     "automated_decision": TransformType.VALUE_COUNTS,
     "platform_name": TransformType.PLATFORM_NAME,

@@ -419,6 +419,11 @@ class Visualizer:
         with_head: bool = True,
     ) -> None:
         """Render data frame to HTML and add to report."""
+        if len(frame) == 0:
+            msg = "No Data" if caption is None else f"No Data for {caption}"
+            self._html(f"<strong>{msg}</strong>")
+            return
+
         if with_index:
             frame = frame.with_row_index(offset=1)
         self._renderer.frame(frame)
@@ -1035,6 +1040,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ContentTypeMetric,
             ("Content Type: Other", "content_type_other"),
             DecisionGroundMetric,
+            ("Decision Ground Reference URL", "decision_ground_reference_url"),
+            ("Illegal Content Legal Ground", "illegal_content_legal_ground"),
+            ("Illegal Content Explanation", "illegal_content_explanation"),
+            ("Incompatible Content Ground", "incompatible_content_ground"),
+            ("Incompatible Content Explanation", "incompatible_content_explanation"),
             IncompatibleContentIllegalMetric,
             DecisionTypeMetric,
             DecisionVisibilityMetric,
@@ -1044,7 +1054,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ("Monetary Decision: Other", "decision_monetary_other"),
             AccountTypeMetric,
             DecisionAccountMetric,
+            ("Decision Facts", "decision_facts"),
             InformationSourceMetric,
+            ("Source Identity", "source_identity"),
             AutomatedDetectionMetric,
             AutomatedDecisionMetric,
             ProcessingDelayMetric,
@@ -1182,7 +1194,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 color="independent"
             )
 
-        return chart.interactive()
+        return chart.interactive() if self._with_interaction else chart
 
     def _sor_fraction_with_keywords_data(
         self,
@@ -1329,7 +1341,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         if not with_monthly_mean:
-            return daily_chart.interactive()
+            return daily_chart.interactive() if self._with_interaction else daily_chart
 
         monthly_frame = self._sor_fraction_with_keywords_data(
             tag=tag,
@@ -1368,7 +1380,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         chart = monthly_chart + daily_chart + label
-        return chart.interactive()
+        return chart.interactive() if self._with_interaction else chart
 
     # ----------------------------------------------------------------------------------
 
@@ -1418,7 +1430,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         )
 
         if cut is None:
-            return chart.interactive()
+            return (
+                chart.interactive()
+                if self._with_interaction and not spec2.is_duration()
+                else chart
+            )
 
         spec2, table2 = self._apply_ranking(
             spec, table, ranking.get_column(spec.selector).to_list()[cut:]
@@ -1433,10 +1449,16 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             with_full_height=False,
         )
 
-        return alt.vconcat(chart, chart2, spacing=0).resolve_scale(
+        full_chart = alt.vconcat(chart, chart2, spacing=0).resolve_scale(
             x="shared",
             color="shared",
-        ).interactive()
+        )
+
+        return (
+            full_chart.interactive()
+            if self._with_interaction and not spec2.is_duration()
+            else full_chart
+        )
 
     def _prepare_timeline_data(
         self,
@@ -1695,10 +1717,13 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
             chart = chart + warnings
 
-        if with_full_height and spec.quantity == "mean" and spec.label == "Delays":
-            chart = chart + self._add_average_delays(tag, platform)
-
-        return chart
+        if spec.quantity == "mean" and spec.label== "Delays":
+            if with_full_height:
+                return chart + self._mark_moderation_delay(tag, platform)
+            else:
+                return chart + self._mark_disclosure_delay(tag, platform)
+        else:
+            return chart
 
     def _compute_cutoff_warnings(self, cutoff: int, frame: pl.DataFrame) -> pl.DataFrame:
         return frame.with_columns(
@@ -1712,41 +1737,27 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ).alias("warning"),
         )
 
-    def _add_average_delays(
+    def _mark_moderation_delay(
         self, tag: None | str = None, platform: None | str = None
     ) -> alt.LayerChart:
-        constraints = {
-            "entity": None,
-            "tag": tag,
-        }
+        table = self._statistics.frame().lazy().filter(
+            predicate(
+                column="moderation_delay",
+                entity=None,
+                tag=tag,
+                platform=NO_ARGUMENT_PROVIDED if platform is None else platform,
+            )
+        ).select(
+            (
+                pl.col("mean")
+                .mul(pl.col("count"))
+                .floordiv(pl.col("count").sum())
+                .sum()
+                / (24 * 60 * 60)
+            ).alias("moderation")
+        ).collect()
 
-        if platform is not None:
-            constraints["platform"] = platform
-
-        weighted_mean = (
-            pl.col("mean")
-            .mul(pl.col("count"))
-            .floordiv(pl.col("count").sum())
-            .sum()
-            / (24 * 60 * 60)
-        )
-
-        table = self._statistics.frame().lazy()
-        total = pl.concat([
-            table.filter(
-                predicate(column="moderation_delay", **constraints)
-            ).select(
-                weighted_mean.alias("moderation")
-            ),
-            table.filter(
-                predicate(column="disclosure_delay", **constraints)
-            ).select(
-                weighted_mean.alias("disclosure")
-            ),
-        ], how="horizontal").collect()
-
-        base = alt.Chart(total)
-        moderation_rule = base.mark_rule(
+        moderation_rule = alt.Chart(table).mark_rule(
             color=Palette.BLUE,
             size=2.5,
         ).encode(
@@ -1759,11 +1770,33 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             dy=0,
             align="left",
             baseline="bottom",
-            text=["Mean Moderation", f"Delay: {total.item(0, 0):.1f} Days"],
+            text=["Mean Moderation", f"Delay: {table.item(0, 0):.1f} Days"],
             color=Palette.BLUE,
         )
 
-        disclosure_rule = base.mark_rule(
+        return moderation_rule + moderation_label
+
+    def _mark_disclosure_delay(
+        self, tag: None | str = None, platform: None | str = None
+    ) -> alt.LayerChart:
+        table = self._statistics.frame().lazy().filter(
+            predicate(
+                column="disclosure_delay",
+                entity=None,
+                tag=tag,
+                platform=NO_ARGUMENT_PROVIDED if platform is None else platform,
+            )
+        ).select(
+            (
+                pl.col("mean")
+                .mul(pl.col("count"))
+                .floordiv(pl.col("count").sum())
+                .sum()
+                / (24 * 60 * 60)
+            ).alias("disclosure")
+        ).collect()
+
+        disclosure_rule = alt.Chart(table).mark_rule(
             color=Palette.RED,
             size=2.5,
         ).encode(
@@ -1776,13 +1809,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             dy=0,
             align="left",
             baseline="bottom",
-            text=["Mean Disclosure", f"Delay {total.item(0, 1):.1f} Days"],
+            text=["Mean Disclosure", f"Delay {table.item(0, 0):.1f} Days"],
             color=Palette.RED,
         )
 
-        return (
-            disclosure_rule + disclosure_label + moderation_rule + moderation_label
-        )
+        return disclosure_rule + disclosure_label
 
     # ----------------------------------------------------------------------------------
 
@@ -1848,9 +1879,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             height=self._timeline_height() // 2,
         )
 
-        return alt.vconcat(max, mean, spacing=5).resolve_scale(
-            x="shared",
-        ).interactive()
+        chart = alt.vconcat(max, mean, spacing=5).resolve_scale(x="shared")
+        return chart.interactive() if self._with_interaction else chart
 
     # ----------------------------------------------------------------------------------
 
@@ -1918,26 +1948,25 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).collect()
 
         freq = "Monthly" if self._is_monthly() else "Daily"
-        return (
-            alt.Chart(
-                table,
-                title="Platforms Submitting SoRs with Keywords — "
-                f"Cumulative {freq} Counts"
-            ).mark_line(
-                tooltip=True
-            ).encode(
-                alt.X("mid_date:T")
-                .title("Month" if self._is_monthly() else "Day"),
-                alt.Y("Count:Q").title("Number of Platforms"),
-                alt.Color("Kind:N").scale(
-                    domain=metrics,
-                    range=[Palette.GRAY, Palette.ORANGE, Palette.RED],
-                ),
-            ).properties(
-                width=self._timeline_width(),
-                height=self._timeline_height(),
-            ).interactive()
+        chart = alt.Chart(
+            table,
+            title="Platforms Submitting SoRs with Keywords — "
+            f"Cumulative {freq} Counts"
+        ).mark_line(
+            tooltip=True
+        ).encode(
+            alt.X("mid_date:T")
+            .title("Month" if self._is_monthly() else "Day"),
+            alt.Y("Count:Q").title("Number of Platforms"),
+            alt.Color("Kind:N").scale(
+                domain=metrics,
+                range=[Palette.GRAY, Palette.ORANGE, Palette.RED],
+            ),
+        ).properties(
+            width=self._timeline_width(),
+            height=self._timeline_height(),
         )
+        return chart.interactive() if self._with_interaction else chart
 
     def _render_overall_statements_by_platform(
         self, threshold: None | int = None, tag: None | str = None
@@ -1998,15 +2027,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             height=self._timeline_height(),
         )
 
-        if threshold is None or threshold < 50_000:
-            return chart.interactive()
-        else:
+        if threshold is not None and 50_000 <= threshold:
             text = base.mark_text(
                 yOffset=30,
                 fontWeight="bold",
             )
+            chart = chart + text
 
-            return (chart + text).interactive()
+        return chart.interactive() if self._with_interaction else chart
 
     def _render_overall_keyword_usage_by_platform(
         self, percent: bool, tag: None | str = None
@@ -2060,7 +2088,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             )
         color = color.title("Keyword")
 
-        return alt.Chart(
+        chart = alt.Chart(
             frame, title=title
         ).mark_bar(
             size=30,
@@ -2072,7 +2100,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).properties(
             width=self._timeline_width(),
             height=self._timeline_height(),
-        ).interactive()
+        )
+        return chart.interactive() if self._with_interaction else chart
 
     def _render_overall_keyword_usage(self) -> _ChartT:
         table = self._keyword_usage.filter(
@@ -2083,19 +2112,18 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             .replace(self._keyword_metric.replacements())
         )
 
-        return (
-            alt.Chart(
-                table, title="Keywords Appearing in > 1% of SoRs"
-            ).mark_arc(
-                tooltip=True,
-            ).encode(
-                alt.Theta("count:Q"),
-                alt.Color("keyword:N").scale(
-                    domain=self._keyword_metric.variant_labels(),
-                    range=self._keyword_metric.variant_colors(),
-                ).title("Keyword")
-            ).interactive()
+        chart = alt.Chart(
+            table, title="Keywords Appearing in > 1% of SoRs"
+        ).mark_arc(
+            tooltip=True,
+        ).encode(
+            alt.Theta("count:Q"),
+            alt.Color("keyword:N").scale(
+                domain=self._keyword_metric.variant_labels(),
+                range=self._keyword_metric.variant_colors(),
+            ).title("Keyword")
         )
+        return chart.interactive() if self._with_interaction else chart
 
     def _prepare_text_usage(
         self,
