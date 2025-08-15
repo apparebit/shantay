@@ -19,6 +19,10 @@ _logger = logging.getLogger(__spec__.parent)
 
 
 def parse_list(*columns: str) -> pl.Expr:
+    """
+    This function currently assumes that list values do *not* contain commas,
+    which holds for list-valued DSA SoR DB entries.
+    """
     return (
         pl.col(
             *columns

@@ -141,6 +141,8 @@ class Collector:
         tag: None | str = None,
     ) -> Iterator[Self]:
         """Create a context for the release."""
+        if isinstance(frame, pl.DataFrame):
+            frame = frame.lazy()
         old_source, self._source = self._source, frame
         old_tag, self._tag = self._tag, (tag if tag != "" else None)
         old_release, self._release = self._release, release
@@ -396,6 +398,7 @@ class Collector:
                     )
 
     def collect_categories(self) -> None:
+        """Collect statistics about categories. This method forces evaluation."""
         categories = self._source.select(
             pl.col("category").unique()
         )
@@ -407,6 +410,7 @@ class Collector:
                 this.collect_body_data()
 
     def collect_platforms(self) -> None:
+        """Collect statistics about platforms. This method forces evaluation."""
         platform_names = self._source.select(
             pl.col("platform_name").unique()
         )
@@ -423,7 +427,7 @@ class Collector:
     def collect_header(
         self, metadata_entry: None | MetadataEntry = None, tag: None | str = None
     ) -> None:
-        """Create a header frame with the given statistics."""
+        """Eagerly create a header frame with the given statistics."""
         pairs = {}
         md = cast(dict, metadata_entry or {})
 
@@ -487,7 +491,10 @@ class Collector:
                 this.collect_platforms()
 
     def frame(self, validate: bool = False) -> pl.DataFrame:
-        """Combine the collected partial frames into one."""
+        """
+        Combine the collected partial frames into one. This method forces
+        evaluation.
+        """
         frame = pl.concat(self._frames, how="vertical")
         if isinstance(frame, pl.LazyFrame):
             frame = frame.collect()
