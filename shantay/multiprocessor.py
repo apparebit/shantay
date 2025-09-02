@@ -436,7 +436,7 @@ def _run_on_worker(
     if task == "download":
         processor.download_archive(release)
         result = None
-    if task == "distill":
+    elif task == "distill":
         processor.distill_category_release(release)
         result = metadata[release] | dict(release=release)
     elif task == "summarize-all":
