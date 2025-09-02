@@ -350,6 +350,10 @@ def run(options: Any) -> int:
         # surprising and we need as much information about them as we can get.
         print(f"\x1b[999;999H\n{error} {x} {reset}")
         print("".join(traceback.format_tb(x.__traceback__)))
+        print(
+            f"{warning} Log file \"{options.logfile}\" may contain "
+            f"further information {reset}"
+        )
         return 1
     finally:
         # Always delete lock file
