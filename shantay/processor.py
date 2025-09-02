@@ -312,7 +312,10 @@ class Processor[R: Release]:
             raise
 
         if cleanup:
-            shutil.rmtree(self._storage.staging_root / release.parent_directory)
+            shutil.rmtree(
+                self._storage.staging_root / release.parent_directory,
+                ignore_errors=True,
+            )
         self._progress.perform(f"distilled {release.id}").done()
         return
 
@@ -323,7 +326,10 @@ class Processor[R: Release]:
 
         for release in self._coverage:
             self.download_archive(release)
-            shutil.rmtree(self._storage.staging_root / release.parent_directory)
+            shutil.rmtree(
+                self._storage.staging_root / release.parent_directory,
+                ignore_errors=True
+            )
 
     def download_archive(self, release: Daily) -> None:
         """Download the archive for the given release."""
