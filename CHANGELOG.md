@@ -1,16 +1,21 @@
 # Version History for Shantay
 
 
-## v0.6.0 (August 40, 2025)
+## v0.6.0 (September ??, 2025)
 
 Also capture free-text fields named `decision_ground_reference_url`,
 `illegal_content_legal_ground`, `illegal_content_explanation`,
 `incompatible_content_ground`, `incompatible_content_explanation`,
 `decision_facts`, and `source_identity` in summary statistics and reports. With
-addition of those fields, all DSA transparency DB fields are accounted for.
+addition of those fields, Shantay accounts for all DSA transparency DB fields in
+its summary statistics.
 
 Fix labelling of mean moderation and disclosure delay lines. Move mean
 disclosure delay to lower panel.
+
+Fix crashing errors when cleaning up directories during archive download, when
+forwarding cancellations during multiprocessing, and when just downloading
+archives with multiprocessing.
 
 
 ## v0.5.0 (July 28, 2025)
