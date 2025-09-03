@@ -118,6 +118,10 @@ def get_tags(frame: pl.DataFrame) -> list[None | str]:
     return tags
 
 
+def _ensure_lazy(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
+    return frame if isinstance(frame, pl.LazyFrame) else frame.lazy()
+
+
 # =================================================================================================
 
 
@@ -125,7 +129,7 @@ class Collector:
     """Analyze the data while also collecting the results."""
 
     def __init__(self) -> None:
-        self._source = pl.DataFrame()
+        self._source: pl.LazyFrame = pl.LazyFrame()
         self._tag = None
         self._release = None
         self._platform = None
@@ -141,9 +145,7 @@ class Collector:
         tag: None | str = None,
     ) -> Iterator[Self]:
         """Create a context for the release."""
-        if isinstance(frame, pl.DataFrame):
-            frame = frame.lazy()
-        old_source, self._source = self._source, frame
+        old_source, self._source = self._source, _ensure_lazy(frame)
         old_tag, self._tag = self._tag, (tag if tag != "" else None)
         old_release, self._release = self._release, release
         try:
@@ -195,6 +197,8 @@ class Collector:
         """Add new rows."""
         if frame is None:
             frame = self._source
+        else:
+            frame = _ensure_lazy(frame)
 
         tag = None if self._tag == "" else self._tag
         entity = None if entity == "" else entity
@@ -430,20 +434,18 @@ class Collector:
         """Eagerly create a header frame with the given statistics."""
         pairs = {}
         md = cast(dict, metadata_entry or {})
-
-        if isinstance(self._source, pl.LazyFrame):
-            self._source = self._source.collect()
+        source = self._source.collect()
 
         batch_rows_with_keywords = (
-            self._source.select(
+            source.select(
                 pl.col("category_specification").is_null().not_().sum()
             ).item()
         )
 
         pairs["batch_count"] = md.get("batch_count")
-        pairs["batch_rows"] = self._source.height
+        pairs["batch_rows"] = source.height
         pairs["batch_rows_with_keywords"] = batch_rows_with_keywords
-        pairs["total_rows"] = self._source.height if tag is None else md.get("total_rows")
+        pairs["total_rows"] = source.height if tag is None else md.get("total_rows")
         pairs["total_rows_with_keywords"] = (
             batch_rows_with_keywords if tag is None
             else md.get("total_rows_with_keywords")
@@ -451,7 +453,7 @@ class Collector:
         height = len(pairs)
 
         assert self._release is not None
-        header = pl.DataFrame({
+        header = pl.LazyFrame({
             "start_date": height * [self._release.start_date],
             "end_date": height * [self._release.end_date],
             "tag": [
