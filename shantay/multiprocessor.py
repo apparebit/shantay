@@ -118,6 +118,22 @@ class Multiprocessor:
         _logger.info('    key="iter.first",           value="%s"', self._coverage.first)
         _logger.info('    key="iter.last",            value="%s"', self._coverage.last)
 
+        try:
+            self._run(task)
+        finally:
+            # Mark workers' staging roots as used
+            for worker in self._pool.workers:
+                staging = self._storage.isolate_staging_root(worker)
+                if not staging.exists():
+                    continue
+                staging.rename(staging.with_name(f"{staging.name}.done"))
+
+        self._running_time = time.time() - start_time
+        return None if self._stats is None else self._stats.frame()
+
+    def _run(self, task: str) -> None:
+        # Do the work
+        assert self._pool is not None
         self._pool.run(self._task_iter(), self._done_with_task)
 
         if task in ("distill", "summarize-category"):
@@ -149,9 +165,6 @@ class Multiprocessor:
                 persistent / self.stats_file
             )
             Statistics.copy(self.stats_file, self._storage.staging_root, persistent)
-
-        self._running_time = time.time() - start_time
-        return None if self._stats is None else self._stats.frame()
 
     def _task_iter(self) -> Iterator[Task]:
         assert self._pool is not None

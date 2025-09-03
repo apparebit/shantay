@@ -10,6 +10,9 @@ Also capture free-text fields named `decision_ground_reference_url`,
 addition of those fields, Shantay accounts for all DSA transparency DB fields in
 its summary statistics.
 
+Mark staging root directories for multiprocessing workers as digital detritus
+after tool run. They are not deleted to aid with debugging upon tool failures.
+
 Fix labelling of mean moderation and disclosure delay lines. Move mean
 disclosure delay to lower panel.
 

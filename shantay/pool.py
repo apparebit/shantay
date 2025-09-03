@@ -144,6 +144,10 @@ class Pool:
     def size(self) -> int:
         return self._size
 
+    @property
+    def workers(self) -> set[int]:
+        return self._index_table.workers
+
     def is_running(self) -> bool:
         """Determine whether this pool is running, hence accepting tasks."""
         return self._state.is_running()
@@ -313,12 +317,17 @@ class _IndexTable:
     def __init__(self, size: int) -> None:
         self._lock = threading.Lock()
         self._table = {}
+        self._worker_pids = set()  # all worker PIDs
         self._slots = (1 << size) - 1
         self._size = size  # do not change
 
     @property
     def size(self) -> int:
         return self._size
+
+    @property
+    def workers(self) -> set[int]:
+        return self._worker_pids
 
     def sync(self) -> None:
         """
@@ -359,6 +368,7 @@ class _IndexTable:
     def _allocate(self, pid: int) -> int:
         slots = self._slots
         assert slots != 0, "no index slot available"
+        self._worker_pids.add(pid)
 
         index = (slots & -slots).bit_length() - 1
         self._slots &= ~(1 << index)

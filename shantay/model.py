@@ -709,12 +709,16 @@ class Storage:
     extract_root: None | Path
     staging_root: Path
 
+    def isolate_staging_root(self, worker: int) -> Path:
+        """Isolate the staging root based on the worker ID."""
+        return self.staging_root.with_suffix(f".{worker}")
+
     def isolate(self, worker: int) -> Self:
-        """Isolate the work by assigning a unique staging root."""
+        """Create a new storage record with an isolated staging root."""
         return type(self)(
             self.archive_root,
             self.extract_root,
-            self.staging_root.with_suffix(f".{worker}")
+            self.isolate_staging_root(worker),
         )
 
     @property
