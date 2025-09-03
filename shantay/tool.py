@@ -302,6 +302,7 @@ def _run(options: Any) -> None:
     print(f"\nCompleted task {task} in {v:,.1f} {u}")
 
 
+_BOLD_STYLE = "\x1b[1m"
 _HAPPY_STYLE = "\x1b[1;32m"
 _ERROR_STYLE = "\x1b[1;41;38;5;255m"
 _WARN_STYLE = "\x1b[1;48;5;220;30m"
@@ -312,6 +313,7 @@ def run(options: Any) -> int:
     """Run Shantay with the given options and return the appropriate
     exit code."""
     no_color = os.getenv("NO_COLOR")
+    bold = "" if no_color else _BOLD_STYLE
     happy = "" if no_color else _HAPPY_STYLE
     error = "" if no_color else _ERROR_STYLE
     warning = "" if no_color else _WARN_STYLE
@@ -338,7 +340,9 @@ def run(options: Any) -> int:
             f"\x1b[999;999H\n\n{error} Source data contains "
             f"new {platforms} {names} {reset}"
         )
-        print("Please rerun shantay with the same command line arguments!")
+        print(
+            f"{bold}Please rerun shantay with the same command line arguments!{reset}"
+        )
         return 1
     except (ConfigError, DownloadFailed, MetadataConflict) as x:
         # They are package-specific exceptions and indicate preanticipated
@@ -351,8 +355,8 @@ def run(options: Any) -> int:
         print(f"\x1b[999;999H\n{error} {x} {reset}")
         print("".join(traceback.format_tb(x.__traceback__)))
         print(
-            f"{warning} Log file \"{options.logfile}\" may contain "
-            f"further information {reset}"
+            f"{bold}Shantay's log in \"{options.logfile}\" may contain "
+            f"further information{reset}"
         )
         return 1
     finally:
