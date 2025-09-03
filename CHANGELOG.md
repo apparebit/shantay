@@ -17,6 +17,8 @@ Fix crashing errors when cleaning up directories during archive download, when
 forwarding cancellations during multiprocessing, and when just downloading
 archives with multiprocessing.
 
+Fix name of statistics file in tool help.
+
 
 ## v0.5.0 (July 28, 2025)
 

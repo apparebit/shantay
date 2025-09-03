@@ -35,8 +35,8 @@ def get_parser() -> ArgumentParser:
         statistics. `--archive` and `--extract` again determine the scope of the
         visualization.
 
-        Summary statistics are stored in `all-data.parquet` for the full
-        database and in a file named after the category, such as
+        Summary statistics are stored in `db.parquet` for the full database and
+        in a file named after the category, such as
         `protection-of-minors.parquet`, for category-specific data. The HTML
         document follows the same naming convention; only the extension is
         `.html`.
