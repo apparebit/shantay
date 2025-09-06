@@ -17,8 +17,9 @@ Fix labelling of mean moderation and disclosure delay lines. Move mean
 disclosure delay to lower panel.
 
 Fix crashing errors when cleaning up directories during archive download, when
-forwarding cancellations during multiprocessing, and when just downloading
-archives with multiprocessing.
+forwarding cancellations during multiprocessing, when just downloading archives
+with multiprocessing, and when the archive already contains the requested
+statistics.
 
 Fix name of statistics file in tool help.
 

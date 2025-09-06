@@ -141,6 +141,7 @@ def get_configuration(
                 f'archive metadata really is for category {metadata.category}'
             )
 
+        metadata.write_json(storage.staging_root / "db.json")
         filestem = "db"
     else:
         try:
