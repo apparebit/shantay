@@ -118,42 +118,66 @@ def get_tags(frame: pl.DataFrame) -> list[None | str]:
     return tags
 
 
-def _ensure_lazy(frame: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
-    return frame if isinstance(frame, pl.LazyFrame) else frame.lazy()
-
-
 # =================================================================================================
 
 
 class Collector:
     """Analyze the data while also collecting the results."""
 
+    # Use a materialized or eager source frame, which ensures that data is
+    # available and well-formed. Use lazy partial frames and only materialize
+    # when needed to maximize opportunities for Pola.rs' optimizations.
+
     def __init__(self) -> None:
-        self._source: pl.LazyFrame = pl.LazyFrame()
+        self._source: pl.DataFrame = pl.DataFrame()
+        self._source_categories = pl.Series()
+        self._source_platforms = pl.Series()
         self._tag = None
         self._release = None
         self._platform = None
         self._category = None
-        self._frames = []
+        self._partial_frames: list[pl.LazyFrame] = []
+        self._full_frame: None | pl.DataFrame = None
+
 
     @contextmanager
     def source_data(
         self,
         *,
-        frame: pl.DataFrame | pl.LazyFrame,
+        frame: pl.DataFrame,
         release: Release,
         tag: None | str = None,
     ) -> Iterator[Self]:
-        """Create a context for the release."""
-        old_source, self._source = self._source, _ensure_lazy(frame)
+        """
+        Create a context for the release. This context manager precomputes the
+        categories and platforms.
+        """
+        old_source, self._source = self._source, frame
+        old_categories, old_platforms = self._source_categories, self._source_platforms
+        self._source_categories, self._source_platforms = self._categories_and_platforms
         old_tag, self._tag = self._tag, (tag if tag != "" else None)
         old_release, self._release = self._release, release
         try:
             yield self
         finally:
             self._source = old_source
+            self._source_categories = old_categories
+            self._source_platforms = old_platforms
             self._tag = old_tag
             self._release = old_release
+
+    @property
+    def _categories_and_platforms(self) -> tuple[pl.Series, pl.Series]:
+        """
+        Get the source frame's categories and platforms. This method
+        pre-computes the values of the two series.
+        """
+        source = self._source.lazy()
+        categories, platforms = pl.collect_all([
+            source.select(pl.col("category").unique()),
+            source.select(pl.col("platform_name").unique()),
+        ])
+        return categories.get_column("category"), platforms.get_column("platform_name")
 
     @contextmanager
     def platform_data(self, platform: None | str) -> Iterator[Self]:
@@ -184,6 +208,12 @@ class Collector:
             self._source = old_source
             self._category = old_category
 
+    def _add_partial_frame(self, frame: pl.LazyFrame) -> None:
+        if self._full_frame is not None:
+            self._partial_frames.append(self._full_frame.lazy())
+            self._full_frame = None
+        self._partial_frames.append(frame)
+
     def add_rows(
         self,
         column: str,
@@ -191,15 +221,10 @@ class Collector:
         variant: None | pl.Expr = None,
         value_counts: None | pl.Expr = None,
         text_value_counts: None | pl.Expr = None,
-        frame: None | pl.DataFrame | pl.LazyFrame = None,
+        frame: None | pl.DataFrame = None,
         **kwargs: None | int | pl.Expr,
     ) -> None:
         """Add new rows."""
-        if frame is None:
-            frame = self._source
-        else:
-            frame = _ensure_lazy(frame)
-
         tag = None if self._tag == "" else self._tag
         entity = None if entity == "" else entity
 
@@ -253,7 +278,8 @@ class Collector:
                 effective_values.append(value.cast(pl.Int64).alias(key))
 
         assert self._release is not None
-        frame = frame.select(
+        lazy_frame = self._source.lazy() if frame is None else frame.lazy()
+        stats = lazy_frame.select(
             pl.lit(self._release.start_date).alias("start_date"),
             pl.lit(self._release.end_date).alias("end_date"),
             pl.lit(tag).alias("tag"),
@@ -268,18 +294,19 @@ class Collector:
         )
 
         if value_counts is not None:
-            frame = frame.rename({
+            stats = stats.rename({
                 column: "variant",
             })
         elif text_value_counts is not None:
-            frame = frame.rename({
+            stats = stats.rename({
                 column: "text",
             })
 
-        frame = frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        stats = stats.cast(
+            StatisticsSchema) # pyright: ignore[reportArgumentType]
 
         # Enforce canonical column order, so that frames can be concatenated!
-        self._frames.append(frame.select(
+        self._add_partial_frame(stats.select(
             pl.col(
                 "start_date", "end_date", "tag", "platform",
                 *(["category"] if STRATIFY_BY_CATEGORY else []),
@@ -403,25 +430,13 @@ class Collector:
 
     def collect_categories(self) -> None:
         """Collect statistics about categories. This method forces evaluation."""
-        categories = self._source.select(
-            pl.col("category").unique()
-        )
-        if isinstance(categories, pl.LazyFrame):
-            categories = categories.collect()
-
-        for category in categories.get_column("category"):
+        for category in self._source_categories:
             with self.category_data(category) as this:
                 this.collect_body_data()
 
     def collect_platforms(self) -> None:
         """Collect statistics about platforms. This method forces evaluation."""
-        platform_names = self._source.select(
-            pl.col("platform_name").unique()
-        )
-        if isinstance(platform_names, pl.LazyFrame):
-            platform_names = platform_names.collect()
-
-        for name in platform_names.get_column("platform_name"):
+        for name in self._source_platforms:
             with self.platform_data(name) as this:
                 if STRATIFY_BY_CATEGORY:
                     this.collect_categories()
@@ -434,18 +449,17 @@ class Collector:
         """Eagerly create a header frame with the given statistics."""
         pairs = {}
         md = cast(dict, metadata_entry or {})
-        source = self._source.collect()
 
         batch_rows_with_keywords = (
-            source.select(
+            self._source.select(
                 pl.col("category_specification").is_null().not_().sum()
             ).item()
         )
 
         pairs["batch_count"] = md.get("batch_count")
-        pairs["batch_rows"] = source.height
+        pairs["batch_rows"] = self._source.height
         pairs["batch_rows_with_keywords"] = batch_rows_with_keywords
-        pairs["total_rows"] = source.height if tag is None else md.get("total_rows")
+        pairs["total_rows"] = self._source.height if tag is None else md.get("total_rows")
         pairs["total_rows_with_keywords"] = (
             batch_rows_with_keywords if tag is None
             else md.get("total_rows_with_keywords")
@@ -474,7 +488,7 @@ class Collector:
             "max": height * [None],
         }, schema=StatisticsSchema)
 
-        self._frames.append(header)
+        self._add_partial_frame(header)
 
     def collect(
         self,
@@ -492,17 +506,22 @@ class Collector:
             with self.source_data(frame=frame, release=release, tag=tag) as this:
                 this.collect_platforms()
 
-    def frame(self, validate: bool = False) -> pl.DataFrame:
+    def frame(self) -> pl.DataFrame:
         """
         Combine the collected partial frames into one. This method forces
         evaluation.
         """
-        frame = pl.concat(self._frames, how="vertical")
-        if isinstance(frame, pl.LazyFrame):
-            frame = frame.collect()
-        frame = frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
-        if validate:
-            _validate_row_counts(frame)
+        # Fast path for single data frame
+        if self._full_frame is not None:
+            return self._full_frame
+        if len(self._partial_frames) == 0:
+            return pl.DataFrame([], schema=StatisticsSchema)
+
+        # Slow path for combining more than one lazy frame
+        self._full_frame = frame = pl.concat(
+            self._partial_frames, how="vertical"
+        ).collect().cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        self._partial_frames = []
         return frame
 
 
@@ -931,26 +950,46 @@ class Statistics:
     Wrapper around statistics describing the DSA transparency database.
     Conceptually, the descriptive statistics form a single data frame. However,
     to support incremental collection of those statistics, this class may
-    temporarily wrap more than one data frame, lazily materializing a single
-    frame only on demand.
+    temporarily wrap more than one data frames, lazily materializing a single
+    frame on demand only.
     """
 
     DEFAULT_RANGE: ClassVar[DateRange] = DateRange(
         dt.date(2023, 9, 25), dt.date.today() - dt.timedelta(days=3)
     )
 
+    # Collector performs elaborate computations on for each partial frame and
+    # hence uses lazy partial frames to maximize opportunities for optimization.
+    # By contrast, this class forces evaluation for its only collector instance
+    # and otherwise only concatenates partial frames (optionally applying
+    # finalization when writing). Hence partial frames are eager, too.
+
     def __init__(self, file: str, *frames: pl.DataFrame) -> None:
         self._file = file
-        self._frames = list(frames)
+
+        # If the instance wraps a full frame, the partial frames and collector
+        # must be empty. Vice versa, if the instance wraps partial frames and/or
+        # a collector, the full frame must be empty.
+        self._full_frame: None | pl.DataFrame = None
+        self._partial_frames: list[pl.DataFrame] = []
         self._collector = None
+
+        match len(frames):
+            case 0:
+                pass
+            case 1:
+                self._full_frame = frames[0]
+            case _:
+                self._partial_frames = list(frames)
+
         # Cache monthly and total aggregations
         self._monthly = None
-        self._total = None
+        self._totals = None
 
     @classmethod
     def builtin(cls) -> Self:
         """Get the pre-computed statistics for the entire DSA database."""
-        # Per spec, __package__ is the same as __spec__.parent, which
+        # Per spec, __package__ is the same as __spec__.parent
         source = files(__spec__.parent).joinpath("db.parquet")
         with as_file(source) as path:
             return cls.read(path)
@@ -962,8 +1001,16 @@ class Statistics:
         directory, i.e., archive or extract. This method assumes that if both
         files exist, they also start on the same date.
         """
-        s1 = cls.read(staging / file) if (staging / file).exists() else None
-        s2 = cls.read(persistent / file) if (persistent / file).exists() else None
+        try:
+            s1 = cls.read(staging / file)
+        except FileNotFoundError:
+            s1 = None
+
+        try:
+            s2 = cls.read(persistent / file)
+        except FileNotFoundError:
+            s2 = None
+
         if s1 is None:
             return cls(file) if s2 is None else s2
         elif s2 is None:
@@ -1003,53 +1050,51 @@ class Statistics:
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         )
 
+    @property
     def file(self) -> str:
+        """Access the file name."""
         return self._file
 
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
 
-    def frame(self, validate: bool = False) -> pl.DataFrame:
+    def frame(self) -> pl.DataFrame:
         """
         Materialize a single data frame with the summary statistics. If this
         method computes a new single data frame, it also updates the internal
-        state with that frame, discarding the subsets used for creating that
-        single frame in the first place. That implies that a subsequent call to
-        this method, with no intervening calls to `collect` or `append` return
-        the exact same data frame.
+        state with that frame and discards the partial frames. Hence, any
+        subsequent calls to this method, with no intervening calls to `collect`
+        or `append` return the exact same data frame.
         """
-        # Fast path: Data has already been reduced to a single frame
-        if (
-            len(self._frames) == 1
-            and self._collector is None
-            and not validate
-        ):
-            return self._frames[0]
+        # Fast path: Just return full frame
+        if self._full_frame is not None:
+            return self._full_frame
 
-        # Somewhat slower path: No data or data in collector only
-        if len(self._frames) == 0:
-            if self._collector is None:
-                self._frames.append(pl.DataFrame([], schema=StatisticsSchema))
-            else:
-                self._frames.append(self._collector.frame())
-                self._collector = None
-            return self._frames[0]
-
-        # Slow path: Concatenate 2+ frames
+        # Slow path: Concat partial frames
+        partial_frames, self._partial_frames = self._partial_frames, []
         if self._collector is not None:
-            self._frames.append(self._collector.frame())
-        frame = pl.concat(self._frames, how="vertical")
+            partial_frames.append(self._collector.frame())
+            self._collector = None
 
-        # Take care of validation and grouping
-        if validate:
-            _validate_row_counts(frame)
+        if len(partial_frames) == 0:
+            self._full_frame = frame = pl.DataFrame([], schema=StatisticsSchema)
+            return frame
 
-        # Update internal state
-        self._frames = [frame]
-        self._collector = None
+        self._full_frame = frame = pl.concat(
+            partial_frames, how="vertical"
+        ).cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         return frame
 
+    def _prepare_for_update(self) -> None:
+        self._monthly = None
+        self._totals = None
+
+        if self._full_frame is not None:
+            self._partial_frames.append(self._full_frame)
+            self._full_frame = None
+
     def monthly(self) -> pl.DataFrame:
+        """Create view with monthly counts."""
         if self._monthly is None:
             self._monthly = self.frame().group_by(
                 pl.col("start_date").dt.year().alias("year"),
@@ -1058,12 +1103,13 @@ class Statistics:
             ).agg(*aggregates())
         return self._monthly
 
-    def total(self) -> pl.DataFrame:
-        if self._total is None:
-            self._total = self.frame().group_by(
+    def totals(self) -> pl.DataFrame:
+        """Create view with total counts."""
+        if self._totals is None:
+            self._totals = self.frame().group_by(
                 pl.col("tag", "platform", "column", "entity", "variant", "text"),
             ).agg(*aggregates())
-        return self._total
+        return self._totals
 
     def is_empty(self) -> bool:
         """Determine whether this instance has no data."""
@@ -1110,11 +1156,10 @@ class Statistics:
         This method adds the given `tag` to collected summary statistics. Use
         `append()` for frames with already computed statistics.
         """
+        self._prepare_for_update()
+
         if self._collector is None:
             self._collector = Collector()
-            # Null out cached monthly and total aggregations
-            self._monthly = None
-            self._total = None
         self._collector.collect(release, frame, tag=tag, metadata_entry=metadata_entry)
 
     def append(self, frame: pl.DataFrame) -> None:
@@ -1122,10 +1167,8 @@ class Statistics:
         Append the data frame with summary statistics. Use `collect()` for
         frames with transparency database data.
         """
-        # Null out cached monthly and total aggregations
-        self._monthly = None
-        self._total = None
-        self._frames.append(
+        self._prepare_for_update()
+        self._partial_frames.append(
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         )
 
@@ -1143,12 +1186,13 @@ class Statistics:
         by the data frame before writing it out. The updated version also
         replaces the original version.
         """
+        frame = self.frame()
         if should_finalize:
-            self._frames = [finalize(self.frame())]
+            self._full_frame = frame = finalize(frame)
 
-        path = directory / self.file()
+        path = directory / self.file
         tmp = path.with_suffix(".tmp.parquet")
-        self.frame().write_parquet(tmp)
+        frame.write_parquet(tmp)
         tmp.replace(path)
 
         return self

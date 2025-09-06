@@ -873,7 +873,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             render=not self._renderer.plain
         )
         self._markdown(
-            format_schema(self._statistics.frame(), title=self._statistics.file()),
+            format_schema(self._statistics.frame(), title=self._statistics.file),
             disclosure=True,
             render=not self._renderer.plain,
         )

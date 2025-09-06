@@ -565,12 +565,9 @@ class CollectorProtocol(Protocol):
         of extracting the category-specific data.
         """
 
-    def frame(self, validate: bool = False) -> DataFrameType:
+    def frame(self) -> DataFrameType:
         """
         Combine all summary statistics collected so far into one data frame.
-        Optionally validate the summary statistics. Also, optionally group by
-        day or month. It is an error to try grouping-by-day summary statistics
-        collected at monthly granularity.
         """
         ...
 
