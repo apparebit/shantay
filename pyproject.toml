@@ -25,7 +25,7 @@ dynamic = ["version"]
 dependencies = [
     "altair", # chart creation
     "vl-convert-python", # chart rendering
-    "polars >= 1.27.1", # data frames
+    "polars >= 1.33.0", # data frames
     "pyarrow", # underlying memory representation
     "great_tables", # table formatting
     "ipython", # interactive use
@@ -33,24 +33,21 @@ dependencies = [
     "mistune", # render Markdown to HTML
 ]
 
-
 [project.scripts]
 shantay = "shantay.__main__:main"
 
+[project.urls]
+repository = "https://github.com/apparebit/shantay"
 
-[project.optional-dependencies]
-dev = [
-    "flit",
+
+[dependency-groups]
+docs = [
     "sphinx",
     "sphinx_design",
     "sphinx-rtd-theme",
     "sphinx-autodoc2",
     "myst-parser",
 ]
-
-
-[project.urls]
-repository = "https://github.com/apparebit/shantay"
 
 
 [tool.pyright]
