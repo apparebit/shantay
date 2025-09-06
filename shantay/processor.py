@@ -729,6 +729,8 @@ class Processor[R: Release]:
     ) -> None:
         """Determine summary statistics for the category-specific subset of the
         given release."""
+        start_time = time.time()
+
         self.stage_category_data(release)
 
         assert isinstance(self._coverage.category, str)
@@ -741,6 +743,12 @@ class Processor[R: Release]:
         )
 
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
+
+        latency, time_unit = scale_time(time.time() - start_time)
+        _logger.debug(
+            'summarized category="%s", release="%s", latency=%.3f, unit="%s"',
+            self._coverage.category, release.id, latency, time_unit
+        )
 
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""
@@ -828,6 +836,7 @@ class Processor[R: Release]:
         # Archived files are archives, too. Unarchive one at a time.
         for index, name in enumerate(filenames):
             check_not_cancelled()
+            start_time = time.time()
 
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
@@ -860,6 +869,12 @@ class Processor[R: Release]:
             # space for staging alone. Hence, we must aggressively clean up
             # temporary files again.
             shutil.rmtree(self._storage.staging_root / release.temp_directory)
+
+            latency, time_unit = scale_time(time.time() - start_time)
+            _logger.debug(
+                'summarized file="%s", latency=%.3f, unit="%s"',
+                name, latency, time_unit
+            )
 
         self._metadata[release] = cast(MetadataEntry, full_counts)
         self._metadata.write_json(
