@@ -22,7 +22,7 @@ def annotate_error[**P, R](
     named argument. That is, unless the filename is already set, in which case
     the wrapper does nothing.
     """
-    def wrapper(fn: Callable[P, R]) -> Callable[P, R]:
+    def annotate_error(fn: Callable[P, R]) -> Callable[P, R]:
         # No argument, nothing to annotate with
         if filename_arg is None:
             return fn
@@ -30,7 +30,7 @@ def annotate_error[**P, R](
         sig = inspect.signature(fn)
 
         @functools.wraps(fn)
-        def inner(*args: P.args, **kwargs: P.kwargs) -> R:
+        def annotate_error(*args: P.args, **kwargs: P.kwargs) -> R:
             try:
                 return fn(*args, **kwargs)
             except OSError as x:
@@ -39,8 +39,8 @@ def annotate_error[**P, R](
                     value = sig.bind(*args, **kwargs).arguments[filename_arg]
                     x.filename = str(value)
                 raise x
-        return inner
-    return wrapper
+        return annotate_error
+    return annotate_error
 
 
 def minify(value: int) -> str:
