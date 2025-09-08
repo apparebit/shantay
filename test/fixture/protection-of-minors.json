@@ -1,5 +1,7 @@
 {
-  "category": "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+  "@id": "Shantay 665.0",
+  "stem": "protection-of-minors",
+  "filter": "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
   "releases": {
     "2024-03-14": {
       "batch_count": 2,

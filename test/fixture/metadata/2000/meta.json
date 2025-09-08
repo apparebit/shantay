@@ -1,5 +1,7 @@
 {
-    "category": "END_OF_THE_WORLD",
+    "@id": "Shantay 665.0",
+    "stem": "doom",
+    "filter": "END_OF_THE_WORLD",
     "releases": {
         "1999-12-31": {
             "batch_count": 665
