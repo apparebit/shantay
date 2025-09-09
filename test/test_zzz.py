@@ -11,6 +11,7 @@ from shantay.model import Release
 LOG = Path(__file__).parent / "tmp" / "log.log"
 PID = os.getpid()
 
+
 class TestZzz(unittest.TestCase):
 
     def test_log(self) -> None:

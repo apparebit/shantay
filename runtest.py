@@ -9,8 +9,7 @@ import sys
 import traceback
 import unittest
 
-from shantay.__main__ import configure_logging
-from test.runtime import ResultAdapter, StyledStream
+from test.runtime import get_ticker, load_tests, ResultAdapter, StyledStream
 
 if __name__ == "__main__":
     successful = False
@@ -33,14 +32,27 @@ if __name__ == "__main__":
             print(styled.failure("shantay failed to type check!"))
             sys.exit(1)
 
-    print(styled.h0("Tests Are Running…"))
+    print(styled.h0("Testing…"))
     print()
 
-    # Recreate staging directory and configure logging
+    # Prepare staging, version number, logging, and test classes.
+    ticker = get_ticker(stream)
+
     STAGING = Path(__file__).parent / "test" / "tmp"
     shutil.rmtree(STAGING, ignore_errors=True)
     STAGING.mkdir(parents=True)
+    ticker()
+
+    import shantay
+    shantay.__version__ = "665.0"
+    ticker()
+
+    from shantay.__main__ import configure_logging
     configure_logging(str(STAGING / "log.log"), verbose=True)
+    ticker()
+
+    load_tests()
+    ticker()
 
     try:
         runner = unittest.main(

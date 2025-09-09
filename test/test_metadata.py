@@ -21,17 +21,25 @@ class TestMetadata(unittest.TestCase):
         )
 
     def check_metadata_2000(self, metadata: Metadata) -> None:
-        self.assertEqual(metadata.category, "END_OF_THE_WORLD")
+        self.assertEqual(metadata.stem, "doom")
+        assert metadata.filter is not None
+        self.assertEqual(metadata.filter.kind, "platform")
+        self.assertEqual(metadata.filter.criterion, ("End", "of", "THE WORLD"))
         self.assertListEqual([*metadata.records], [
             {"release": "1999-12-31", "batch_count": 665},
             {"release": "2000-01-01", "batch_count":   1},
         ])
+        self.assertEqual(metadata.tag(), "PLATFORM_END_OF_THE_WORLD")
 
     def test_new_metadata(self) -> None:
         # Instantiate metadata
-        metadata = Metadata(normalize_category(CATEGORY))
-        self.assertEqual(metadata.category, StatementCategoryProtectionOfMinors)
+        metadata = Metadata.for_category(normalize_category(CATEGORY))
+        self.assertEqual(metadata.stem, "protection-of-minors")
+        assert metadata.filter is not None
+        self.assertEqual(metadata.filter.kind, "category")
+        self.assertEqual(metadata.filter.criterion, StatementCategoryProtectionOfMinors)
         self.assertListEqual([*metadata.records], [])
+        self.assertEqual(metadata.tag(), StatementCategoryProtectionOfMinors)
 
     def test_merge_same_metadata(self) -> None:
         # Merge with identical data

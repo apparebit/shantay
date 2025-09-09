@@ -7,7 +7,7 @@ from .runtime import TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
-from shantay.model import Coverage, Daily, Storage
+from shantay.model import Daily, ReleaseRange, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Statistics
@@ -37,8 +37,8 @@ class TestSummarize(TestCase):
             archive_root=ARCHIVE, extract_root=None, staging_root=STAGING
         )
         release = Daily(2024, 3, 14)
-        coverage = Coverage(release, release, None)
-        metadata = Metadata(None, {})
+        coverage = ReleaseRange(release, release)
+        metadata = Metadata.for_full_db()
         processor = Processor(
             dataset=dataset,
             storage=storage,
@@ -69,8 +69,8 @@ class TestSummarize(TestCase):
             archive_root=ARCHIVE, extract_root=EXTRACT, staging_root=STAGING
         )
         release = Daily(2024, 3, 14)
-        coverage = Coverage(release, release, StatementCategoryProtectionOfMinors)
-        metadata = Metadata(StatementCategoryProtectionOfMinors, {})
+        coverage = ReleaseRange(release, release)
+        metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
         processor = Processor(
             dataset=dataset,
             storage=storage,
@@ -79,7 +79,7 @@ class TestSummarize(TestCase):
             offline=True,
         )
 
-        processor.run("summarize-category")
+        processor.run("summarize-extract")
 
         self.assertFileEqual(
             STAGING / "protection-of-minors.json",

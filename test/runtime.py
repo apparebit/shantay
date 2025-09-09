@@ -20,6 +20,7 @@ the Python core team has shown little interest in improving the state of
 `unittest`, violating encapsulation seems mostly safe as well.
 """
 import dataclasses
+import importlib
 import inspect
 import json
 import os
@@ -30,7 +31,11 @@ import unittest
 
 import polars as pl
 
-from shantay.metadata import Metadata
+# Avoid prematurely loading shantay.metadata
+if TYPE_CHECKING:
+    from shantay.metadata import Metadata
+else:
+    Metadata = object()
 
 
 ExcInfo: TypeAlias = tuple[type[BaseException], BaseException, TracebackType]
@@ -50,8 +55,8 @@ class TestCase(unittest.TestCase):
     def assertMetaDataEqual(self, meta1: Metadata, meta2: Metadata) -> None:
         """Assert that the two meta data instances describe the same data,
         ignoring digests."""
-        self.assertEqual(meta1.category, meta2.category, "metadata must have same category")
-        self.assertEqual(meta1.range, meta2.range, "metadata must have the same date range")
+        self.assertEqual(meta1.stem, meta2.stem, "metadata must have same stem")
+        self.assertEqual(meta1.filter, meta2.filter, "metadata must have the same filter")
         for item1, item2 in zip(meta1.records, meta2.records):
             item1["sha256"] = None
             item2["sha256"] = None
@@ -219,6 +224,12 @@ ProgressTracker: TypeAlias = Callable[[testunit, None | OptExcInfo], None]
 ResultPrinter: TypeAlias = Callable[[int, list[BrokenTest], list[BrokenTest]], None]
 
 
+def get_ticker(stream: TextIO) -> Callable[[], None]:
+    def ticker() -> None:
+        stream.write("◦")
+    return ticker
+
+
 def track_progress(stream: TextIO) -> ProgressTracker:
     columns = 0
 
@@ -356,3 +367,34 @@ class ResultAdapter(unittest.TestResult if TYPE_CHECKING else object):
             [(testunit(test), trace) for test, trace in self._result.failures],
             [(testunit(test), trace) for test, trace in self._result.errors],
         )
+
+
+def load_tests() -> None:
+    """
+    Load all tests into the test module. While it is easier to just manually
+    keep track of test modules, manual book keeping is tedious and error prone.
+    So this function automates the loading of tests.
+    """
+    modtest = importlib.import_module("test")
+
+    for direntry in sorted(Path(__file__).parent.glob("test_*.py")):
+        # For each submodule named test.test_something, ...
+        if not direntry.is_file():
+            continue
+
+        # ... import the module, ...
+        module_name = f"test.{direntry.stem}"
+        module = importlib.import_module(module_name)
+
+        # ... then iterate over its public symbols, ...
+        for name in dir(module):
+            if name.startswith("_"):
+                continue
+
+            # ... and, if the value is a subclass of unittest.TestCase, ...
+            value = getattr(module, name)
+            if not isinstance(value, type) or not issubclass(value, unittest.TestCase):
+                continue
+
+            # ... make the value available in this module, too.
+            setattr(modtest, name, value)

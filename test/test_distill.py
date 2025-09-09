@@ -9,7 +9,7 @@ from .runtime import TestCase
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
 from shantay.metadata import Metadata
-from shantay.model import Coverage, Daily, MetadataEntry, Storage
+from shantay.model import Daily, ReleaseRange, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Collector
@@ -46,8 +46,8 @@ class TestDistill(TestCase):
                 archive_root=ARCHIVE, extract_root=STAGING, staging_root=STAGING
             )
             release = Daily(2024, 3, 14)
-            coverage = Coverage(release, release, StatementCategoryProtectionOfMinors)
-            metadata = Metadata(StatementCategoryProtectionOfMinors, {})
+            coverage = ReleaseRange(release, release)
+            metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
             processor = Processor(
                 dataset=dataset,
                 storage=storage,
@@ -103,7 +103,7 @@ class TestDistill(TestCase):
                 release=release,
                 index=0,
                 name=ZIP_FILES[0],
-                category=StatementCategoryProtectionOfMinors,
+                filter=metadata.filter,
             )
             dataset._validate_schema(frame)
 
@@ -134,12 +134,14 @@ class TestDistill(TestCase):
             self.assertFalse(batch1.exists())
 
             processor.unarchive_file(STAGING, release, 1, ZIP_FILES[1])
-            digest, more_counters = dataset.distill_category_data(
+
+            assert metadata.filter is not None
+            digest, more_counters = dataset.distill_release(
                 root=STAGING,
                 release=release,
                 index=1,
                 name=ZIP_FILES[1],
-                category=StatementCategoryProtectionOfMinors,
+                filter=metadata.filter,
             )
 
             self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
@@ -161,7 +163,8 @@ class TestDistill(TestCase):
 
         with self.subTest("analyze release data"):
             collector = Collector()
-            metadata_entry: MetadataEntry = {
+            metadata = metadata.with_releases()
+            metadata[release] = {
                 "batch_count": 2,
                 "total_rows": 665,
                 "total_rows_with_keywords": 212,
@@ -169,8 +172,7 @@ class TestDistill(TestCase):
             dataset.summarize_release(
                 STAGING,
                 release,
-                StatementCategoryProtectionOfMinors,
-                metadata_entry,
+                metadata,
                 collector,
             )
 
@@ -185,7 +187,7 @@ class TestDistill(TestCase):
             self.assertEqual(frame_data, EXPECTED_ANALYSIS)
 
             # Write to parquet
-            frame.write_parquet(STAGING / f"{coverage.stem()}.parquet")
+            frame.write_parquet(STAGING / f"{metadata.stem}.parquet")
 
         with self.subTest("check log file"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)
