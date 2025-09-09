@@ -1,7 +1,6 @@
 #!.venv/bin/python
 
-# Generate db.json in staging based on the first category-specific metadata
-# file.
+# Generate db.json in staging based on the first distilled metadata file.
 
 import argparse
 from pathlib import Path
@@ -14,7 +13,6 @@ import polars as pl
 
 from shantay.metadata import Metadata
 from shantay.model import ConfigError
-from shantay.schema import is_category_file
 
 
 def configure(argv: list[str]) -> Any:
@@ -52,26 +50,14 @@ def main(argv: list[str]) -> int:
     if not options.store:
         print("performing dry run; use --store to persist changes")
 
-    metadata = None
-    for file in options.staging.glob("*.json"):
-        if file.name == "db.json" or not is_category_file(file.stem):
-            continue
-
-        metadata = Metadata.read_json(file)
-        break
-
-    if metadata is None:
+    try:
+        metapath = Metadata.find_file(options.staging, skip_db=True)
+        metadata = Metadata.read_json(metapath)
+    except FileNotFoundError:
         print("ERROR: could not find category-specific metadata in staging")
         return 1
 
-    metadata._category = None
-    for value in metadata._releases.values():
-        if "batch_rows" in value:
-            del value["batch_rows"]
-        if "batch_rows_with_keywords" in value:
-            del value["batch_rows_with_keywords"]
-        if "sha256" in value:
-            del value["sha256"]
+    metadata = metadata.without_filter()
 
     if options.store:
         metadata.write_json(options.staging / "db.json", sort_keys=True)

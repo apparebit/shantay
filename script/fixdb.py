@@ -13,7 +13,7 @@ import polars as pl
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
-from shantay.model import ConfigError, Coverage, Daily, file_stem_for, Release, Storage
+from shantay.model import ConfigError, Daily, Release, ReleaseRange, Storage
 from shantay.processor import Processor
 from shantay.progress import Progress
 from shantay.stats import Statistics
@@ -93,8 +93,8 @@ def configure(argv: list[str]) -> tuple[Storage, Metadata, Any]:
     except FileNotFoundError:
         raise ConfigError("--extract directory does not contain metadata")
 
-    if metadata.category is None:
-        raise ConfigError("metadata in --extract directory has no category")
+    if metadata.filter is None:
+        raise ConfigError("metadata in --extract directory has no filter")
 
     pl.Config.set_tbl_cols(20)
     pl.Config.set_tbl_rows(500)
@@ -103,10 +103,12 @@ def configure(argv: list[str]) -> tuple[Storage, Metadata, Any]:
     return storage, metadata, options
 
 
-def recompute(storage: Storage, release: Daily) -> tuple[int, int, int, int]:
+def recompute(
+    storage: Storage, release: Daily, metadata: Metadata
+) -> tuple[int, int, int, int]:
     dataset = StatementsOfReasons()
-    coverage = Coverage(release, release, None)
-    metadata = Metadata()
+    coverage = ReleaseRange(release, release)
+    metadata = metadata
     progress = Progress()
     processor = Processor(
         dataset=dataset,
@@ -134,7 +136,7 @@ def recompute(storage: Storage, release: Daily) -> tuple[int, int, int, int]:
         progress.step(index, "unarchive data")
         processor.unarchive_file(storage.staging_root, release, index, name)
 
-        counter, frame = dataset.ingest_database_data(
+        counter, frame = dataset.ingest_release(
             root=storage.staging_root,
             release=release,
             index=index,
@@ -195,7 +197,9 @@ def main(argv: list[str]) -> int:
                 .alias("total_rows_with_keywords"),
             ).row(0)
 
-            ttl3, ttl_kw3, ttl4, ttl_kw4 = recompute(storage, release)
+            ttl3, ttl_kw3, ttl4, ttl_kw4 = recompute(
+                storage, release, metadata.with_releases()
+            )
 
             if (
                 ttl1 != ttl2 or ttl1 != ttl3 or ttl1 != ttl4
@@ -257,7 +261,9 @@ def main(argv: list[str]) -> int:
             if not options.check:
                 is_data_ok = False
             else:
-                ttl1, kw3, ttl2, kw4 = recompute(storage, cast(Daily, Release.of(date)))
+                ttl1, kw3, ttl2, kw4 = recompute(
+                    storage, cast(Daily, Release.of(date)), metadata.with_releases()
+                )
                 assert ttl1 == batch_rows
                 assert ttl2 == batch_rows
 
@@ -299,9 +305,6 @@ def main(argv: list[str]) -> int:
             msg = "; nothing else to do"
         print(msg)
     elif options.store:
-        assert metadata.category is not None
-        stem = file_stem_for(metadata.category)
-
         # Save frame
         path = storage.staging_root / "db.parquet"
         tmp = path.with_suffix(".tmp.parquet")
@@ -310,12 +313,12 @@ def main(argv: list[str]) -> int:
         Statistics.copy("db.parquet", storage.staging_root, storage.the_archive_root)
 
         # Save metadata
-        source = storage.staging_root / f"{stem}.json"
-        target = storage.the_extract_root / f"{stem}.json"
+        source = storage.staging_root / f"{metadata.stem}.json"
+        target = storage.the_extract_root / f"{metadata.stem}.json"
         metadata.write_json(source)
         metadata.copy_json(source, target)
 
-        print(f"wrote updated db.parquet and {stem}.json!")
+        print(f"wrote updated db.parquet and {metadata.stem}.json!")
 
     return not is_data_ok
 

@@ -16,7 +16,8 @@ from .color import Palette
 from .framing import (
     aggregates, is_row_within_period, NO_ARGUMENT_PROVIDED, NOT_NULL, predicate
 )
-from .model import ConfigError, Coverage, file_stem_for, Storage
+from .metadata import Metadata
+from .model import ConfigError, file_stem_for, ReleaseRange, Storage
 from .schema import (
     AccountTypeMetric, AutomatedDecisionMetric, AutomatedDetectionMetric,
     ContentLanguageMetric, CategoryMetric, ContentTypeMetric, DecisionAccountMetric,
@@ -322,16 +323,18 @@ class Visualizer:
     def __init__(
         self,
         storage: Storage,
-        coverage: Coverage,
+        coverage: ReleaseRange,
+        metadata: Metadata,
         with_no_outliers: bool = False,
         with_interaction: bool = False,
         with_notebook: bool = False,
     ) -> None:
         self._storage = storage
         self._coverage = coverage
+        self._metadata = metadata
         self._with_no_outliers = with_no_outliers
         self._with_interaction = with_interaction
-        self._chart_dir = storage.staging_root / "charts" / coverage.stem()
+        self._chart_dir = storage.staging_root / "charts" / metadata.stem
         if with_notebook:
             self._renderer = _NotebookRenderer(self._chart_dir)
         else:
@@ -349,7 +352,7 @@ class Visualizer:
         return _TIMELINE_HEIGHT * (2 // 3 if short else 1)
 
     def _has_all_sors(self) -> bool:
-        return self._coverage.category is None
+        return self._metadata.filter is None
 
     def _is_monthly(self) -> bool:
         return self._frequency == "monthly"
@@ -496,7 +499,7 @@ class Visualizer:
         self._chart_dir.mkdir(parents=True, exist_ok=True)
         self._ingest()
 
-        path = (self._storage.staging_root / f"{self._coverage.stem()}.html")
+        path = (self._storage.staging_root / f"{self._metadata.stem}.html")
         with open(path, mode="w", encoding="utf8") as document:
             try:
                 self._document = document
@@ -518,7 +521,7 @@ class Visualizer:
 
     def _ingest(self) -> None:
         # Load the right statistics
-        if self._coverage.stem() == "db":
+        if self._metadata.stem == "db":
             if self._storage.archive_root is None:
                 path = None
             else:
@@ -530,12 +533,12 @@ class Visualizer:
             path = "«builtin»"
             statistics = Statistics.builtin()
         else:
-            statistics = Statistics.read(path / f"{self._coverage.stem()}.parquet")
+            statistics = Statistics.read(path / f"{self._metadata.stem}.parquet")
 
         _logger.info('using statistics file="%s"', path)
 
         # Capture frequency, tags, date range
-        self._frequency = self._coverage.frequency()
+        self._frequency = self._coverage.frequency
         self._tags = get_tags(statistics.frame())
         self._date_range = statistics.date_range().intersection(
             self._coverage.date_range(), empty_ok=False
@@ -543,7 +546,7 @@ class Visualizer:
 
         within_range = is_row_within_period(self._date_range)
         self._statistics = Statistics(
-            f"{self._coverage.stem()}.parquet", statistics.frame().filter(within_range)
+            f"{self._metadata.stem}.parquet", statistics.frame().filter(within_range)
         )
         if self._statistics.frame().height == 0:
             raise ConfigError("cannot visualize less than a full month of data")
@@ -611,7 +614,7 @@ class Visualizer:
                 meta_platforms.append(platform)
 
         self._meta = Statistics(
-            f"{self._coverage.stem()}-meta.parquet",
+            f"{self._metadata.stem}-meta.parquet",
             meta_data.group_by(
                 pl.col(
                     "start_date", "end_date",
