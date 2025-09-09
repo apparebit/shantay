@@ -3,12 +3,20 @@
 
 ## v0.6.0 (September ??, 2025)
 
-Also capture free-text fields named `decision_ground_reference_url`,
+As an alternative to distilling by `--category`, distill by one or more
+`--platform`s or an arbitrary Pola.rs `--filter` expression. Shantay uses `eval`
+for turning the latter into an executable predicate. The customary `pl` is the
+only global binding available during evaluation. No other bindings, including
+for Python's builtins, are accessible. Still, it would be folly to use an
+untrusted string as `--filter` argument.
+
+Capture the free-text fields named `decision_ground_reference_url`,
 `illegal_content_legal_ground`, `illegal_content_explanation`,
 `incompatible_content_ground`, `incompatible_content_explanation`,
 `decision_facts`, and `source_identity` in summary statistics and reports. With
 addition of those fields, Shantay accounts for all DSA transparency DB fields in
-its summary statistics.
+its summary statistics. Alibaba's values for these fields are ignored; the firm
+includes case-specific identifiers, which require too much storage to track.
 
 Mark staging root directories for multiprocessing workers as digital detritus
 after tool run. They are not deleted to aid with debugging upon tool failures.

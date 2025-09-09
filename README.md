@@ -100,13 +100,13 @@ control and data recovery. Here are all of them:
     `--offline` operation by downloading archives as expediently as possible and
     not performing any other processing.
 
-  - **distill** extracts a category-specific subset from daily distributions. It
-    requires both the `--archive` and `--extract` directories. For a new extract
-    directory, it also requires a `--category`. That category and other metadata
-    are stored in `meta.json`.
+  - **distill** extracts a filtered subset from daily distributions. It requires
+    both the `--archive` and `--extract` directories. For a new extract
+    directory, it also requires either a `--category`, `--platform`, or
+    `--filter`. That filter and other metadata are stored in a JSON file.
 
   - **recover** scans the `--extract` directory to validate the files and
-    restore (some of the) metadata in `meta.json`.
+    restore (some of the) metadata.
 
   - **summarize** collects summary statistics either for the full database or a
     category-specific subset, depending on whether `--archive` only (for the
@@ -128,21 +128,23 @@ control and data recovery. Here are all of them:
 Unless the `--offline` option is specified, the `distill` and `summarize` tasks
 download daily distributions as needed.
 
-Unless the date range is restricted with `--first` and `--last`, the `distill`
-task also extracts category-specific data as needed. By default, the `--first`
-date is 2023-09-25, the day the DSA transparency database became operational,
-and the `--last` date is three days before today—one day to allow for the
-Americas being a day behind Europe for several hours every day and another two
-days to allow for some posting delay.
+You can restrict the data range with `--first` and `--last`. By default, the
+`--first` date is 2023-09-25, the day the DSA transparency database became
+operational, and the `--last` date is three days before today—one day to allow
+for the Americas being six to nine hours behind Europe and another two days to
+allow for some posting delay.
 
 Summary statistics are stored in `db.parquet` for the full database and in a
-file named after the category, such as `protection-of-minors.parquet`, for
-category-specific data. The HTML documents follow the same naming convention.
+file named after the category, platform, or filter for distilled data. For
+example, the summary statistics for the extract with category
+`STATEMENT_CATEGORY_PROTECTION_OF_MINORS` are stored in
+`protection-of-minors.parquet`. JSON metadata and HTML visualizations follow the
+same naming convention.
 
-Shantay's log distinguishes between `summarize-all`, `summarize-category`, and
+Shantay's log distinguishes between `summarize-all`, `summarize-extract`, and
 `summarize-builtin` when identifying tasks. Furthermore, even when executing a
 category-specific `summarize` task, Shantay's log distinguishes `distill` from
-`summarize-category`. For multiprocessing, it schedules both tasks separately.
+`summarize-extract`. For multiprocessing, it schedules both tasks separately.
 
 
 ## 3. Organization of Storage
@@ -158,7 +160,7 @@ with digests and summary statistics discussed in 3.3.
 
 *Shantay* distinguishes between three primary directories, `--staging` as
 temporary storage, `--archive` for the original distributions, and `--extract`
-for a category-specific subset:
+for a filtered subset:
 
   - **Staging** stores data currently being processed, e.g., by uncompressing,
     converting, and filtering it. You wouldn't be wrong if you called this
@@ -184,8 +186,8 @@ directories, e.g., resulting in paths like
 `2025/03/14/2025-03-14-00000.parquet`. The top level is named for years,
 followed by two-digit months one level down, followed by two-digit days another
 level down. Finally, daily archive files have their original names, whereas
-files with category-specific data are named after the date and a zero-based
-five-digit index (as illustrated earlier in this paragraph).
+files with distilled data are named after the date and a zero-based five-digit
+index (as illustrated earlier in this paragraph).
 
 For the extract root, *shantay* maintains a per-day digest file named
 `sha256.txt`. It contains the SHA-256 digests for every parquet file in the
@@ -198,25 +200,30 @@ file's name.
 In addition to yearly directories, *shantay* also stores the following two files
 inside root directories.
 
-  - A JSON file named after the category, e.g., `protection-of-minors.json`
-    contains an object with the `category` used for selecting the data extract
-    and some statistics about `releases`. `batch_count` must be the number of
-    daily data files and `sha256` must be the (recursive) digest of the digests
-    in the `sha256.txt` file.
+  - A JSON file named after the filter with, for example,
+    `protection-of-minors.json` containing an object whose `filter` property
+    identifies the category `STATEMENT_CATEGORY_PROTECTION_OF_MINORS`. That same
+    object also has a `releases` property with per-release metadata, including:
+
+      - `batch_count` for the number of daily data files
+      - `batch_rows` for the number of statements included in the statistics
+      - `total_rows` for the number of statements before filtering
+      - `sha256` for the (recursive) digest of the digests in the `sha256.txt`
+        file, one for each daily data file
 
   - `db.parquet` contains the summary statistics about the full database.
-    Statistics for category-specific subsets are named after their categories.
-    Each file basically is a non-tidy, long data frame that uses up to seven
-    columns for identifying variables and up to four columns for identifying
-    values. While an encoding with fewer columns is eminently feasible, the
-    schema is optimized for being easy to work with (e.g., aggregations are
-    trivial) and compact to store (e.g., a column with mostly nulls requires
-    almost no space).
+    Statistics for distilled subsets are named after their filters. Each file
+    basically is a non-tidy, long data frame that uses up to seven columns for
+    identifying variables and up to four columns for identifying values. While
+    an encoding with fewer columns is eminently feasible, the schema is
+    optimized for being easy to work with (e.g., aggregations are trivial) and
+    compact to store (e.g., a column with mostly nulls requires almost no
+    space).
 
     The individual columns are:
 
       - `start_date` and `end_date` denote the date coverage of a row.
-      - `tag` is the category for filtered source data.
+      - `tag` is the filter for distilled source data.
       - `platform` is the online platform making the disclosures.
       - `column` is the original transparency database column, with a few
         virtual column names added.
@@ -230,6 +237,15 @@ inside root directories.
 
     If `mean` contains a value, then `count` also contains a value, thus
     enabling correct aggregation with a weighted average.
+
+    In theory, transparency database columns with arbitrary text let platforms
+    provide granular detail about content moderation decisions. In practice,
+    content moderation at scale pushes platforms towards standardizing free-form
+    text as well. Alibaba appears to be the one exception, with mostly unique
+    entries for these columns. Alas, that is the result of the firm including
+    case-specific identifiers in the text. Since that causes Alibaba to account
+    for 2/3 of rows in daily summary statistics, Shantay does not track
+    Alibaba's entries for the worst offending transparency database columns.
 
 
 ## 4. Big Data in the Small
