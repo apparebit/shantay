@@ -3,21 +3,29 @@ from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
 import datetime as dt
+import enum
+import functools
 from pathlib import Path
 import re
 from typing import (
-    Callable, cast, Literal, Optional, overload, Protocol, Required, Self, TypedDict
+    Any, Callable, Literal, Optional, overload, Protocol, Required, Self, TypedDict
 )
 
 from .progress import NO_PROGRESS, Progress
 
 
-# The model does touch upon Pola.rs data frames. Define the necessary types
-# here, but also delete the package reference thereafter. We want data wrangling
-# logic to be contained.
-import polars
-type DataFrameType = polars.DataFrame
-del polars
+_NONWORD = re.compile(r'\W+')
+_SPACE_DOT = re.compile(r'[\s.]')
+
+
+# The model is a leaky insofar that Pola.rs data frames and filter expressions
+# do appear in its method signatures. Rather than wrapping them just for
+# conceptual uniformity, we define type aliases. Otherwise, the model should not
+# utilize Pola.rs, even if Filter.to_query does for reducing implementation
+# complexity.
+import polars as _pl
+type DataFrameType = _pl.DataFrame
+type FilterExprType = _pl.Expr
 
 
 # ================================================================================================
@@ -349,6 +357,11 @@ class ReleaseRange[R: Release](Period):
         """The end date."""
         return self.last.end_date
 
+    @property
+    def frequency(self) -> Literal["daily", "monthly"]:
+        """Determine the release frequency of this range."""
+        return self.first.frequency
+
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
         last = self.last
@@ -495,51 +508,142 @@ class FullMetadataEntry(MetadataEntry):
     release: str
 
 
+class FilterKind(enum.StrEnum):
+    """
+    The kind of filter: a single category, one or more platforms, or an
+    arbitrary Pola.rs expression as Python source code.
+    """
+    CATEGORY = "category"
+    PLATFORM = "platform"
+    EXPRESSION = "expression"
+
+
 @dataclass(frozen=True, slots=True)
-class Coverage[R: Release](Period):
-    """The matter of interest."""
+class Filter:
+    """A filter for producing an extract of the DSA transparency DB."""
 
-    first: R
-    last: R
-    category: None | str
-
-    @classmethod
-    def of(cls, range: ReleaseRange, category: None | str = None) -> Self:
-        """Create a new coverage record from the given release range and category."""
-        return cls(range.first, range.last, category)
+    kind: FilterKind
+    criterion: str | tuple[str, ...]
 
     def __post_init__(self) -> None:
-        assert self.first <= self.last
+        if self.kind is FilterKind.PLATFORM:
+            assert isinstance(self.criterion, tuple)
+        else:
+            assert isinstance(self.criterion, str)
+
+    @classmethod
+    def with_category(cls, category: str) -> Self:
+        """Create a new filter for the given category."""
+        return cls(FilterKind.CATEGORY, category)
+
+    @classmethod
+    def with_platforms(cls, *platforms: str) -> Self:
+        """Create a new filter for the given platforms."""
+        assert 0 < len(platforms), "no platform provided"
+        return cls(FilterKind.PLATFORM, platforms)
+
+    @classmethod
+    def with_expression(cls, expression: str) -> Self:
+        """
+        Create a new filter with an arbitrary Pola.rs expression as query. The
+        given expression must be a valid Python expression. It must not use any
+        other global than `pl`, the top-level Pola.rs namespace object.
+        """
+        return cls(FilterKind.EXPRESSION, expression)
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> Self:
+        """Instantiate a filter from the corresponding JSON object."""
+        kind = getattr(FilterKind, data["kind"].upper())
+        criterion = data["criterion"]
+        if isinstance(criterion, list):
+            criterion = tuple(criterion)
+        return cls(kind, criterion)
+
+    def tag(self) -> str:
+        """Get an identifying tag for this filter."""
+        criterion = self.criterion
+        match self.kind:
+            case FilterKind.CATEGORY:
+                assert isinstance(criterion, str)
+                return criterion
+            case FilterKind.PLATFORM:
+                assert isinstance(criterion, tuple)
+                platforms = (_SPACE_DOT.sub('_', p.upper()) for p in criterion)
+                return f"PLATFORM_{'_'.join(platforms)}"
+            case FilterKind.EXPRESSION:
+                assert isinstance(criterion, str)
+                query = _NONWORD.sub(
+                    '_', criterion.replace("pl.col", "").replace("pl.lit", "")
+                )
+                return f"QUERY_{query}"
+
+    def is_category(self, category: str) -> bool:
+        """Determine whether this filter selects the given category."""
+        return self.kind is FilterKind.CATEGORY and self.criterion == category
+
+    def to_json(self) -> dict[str, Any]:
+        """Convert this filter to a JSON object."""
+        return {"kind": self.kind.value, "criterion": self.criterion}
+
+    @functools.cache
+    def to_query(self) -> FilterExprType:
+        """Get the Pola.rs query corresponding to the filter expression."""
+        match self.kind:
+            case FilterKind.CATEGORY:
+                assert isinstance(self.criterion, str)
+                return _pl.col("category").eq(self.criterion).or_(
+                    _pl.col("category_addition")
+                    .str.contains(self.criterion, literal=True)
+                )
+            case FilterKind.PLATFORM:
+                assert isinstance(self.criterion, tuple)
+                assert 0 < len(self.criterion)
+                return _pl.col("platform_name").is_in(self.criterion)
+            case FilterKind.EXPRESSION:
+                assert isinstance(self.criterion, str)
+                return eval(self.criterion, {"pl": _pl, "__builtins__": {}}, {})
+
+    def __repl__(self) -> str:
+        match self.kind:
+            case FilterKind.CATEGORY:
+                assert isinstance(self.criterion, str)
+                return f'pl.col("category").eq("{self.criterion}")'
+            case FilterKind.PLATFORM:
+                assert isinstance(self.criterion, tuple)
+                assert 0 < len(self.criterion)
+                platforms = ",".join(f'"{p}"' for p in self.criterion)
+                return f'pl.col("platform").is_in({platforms})'
+            case FilterKind.EXPRESSION:
+                assert isinstance(self.criterion, str)
+                return self.criterion
+
+    def __str__(self) -> str:
+        match self.kind:
+            case FilterKind.CATEGORY:
+                assert isinstance(self.criterion, str)
+                return f'category == "{self.criterion}"'
+            case FilterKind.PLATFORM:
+                assert isinstance(self.criterion, tuple)
+                assert 0 < len(self.criterion)
+                return f'platform in ({",".join(f'"{p}"' for p in self.criterion)})'
+            case FilterKind.EXPRESSION:
+                assert isinstance(self.criterion, str)
+                return self.criterion
+
+
+class MetadataProtocol[R: Release](Protocol):
+    """The protocol for release metadata."""
 
     @property
-    def start_date(self) -> dt.date:
-        """The start date."""
-        return self.first.start_date
+    def stem(self) -> str: ...
 
     @property
-    def end_date(self) -> dt.date:
-        """The end date."""
-        return self.last.end_date
+    def filter(self) -> None | Filter: ...
 
-    def frequency(self) -> Literal["daily", "monthly"]:
-        """The release frequency."""
-        assert self.first.frequency == self.last.frequency
-        return self.first.frequency
-
-    def __iter__(self) -> Iterator[R]:
-        cursor = self.first
-        while True:
-            yield cursor
-            if cursor == self.last:
-                break
-            cursor = cursor.next()
-
-    def __len__(self) -> int:
-        return self.last - self.first + 1
-
-    def stem(self) -> str:
-        """The file name stem."""
-        return "db" if self.category is None else file_stem_for(self.category)
+    def tag(self) -> None | str: ...
+    def __contains__(self, key: R) -> bool: ...
+    def __getitem__(self, key: R) -> MetadataEntry: ...
 
 
 class CollectorProtocol(Protocol):
@@ -593,7 +697,7 @@ class Dataset(metaclass=ABCMeta):
         """The digest file name for the release."""
 
     @abstractmethod
-    def ingest_database_data(
+    def ingest_release(
         self,
         *,
         root: Path,
@@ -605,31 +709,27 @@ class Dataset(metaclass=ABCMeta):
         """Ingest unfiltered, uncompressed data."""
 
     @abstractmethod
-    def distill_category_data(
+    def distill_release(
         self,
         *,
         root: Path,
         release: Daily,
         index: int,
         name: str,
-        category: str,
+        filter: Filter,
         progress: Progress = NO_PROGRESS,
     ) -> tuple[str, Counter]:
-        """Extract category-specific data from uncompressed data."""
+        """Ingest filtered, uncompressed data."""
 
     @abstractmethod
     def summarize_release(
         self,
         root: Path,
         release: Daily,
-        category: str,
-        metadata_entry: MetadataEntry,
+        metadata: MetadataProtocol,
         collector: CollectorProtocol
     ) -> None:
-        """
-        Analyze a release's data. The release period need not be the original
-        release period and, in fact, is likely to be coarser.
-        """
+        """Summarize the release extract's data."""
 
 
 # ================================================================================================

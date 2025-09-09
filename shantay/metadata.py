@@ -8,34 +8,73 @@ import shutil
 from typing import Callable, cast, Self
 
 # from .framing import below within method
+from . import __version__
 from .digest import compute_digest, read_digest_file, write_digest_file
 from .model import (
-    Coverage, DateRange, DIGEST_FILE, FullMetadataEntry, MetadataConflict,
-    MetadataEntry, Release
+    DateRange, DIGEST_FILE, file_stem_for, Filter, FullMetadataEntry,
+    MetadataConflict, MetadataEntry, Release
 )
 from .progress import NO_PROGRESS, Progress
-from .schema import is_category_file
 
 
+_FILE_TYPE = re.compile(r'^{\s*"@id":\s?"Shantay ')
 _logger = logging.getLogger(__spec__.parent)
 
 
 class Metadata[R: Release]:
+    """
+    Meta data about (an extract from) the EU's DSA transparency database.
 
-    __slots__ = ("_category", "_releases")
+    Meta data comprises the file stem, an optional filter, and a map of covered
+    releases. The filter can be a statement category name or an arbitrary
+    Pola.rs expression. Stem and filter must be consistent for statement
+    categories.
+    """
+
+    __slots__ = ("_stem", "_filter", "_releases")
 
     def __init__(
         self,
-        category: None | str = None,
+        stem: str,
+        filter: None | Filter = None,
         releases: None | dict[str, MetadataEntry] = None,
     ) -> None:
-        self._category = category
+        self._stem = stem
+        self._filter = filter
         self._releases = releases or {}
 
+    @classmethod
+    def for_full_db(cls) -> Self:
+        """Create a fresh metadata instance for the full database."""
+        return cls("db")
+
+    @classmethod
+    def for_category(cls, category: str) -> Self:
+        """Create a fresh metadata instance for the given category."""
+        return cls(file_stem_for(category), Filter.with_category(category))
+
+    def with_releases(self, *releases: Release) -> Self:
+        """
+        Create a new metadata instance that has the same stem and filter as this
+        one, but only has entries for the given releases.
+        """
+        return type(self)(self._stem, self._filter, {
+            str(r): cast(MetadataEntry, dict(self._releases[str(r)])) for r in releases
+        })
+
     @property
-    def category(self) -> None | str:
-        """Get the category for the corresponding extract."""
-        return self._category
+    def stem(self) -> str:
+        """Get the file name stem for this meta data instance."""
+        return self._stem
+
+    @property
+    def filter(self) -> None | Filter:
+        """Get the filter for a data extract."""
+        return self._filter
+
+    def tag(self) -> None | str:
+        """Get a tag for this filter."""
+        return None if self.filter is None else self.filter.tag()
 
     @property
     def records(self) -> Iterator[FullMetadataEntry]:
@@ -54,17 +93,16 @@ class Metadata[R: Release]:
             dt.date.fromisoformat(releases[-1])
         )
 
-    @property
-    def coverage(self) -> Coverage:
-        range = self.range
-        return Coverage(Release.of(range.first), Release.of(range.last), self.category)
+    def set_stem(self, stem: str) -> None:
+        """Update the stem."""
+        self._stem = stem
 
-    def set_category(self, category: str) -> None:
-        """Set the not yet configured category."""
-        if self._category is None:
-            self._category = category
-        elif self._category != category:
-            raise MetadataConflict(f"categories {self._category} and {category} differ")
+    def set_filter(self, filter: Filter) -> None:
+        """Set the not yet configured filter. Once set it cannot be modified."""
+        if self._filter is None:
+            self._filter = filter
+        else:
+            raise MetadataConflict("filter has already been configured")
 
     def batch_count(self, release: str | R) -> int:
         """Get the batch count for the given release."""
@@ -86,8 +124,11 @@ class Metadata[R: Release]:
         """Get the number of releases covered."""
         return len(self._releases)
 
-    def without_category(self) -> Self:
-        """Create a stripped down version suitable for the archive root."""
+    def without_filter(self) -> Self:
+        """
+        Create a stripped down version of the metadata suitable for the full
+        database. The stem is `db` and the filter is none.
+        """
         def strip(data: MetadataEntry) -> MetadataEntry:
             return {
                 "batch_count": data["batch_count"],
@@ -95,18 +136,17 @@ class Metadata[R: Release]:
                 "total_rows_with_keywords": data.get("total_rows_with_keywords"),
             }
 
-        return type(self)(
-            None,
-            {
-                k: strip(v)
-                for k, v in self._releases.items()
-            }
-        )
+        return type(self)("db", None, {k: strip(v) for k, v in self._releases.items()})
 
     @classmethod
     def merge(cls, *sources: None | Path, not_exist_ok: bool = False) -> Self:
-        """Merge the metadata from the given metadata files."""
-        merged = cls()
+        """
+        Merge the metadata from the given metadata files. All files must have
+        the same stem and filter.
+        """
+        assert 0 < len(sources), "no source paths given"
+
+        merged = None
         for source in sources:
             if source is None:
                 continue
@@ -116,24 +156,34 @@ class Metadata[R: Release]:
                 if not_exist_ok:
                     continue
                 raise
-            merged._merge_category(source_data._category)
-            merged._merge_releases(source_data._releases)
+            if merged is None:
+                merged = source_data
+            else:
+                merged._merge_stem(source_data._stem)
+                merged._merge_filter(source_data._filter)
+                merged._merge_releases(source_data._releases)
+
+        assert merged is not None
         return merged
 
     def merge_with(self, other: Self) -> Self:
-        """Merge with the other metadata."""
-        merged = type(self)(self._category, dict(self._releases))
-        merged._merge_category(other._category)
+        """
+        Create a new metadata instance covering the releases of this and the
+        other instances.
+        """
+        merged = type(self)(self._stem, self._filter, dict(self._releases))
+        merged._merge_stem(other._stem)
+        merged._merge_filter(other._filter)
         merged._merge_releases(other._releases)
         return merged
 
-    def _merge_category(self, other: None | str) -> None:
-        if other is None:
-            pass
-        elif self._category is None or self._category == other:
-            self._category = other
-        else:
-            raise MetadataConflict(f"divergent categories {self._category} and {other}")
+    def _merge_stem(self, other: None | str) -> None:
+        if self._stem != other:
+            raise MetadataConflict(f"divergent stems {self._stem} and {other}")
+
+    def _merge_filter(self, other: None | Filter) -> None:
+        if self._filter != other:
+            raise MetadataConflict(f"divergent filters {self._filter} and {other}")
 
     def _merge_releases(self, other: dict[str, MetadataEntry]) -> None:
         for release, entry2 in other.items():
@@ -152,26 +202,44 @@ class Metadata[R: Release]:
                 "sha256",
             ):
                 # Copy over missing fields, check existing fields for consistency
-                if key not in entry1 and key in entry2:
+                if (
+                    key not in entry1
+                    and key in entry2
+                ):
                     entry1[key] = entry2[key] # type: ignore
-                elif key in entry1 and key in entry2 and entry1[key] != entry2[key]: # type: ignore
+                elif (
+                    key in entry1
+                    and key in entry2
+                    and entry1[key] != entry2[key] # type: ignore
+                ):
                     mismatch = True
 
             if mismatch:
                 raise MetadataConflict(f"divergent metadata for release {release}")
 
     @classmethod
-    def find_file(cls, directory: Path) -> Path:
+    def is_file(cls, file: Path) -> bool:
         """
-        Find the JSON file with metadata. This method considers all files that
-        are named after a statement category, ignoring case and allowing dashes
-        or spaces instead of underscores, followed by the ".json" extension. It
-        does *not* recognize "db.json". It is an error if the directory contains
-        more or less than one file matching the criteria.
+        Determine whether the file contains metadata for Shantay. This method
+        checks the `@id` key and its value without parsing the JSON format.
+        """
+        if file.suffix != ".json":
+            return False
+        with open(file, mode="r", encoding="utf8") as handle:
+            return _FILE_TYPE.match(handle.read(32)) is not None
+
+    @classmethod
+    def find_file(cls, directory: Path, skip_db: bool = False) -> Path:
+        """
+        Find the metadata file in the given directory. This method checks all
+        JSON files in the given directory. It signals an error if none or more
+        than one JSON file are metadata files.
         """
         files = []
         for file in directory.glob("*.json"):
-            if is_category_file(file.stem):
+            if skip_db and file.name == "db.json":
+                continue
+            if cls.is_file(file):
                 files.append(file)
 
         if len(files) == 0:
@@ -191,18 +259,33 @@ class Metadata[R: Release]:
         """Read the given file as metadata."""
         with open(file, mode="r", encoding="utf8") as stream:
             data = json.load(stream)
-        category = data["category"]
+
+        id = data.get("@id")
+        if id is None or not id.startswith("Shantay "):
+            raise ValueError(f'"{file}" is not a valid metadata file for Shantay')
+
+        stem = data["stem"]
+        filter = Filter.from_json(data["filter"])
         releases = data["releases"]
-        return cls(category, releases)
+
+        return cls(stem, filter, releases)
 
     def write_json(self, file: Path, *, sort_keys: bool = False) -> None:
         """Write the metadata to the given file."""
+        if self._stem != file.stem:
+            raise ValueError(
+                f"inconsistent stems {file} in path and {self._stem} in data"
+            )
+
         tmp = file.with_suffix(".tmp.json")
         with open(tmp, mode="w", encoding="utf8") as handle:
             json.dump({
-                "category": self._category,
+                "@id": f"Shantay {__version__}",
+                "stem": self._stem,
+                "filter": None if self._filter is None else self._filter.to_json(),
                 "releases": self._releases
             }, handle, indent=2, sort_keys=sort_keys)
+            handle.write("\n")
         tmp.replace(file)
 
     @classmethod
@@ -213,7 +296,7 @@ class Metadata[R: Release]:
         tmp.replace(target)
 
     def __repr__(self) -> str:
-        return f"Metadata({self._category}, {len(self._releases):,} releases)"
+        return f"Metadata({self._stem}, {len(self._releases):,} releases)"
 
 
 def fsck(
@@ -279,7 +362,7 @@ class _Fsck:
             path = Metadata.find_file(self._root)
             self._metadata = Metadata.read_json(path)
         except FileNotFoundError:
-            self._metadata = Metadata()
+            self._metadata = Metadata("fsck")
 
         _logger.info('scanning root directory="%s"', self._root)
         years = self.scandir(self._root, "????", _FOUR_DIGITS)
@@ -309,29 +392,12 @@ class _Fsck:
 
                     self.check_batch_files(day)
 
-        # If there were no errors, save metadata and be done.
+        path = self._root / "fsck.json"
+        self._metadata.write_json(path)
+        _logger.info('wrote result of scan to file="%s"', path)
+        print(f'saved results of scan to "{path}"')
         if len(self._errors) == 0:
-            path = self._root / "fsck.json"
-            _logger.info('wrote result of successful scan to file="%s"', path)
-            self._metadata.write_json(path)
-            self._progress.perform(
-                f'wrote "fsck.json" with updated metadata to "{self._root}"'
-            )
-            print()
             return self._metadata
-
-        # There were errors. Metadata may still be useful, so save under another name.
-
-        with open(Path.cwd() / "bad-fsck.json", mode="w", encoding="utf8") as file:
-            json.dump({
-                "category": self._metadata._category,
-                "releases": self._metadata._releases
-            }, file, indent=2)
-
-        self._progress.perform(
-            'wrote "bad-fsck.json" with recovered metadata to current directory'
-        )
-        print()
 
         raise ExceptionGroup(
             f'category-specific extract in "{self._root}" has problems', self._errors
@@ -419,7 +485,8 @@ class _Fsck:
             # Only write a new digest file if there were no errors and no file.
             write_digest_file(day / DIGEST_FILE, actual_digests)
 
-        if self._metadata._category is None and 0 < batch_no:
+        if self._metadata._filter is None and 0 < batch_no:
+            # Try to extract category.
             self.update_category(f"{day}/*.parquet")
 
         digest_of_digests = None
@@ -441,7 +508,7 @@ class _Fsck:
         from .framing import distill_category_from_parquet
         category = distill_category_from_parquet(glob)
         if category:
-            self._metadata._category = category
+            self._metadata.set_filter(Filter.with_category(category))
 
     def update_batch_count(
         self,
