@@ -153,31 +153,24 @@ class Collector:
         categories and platforms.
         """
         old_source, self._source = self._source, frame
-        old_categories, old_platforms = self._source_categories, self._source_platforms
-        self._source_categories, self._source_platforms = self._categories_and_platforms
+        old_platforms, old_categories = self._source_platforms, self._source_categories
+        self._source_platforms = frame.select(
+            pl.col("platform_name").unique()
+        ).get_column("platform_name")
+        if STRATIFY_BY_CATEGORY:
+            self._source_categories = frame.select(
+                pl.col("category").unique()
+            ).get_column("category")
         old_tag, self._tag = self._tag, (tag if tag != "" else None)
         old_release, self._release = self._release, release
         try:
             yield self
         finally:
             self._source = old_source
-            self._source_categories = old_categories
             self._source_platforms = old_platforms
+            self._source_categories = old_categories
             self._tag = old_tag
             self._release = old_release
-
-    @property
-    def _categories_and_platforms(self) -> tuple[pl.Series, pl.Series]:
-        """
-        Get the source frame's categories and platforms. This method
-        pre-computes the values of the two series.
-        """
-        source = self._source.lazy()
-        categories, platforms = pl.collect_all([
-            source.select(pl.col("category").unique()),
-            source.select(pl.col("platform_name").unique()),
-        ])
-        return categories.get_column("category"), platforms.get_column("platform_name")
 
     @contextmanager
     def platform_data(self, platform: None | str) -> Iterator[Self]:
@@ -588,6 +581,7 @@ class _Summarizer:
             platform = self._platform
 
         if platform is not None:
+            # `frame` is statistics summary, hence `platform` is right column name!
             frame = frame.filter(pl.col("platform").eq(platform))
 
         old_source = self._source
@@ -772,12 +766,14 @@ class _Summarizer:
 
     def _summary_intro(self, frame: pl.DataFrame, tag: None | str) -> None:
         platforms = frame.select(
+            # `frame` is statistics summary, hence `platform` is right column name!
             pl.col("platform").filter(pl.col("platform").is_not_null()).n_unique()
         ).item()
 
         platforms_with_keywords = frame.filter(
             predicate("category_specification", variant=NOT_NULL, tag=tag)
         ).select(
+            # `frame` is statistics summary, hence `platform` is right column name!
             pl.col("platform").n_unique()
         ).item()
 
@@ -788,6 +784,7 @@ class _Summarizer:
                 tag=tag
             )
         ).select(
+            # `frame` is statistics summary, hence `platform` is right column name!
             pl.col("platform").n_unique()
         ).item()
 

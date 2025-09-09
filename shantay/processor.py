@@ -9,14 +9,14 @@ from typing import cast, NoReturn
 from urllib.request import Request, urlopen
 import zipfile
 
-from .__init__ import __version__
+from . import __version__
 from .digest import (
     compute_digest, read_digest_file, validate_digests, write_digest_file
 )
 from .metadata import Metadata
 from .model import (
-    CollectorProtocol, Coverage, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
-    DownloadFailed, MetadataEntry, Release, Storage
+    CollectorProtocol, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
+    DownloadFailed, MetadataEntry, Release, ReleaseRange, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -41,7 +41,7 @@ class Processor[R: Release]:
         *,
         dataset: Dataset,
         storage: Storage,
-        coverage: Coverage[Daily],
+        coverage: ReleaseRange[Daily],
         metadata: Metadata,
         offline: bool = False,
         interactive: bool = False,
@@ -61,7 +61,7 @@ class Processor[R: Release]:
     @property
     def stats_file(self) -> str:
         """The name of the statistics file."""
-        return f"{self._coverage.stem()}.parquet"
+        return f"{self._metadata.stem}.parquet"
 
     @property
     def latency(self) -> float:
@@ -72,16 +72,13 @@ class Processor[R: Release]:
         """Run the given task."""
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
-        _logger.info('    key="storage.archive_root", value="%s"',
-            "" if self._storage.archive_root is None else self._storage.archive_root)
-        _logger.info('    key="storage.extract_root", value="%s"',
-            "" if self._storage.extract_root is None else self._storage.extract_root)
+        _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
+        _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="coverage.category",    value="%s"',
-            "" if self._coverage.category is None else self._coverage.category)
+        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
-        _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency())
+        _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency)
         _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
         _logger.info('    key="network.offline",      value="%s"', self._offline)
         _logger.info('    key="pool.size",            value=1')
@@ -98,15 +95,15 @@ class Processor[R: Release]:
         elif task == "download":
             result = self.download()
         elif task == "distill":
-            result = self.distill_category()
+            result = self.distill()
         elif task == "summarize-builtin":
             stats = Statistics.builtin()
             stats.write(self._storage.staging_root / self.stats_file)
             result = stats.frame()
         elif task == "summarize-all":
             result = self.summarize_database()
-        elif task == "summarize-category":
-            result = self.summarize_category()
+        elif task == "summarize-extract":
+            result = self.summarize_extract()
         elif task == "visualize":
             result = self.visualize()
         else:
@@ -212,7 +209,7 @@ class Processor[R: Release]:
                 emit_rule()
                 emit_range("extract", metapath.name, metarange)
 
-            path = self._storage.extract_root / f"{self._coverage.stem()}.parquet"
+            path = self._storage.extract_root / f"{self._metadata.stem}.parquet"
             if path.exists():
                 stats_range = Statistics.read(path).date_range()
 
@@ -263,8 +260,8 @@ class Processor[R: Release]:
             print(line)
             _logger.debug(line)
 
-    def distill_category(self) -> None:
-        """Extract category-specific data for all covered releases."""
+    def distill(self) -> None:
+        """Filter data for all covered releases."""
         for release in self._coverage:
             # Ensure graceful termination in offline mode
             if self._offline and not self.is_archive_downloaded(release):
@@ -276,25 +273,22 @@ class Processor[R: Release]:
                 break
 
             # Do the distillation
-            self.distill_category_release(release)
+            self.distill_release(release)
 
-        # The staging root's category-specific metadata was merged with the
-        # extract's metadata during startup. Hence writing it back to the
-        # extract directory won't lead to data loss---as long as there are
-        # no concurrent writers!
-        meta_json = f"{self._coverage.stem()}.json"
+        # The staging root's metadata was merged with the extract's metadata
+        # during startup. Hence writing it back to the extract directory won't
+        # lead to data loss---as long as there are no concurrent writers!
+        meta_json = f"{self._metadata.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.the_extract_root / meta_json
         )
 
-    def distill_category_release(self, release: Daily, cleanup: bool = True) -> None:
-        """Extract the category-specific data for the given release."""
+    def distill_release(self, release: Daily, cleanup: bool = True) -> None:
+        """Filter data for the given release."""
         if (
             release in self._metadata
-            and distilled_category_exists(
-                self._storage.the_extract_root, release, self._metadata
-            )
+            and is_distilled(self._storage.the_extract_root, release)
         ):
             return
 
@@ -304,7 +298,7 @@ class Processor[R: Release]:
 
         self.stage_archive(release)
         try:
-            self._actually_distill_category_release(release)
+            self._actually_distill_release(release)
         except Exception as x:
             x.add_note(
                 f"WARNING: Artifacts for release {release} may be incomplete or corrupted!"
@@ -508,10 +502,10 @@ class Processor[R: Release]:
             / self._dataset.archive_name(release)
         ).exists()
 
-    def _actually_distill_category_release(self, release: Daily) -> None:
+    def _actually_distill_release(self, release: Daily) -> None:
         """Distill the batches for the given release."""
         assert self.is_archive_staged(release)
-        assert self._coverage.category is not None
+        assert self._metadata.filter is not None
 
         filenames = self.list_archived_files(self._storage.staging_root, release)
         batch_count = len(filenames)
@@ -529,12 +523,12 @@ class Processor[R: Release]:
 
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
-            digest, counters = self._dataset.distill_category_data(
+            digest, counters = self._dataset.distill_release(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
                 name=name,
-                category=self._coverage.category,
+                filter=self._metadata.filter,
                 progress=self._progress
             )
             batch_digests[f"{release.id}-{index:05}.parquet"] = digest
@@ -553,11 +547,11 @@ class Processor[R: Release]:
         meta_data_entry["sha256"] = compute_digest(digest_file)
         self._metadata[release] = meta_data_entry
         self._metadata.write_json(
-            self._storage.staging_root / f"{self._coverage.stem()}.json"
+            self._storage.staging_root / f"{self._metadata.stem}.json"
         )
         _logger.info(
-            'distilled release="%s", batch-count=%d, category="%s"',
-            release.id, batch_count, self._coverage.category
+            'distilled release="%s", batch-count=%d, filter="%s"',
+            release.id, batch_count, self._metadata.filter
         )
 
         # It's ok for a worker process to copy the batches to long-term storage
@@ -569,12 +563,12 @@ class Processor[R: Release]:
             f"copying batches for {release.id} out of staging",
             f"persisting {release.id}", "batch", with_rate=False,
         ).start(batch_count)
-        self.copy_category_data(
+        self.copy_distilled_data(
             self._storage.staging_root, self._storage.the_extract_root, release, batch_count
         )
         _logger.info(
-            'persisted release="%s", batch-count=%d, category="%s"',
-            release.id, batch_count, self._coverage.category
+            'persisted release="%s", batch-count=%d, filter="%s"',
+            release.id, batch_count, self._metadata.filter
         )
 
     def list_archived_files(self, root: Path, release: Daily) -> list[str]:
@@ -605,15 +599,8 @@ class Processor[R: Release]:
                         shutil.copyfileobj(source_file, target_file)
                 _logger.debug('unarchived type="%s", file="%s"', kind, name)
 
-    def category_data_exists(self, root: Path, release: Daily) -> bool:
-        """
-        Determine whether the category-specific parquet files exist under the
-        given root directory.
-        """
-        return distilled_category_exists(root, release, self._metadata)
-
     @annotate_error(filename_arg="target")
-    def copy_category_data(
+    def copy_distilled_data(
         self, source: Path, target: Path, release: Daily, count: int
     ) -> None:
         """Copy the batch files between root directories."""
@@ -631,13 +618,13 @@ class Processor[R: Release]:
 
             self._progress.step(index)
 
-    def stage_category_data(self, release: Daily) -> None:
+    def stage_extract_data(self, release: Daily) -> None:
         """Stage the category-specific data for the given release."""
         batch_count = self._metadata[release]["batch_count"]
-        if self.category_data_exists(self._storage.staging_root, release):
+        if is_distilled(self._storage.staging_root, release):
             return
 
-        self.copy_category_data(
+        self.copy_distilled_data(
             self._storage.the_extract_root,
             self._storage.staging_root,
             release,
@@ -662,11 +649,11 @@ class Processor[R: Release]:
 
         _logger.info('validated extract for release="%s"', release)
 
-    def summarize_category(self) -> DataFrameType:
-        """Determine summary statistics for the category-specific subset."""
+    def summarize_extract(self) -> DataFrameType:
+        """Determine summary statistics for the filtered subset."""
         # Prepare progress tracker
         self._progress.activity(
-            "summarizing category data", "summarizing category", "batch", with_rate=False
+            "summarizing extracted data", "summarizing extract", "batch", with_rate=False
         )
         self._progress.start(self._coverage.last - self._coverage.first + 1)
 
@@ -677,17 +664,17 @@ class Processor[R: Release]:
             if self._offline and not self.is_archive_downloaded(release):
                 _logger.info(
                     'stopping due to missing archive in offline mode '
-                    'for task="summarize-category", release="%s"',
+                    'for task="summarize-extract", release="%s"',
                     release.id
                 )
                 break
 
-            if not distilled_category_exists(
-                self._storage.the_extract_root, release, self._metadata
-            ):
+            if not is_distilled(self._storage.the_extract_root, release):
                 with self._progress.nested():
-                    self.distill_category_release(release, cleanup=False)
-            self.summarize_category_release(release, self._metadata[release], stats)
+                    self.distill_release(release, cleanup=False)
+
+            assert self._metadata.filter is not None
+            self.summarize_release_extract(release=release, collector=stats)
 
             # While collecting summary statistics, Shantay generates hundreds of
             # data frames, many with just one row. However, concatenation in
@@ -700,7 +687,7 @@ class Processor[R: Release]:
                 stats.write(self._storage.staging_root)
             self._progress.step(index + 1, extra=release.id)
 
-        meta_json = f"{self._coverage.stem()}.json"
+        meta_json = f"{self._metadata.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.the_extract_root / meta_json
@@ -721,33 +708,27 @@ class Processor[R: Release]:
         )
         return stats.frame()
 
-    def summarize_category_release(
-        self,
-        release: Daily,
-        metadata_entry: MetadataEntry,
-        collector: CollectorProtocol,
+    def summarize_release_extract(
+        self, release: Daily, collector: CollectorProtocol
     ) -> None:
-        """Determine summary statistics for the category-specific subset of the
-        given release."""
+        """Determine summary statistics for the extract of the given release."""
         start_time = time.time()
 
-        self.stage_category_data(release)
+        self.stage_extract_data(release)
 
-        assert isinstance(self._coverage.category, str)
         self._dataset.summarize_release(
             root=self._storage.staging_root,
             release=release,
-            category=self._coverage.category,
-            metadata_entry=metadata_entry,
-            collector=collector
+            metadata=self._metadata,
+            collector=collector,
         )
 
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
         latency, time_unit = scale_time(time.time() - start_time)
         _logger.debug(
-            'summarized category="%s", release="%s", latency=%.3f, unit="%s"',
-            self._coverage.category, release.id, latency, time_unit
+            'summarized release="%s", filter="%s", latency=%.3f, unit="%s"',
+            release.id, filter or "", latency, time_unit
         )
 
     def summarize_database(self) -> DataFrameType:
@@ -786,7 +767,7 @@ class Processor[R: Release]:
                 break
 
             try:
-                self.summarize_database_release(release, stats)
+                self.summarize_full_release(release, stats)
             except MissingPlatformError as x:
                 # This method is only executed during single-process runs and
                 # hence it is safe-ish to update the list of platforms here.
@@ -795,7 +776,7 @@ class Processor[R: Release]:
             _logger.debug('writing summary statistics to file="%s"', staged)
             stats.write(self._storage.staging_root)
 
-        meta_json = f"{self._coverage.stem()}.json"
+        meta_json = f"{self._metadata.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.the_archive_root / meta_json
@@ -811,10 +792,8 @@ class Processor[R: Release]:
         )
         return stats.frame()
 
-    def summarize_database_release(
-        self,
-        release: Daily,
-        collector: CollectorProtocol,
+    def summarize_full_release(
+        self, release: Daily, collector: CollectorProtocol
     ) -> None:
         """Determine summary statistics for the given release of the full database."""
         _logger.info('summarizing release="%s"', release.id)
@@ -841,7 +820,7 @@ class Processor[R: Release]:
             self._progress.step(index, "unarchiving data")
             self.unarchive_file(self._storage.staging_root, release, index, name)
 
-            counts, frame = self._dataset.ingest_database_data(
+            counts, frame = self._dataset.ingest_release(
                 root=self._storage.staging_root,
                 release=release,
                 index=index,
@@ -878,7 +857,7 @@ class Processor[R: Release]:
 
         self._metadata[release] = cast(MetadataEntry, full_counts)
         self._metadata.write_json(
-            self._storage.staging_root / f"{self._coverage.stem()}.json"
+            self._storage.staging_root / f"{self._metadata.stem}.json"
         )
 
         # While not quite as big as the uncompressed data, the zipped release
@@ -891,12 +870,13 @@ class Processor[R: Release]:
         Visualizer(
             storage=self._storage,
             coverage=self._coverage,
+            metadata=self._metadata,
             with_interaction=self._interactive,
             with_no_outliers=self._clamp_outliers,
         ).run()
 
 
-def distilled_category_exists(root: Path, release: Daily, metadata: Metadata) -> bool:
+def is_distilled(root: Path, release: Daily) -> bool:
     """Determine whether all batch files exist under the given root directory."""
     path = root / release.directory
     batch_count = sum(1 for _ in path.glob(release.batch_glob))

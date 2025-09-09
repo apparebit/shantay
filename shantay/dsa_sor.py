@@ -6,7 +6,9 @@ from pathlib import Path
 
 import polars as pl
 
-from .model import CollectorProtocol, Daily, Dataset, MetadataEntry
+from .model import (
+    CollectorProtocol, Daily, Dataset, Filter, FilterKind, MetadataProtocol
+)
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, CanonicalPlatformNames, KeywordChildSexualAbuseMaterial,
@@ -73,7 +75,7 @@ class StatementsOfReasons(Dataset):
         return f"{self.archive_name(release)}.sha1"
 
     @annotate_error(filename_arg="root")
-    def ingest_database_data(
+    def ingest_release(
         self,
         *,
         root: Path,
@@ -90,7 +92,7 @@ class StatementsOfReasons(Dataset):
             release=release,
             index=index,
             name=name,
-            category=None,
+            filter=None,
             progress=progress
         )
         self._validate_schema(frame)
@@ -105,14 +107,14 @@ class StatementsOfReasons(Dataset):
         return counter, frame
 
     @annotate_error(filename_arg="root")
-    def distill_category_data(
+    def distill_release(
         self,
         *,
         root: Path,
         release: Daily,
         index: int,
         name: str,
-        category: str,
+        filter: Filter,
         progress: Progress = NO_PROGRESS
     ) -> tuple[str, Counter]:
         path = root / release.temp_directory
@@ -132,7 +134,7 @@ class StatementsOfReasons(Dataset):
             release=release,
             index=index,
             name=name,
-            category=category,
+            filter=filter,
             progress=progress
         )
 
@@ -190,7 +192,7 @@ class StatementsOfReasons(Dataset):
         release: Daily,
         index: int,
         name: str,
-        category: None | str,
+        filter: None | Filter,
         progress: Progress = NO_PROGRESS
     ) -> pl.DataFrame:
         """
@@ -206,7 +208,7 @@ class StatementsOfReasons(Dataset):
         try:
             frame = self.finish_frame(
                 release,
-                self._scan_csv_with_polars(csv_files, category)
+                self._scan_csv_with_polars(csv_files, filter)
             ).collect()
             _logger.debug(
                 'read rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
@@ -235,7 +237,7 @@ class StatementsOfReasons(Dataset):
             try:
                 frame = self.finish_frame(
                     release,
-                    self._scan_csv_with_polars(file_path, category)
+                    self._scan_csv_with_polars(file_path, filter)
                 ).collect()
                 frames.append(frame)
 
@@ -251,7 +253,7 @@ class StatementsOfReasons(Dataset):
                 )
 
             try:
-                frame = self._read_csv_row_by_row(file_path, category)
+                frame = self._read_csv_row_by_row(file_path, filter)
                 frame = self.finish_frame(release, frame.lazy()).collect()
                 frames.append(frame)
 
@@ -269,7 +271,7 @@ class StatementsOfReasons(Dataset):
         return pl.concat(frames, how="vertical", rechunk=True)
 
     def _scan_csv_with_polars(
-        self, path: str | Path, category: None | str = None
+        self, path: str | Path, filter: None | Filter = None
     ) -> pl.LazyFrame:
         """
         Read one or more CSV files with Polars' CSV reader, while also applying
@@ -285,16 +287,13 @@ class StatementsOfReasons(Dataset):
             infer_schema=False,
         )
 
-        if isinstance(category, str):
-            frame = frame.filter(
-                (pl.col("category") == category)
-                | pl.col("category_addition").str.contains(category, literal=True)
-            )
+        if filter is not None:
+            frame = frame.filter(filter.to_query())
 
         return frame
 
     def _read_csv_row_by_row(
-        self, path: str | Path, category: None | str = None
+        self, path: str | Path, filter: None | Filter = None
     ) -> pl.DataFrame:
         """
         Read a CSV file using Python's CSV reader row by row, while also
@@ -311,7 +310,7 @@ class StatementsOfReasons(Dataset):
             reader = csv.reader(file)
             header = next(reader)
 
-            if isinstance(category, str):
+            if filter is not None and filter.kind is FilterKind.CATEGORY:
                 try:
                     category_index = header.index("category")
                 except ValueError as x:
@@ -326,9 +325,23 @@ class StatementsOfReasons(Dataset):
                     ) from x
 
                 predicate = (
-                    lambda row: row[category_index] == category or category in row[addition_index]
+                    lambda row: (
+                        row[category_index] == filter.criterion
+                        or filter.criterion in row[addition_index]
+                    )
                 )
+            elif filter is not None and filter.kind is FilterKind.PLATFORM:
+                try:
+                    platform_index = header.index("platform_name")
+                except ValueError as x:
+                    raise ValueError(
+                        f'"{path}" does not include "platform_name" column'
+                    ) from x
+
+                predicate = lambda row: row[platform_index] in filter.criterion
             else:
+                # If the filter is an arbitrary expression, we apply the query
+                # after the fact.
                 predicate = lambda _row: True
 
             for row in reader:
@@ -337,6 +350,8 @@ class StatementsOfReasons(Dataset):
                     rows.append(row)
 
         frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
+        if filter is not None and filter.kind is FilterKind.EXPRESSION:
+            frame = frame.filter(filter.to_query())
         return frame
 
     def finish_frame(self, release: Daily, frame: pl.LazyFrame) -> pl.LazyFrame:
@@ -427,14 +442,14 @@ class StatementsOfReasons(Dataset):
         self,
         root: Path,
         release: Daily,
-        category: str,
-        metadata_entry: MetadataEntry,
+        metadata: MetadataProtocol,
         collector: CollectorProtocol,
     ) -> None:
         count = sum(1 for _ in (root / release.directory).glob(release.batch_glob))
         glob = f"{root}/{release.directory}/{release.batch_glob}"
         _logger.debug(
-            'summarizing release="%s", file-count=%d, glob="%s"', release, count, glob
+            'summarizing file-count=%d, glob="%s", release="%s", filter="%s"',
+            count, glob, release, metadata.filter
         )
 
         # With scan_parquet(), Shantay makes rapid progress only to get stuck at
@@ -447,11 +462,15 @@ class StatementsOfReasons(Dataset):
         collector.collect(
             release,
             extract,
-            metadata_entry=metadata_entry,
-            tag=category,
+            metadata_entry=metadata[release],
+            tag=metadata.tag(),
         )
 
-        if category == StatementCategoryProtectionOfMinors:
+        filter = metadata.filter
+        if (
+            filter is not None
+            and filter.is_category(StatementCategoryProtectionOfMinors)
+        ):
             csam = extract.filter(
                 pl.col("category_specification").list.contains(
                     KeywordChildSexualAbuseMaterial
