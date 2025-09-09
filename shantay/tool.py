@@ -12,13 +12,13 @@ import polars as pl
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, Coverage, DateRange, DownloadFailed, file_stem_for,
-    MetadataConflict, StagingIsBusy, Storage
+    ConfigError, DateRange, DownloadFailed, Filter, MetadataConflict, ReleaseRange,
+    StagingIsBusy, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
-from .schema import MissingPlatformError, normalize_category, StatementCategory
+from .schema import MissingPlatformError, StatementCategory
 from .stats import Statistics
 from .util import scale_time
 
@@ -83,7 +83,7 @@ you can safely delete the lock file and run Shantay again.
 
 def get_configuration(
     options: Any
-) -> tuple[Storage, Coverage, Metadata]:
+) -> tuple[Storage, ReleaseRange, Metadata]:
     """
     Turn the command line options into internal configuration objects.
     """
@@ -114,8 +114,29 @@ def get_configuration(
                 f"please specify --extract directory for `{options.task}` task"
             )
 
-    # Handle --category option
-    category = normalize_category(options.category)
+    # Handle --category, --platform, and --filter options
+    if options.category is not None:
+        if 0 < len(options.platform) or options.filter is not None:
+            raise ConfigError(
+                f"--category, --platform, and --filter are mututually exclusive"
+            )
+        filter = Filter.with_category(options.category)
+    elif 0 < len(options.platform):
+        if options.filter is not None:
+            raise ConfigError(
+                f"--category, --platform, and --filter are mututually exclusive"
+            )
+        filter = Filter.with_platforms(*options.platform)
+    elif options.filter is not None:
+        filter = Filter.with_expression(options.filter)
+    else:
+        filter = None
+
+    if filter is not None and storage.extract_root is None:
+        raise ConfigError(
+            "please do not specify --category, --platform, or --filter "
+            "without --extract directory"
+        )
 
     # Handle metadata
     if storage.archive_root is None and storage.extract_root is None:
@@ -123,66 +144,49 @@ def get_configuration(
             raise ConfigError(
                 f"please specify --archive for `{options.task}` task"
             )
-        metadata = Metadata()
-        filestem = None
-    elif storage.extract_root is None:
-        if category is not None:
-            raise ConfigError(
-                "please do not specify --category without --extract directory"
-            )
+        metadata = Metadata.for_full_db()
 
+    elif storage.extract_root is None:
         metadata = Metadata.merge(
             storage.staging_root / "db.json",
             storage.the_archive_root / "db.json",
             not_exist_ok=True,
         )
-        if metadata.category is not None:
-            raise ConfigError(
-                f'archive metadata really is for category {metadata.category}'
-            )
-
+        metadata.set_stem("db")
+        if metadata.filter is not None:
+            raise ConfigError(f'metadata for full database has filter')
         metadata.write_json(storage.staging_root / "db.json")
-        filestem = "db"
+
     else:
         try:
-            metapath = Metadata.find_file(storage.extract_root)
+            metapath = Metadata.find_file(storage.extract_root, skip_db=True)
             metadata = Metadata.read_json(metapath)
         except FileNotFoundError:
-            metapath = None
-            metadata = Metadata()
+            metadata = Metadata(storage.extract_root.stem)
 
-        if metadata.category is None:
-            if category is None:
+        if metadata.filter is None:
+            if filter is None:
                 raise ConfigError(
-                    "please specify --category for --extract directory"
+                    "please specify --category, --platform, or --filter "
+                    "for --extract directory"
                 )
-            metadata.set_category(category)
-        elif category is None:
-            category = metadata.category
-        elif category != metadata.category:
+            else:
+                metadata.set_filter(filter)
+        elif filter is None:
+            filter = metadata.filter
+        elif filter != metadata.filter:
             raise ConfigError(
-                f"--category {category} differs from {metadata.category} "
-                "in --extract directory's meta.json"
+                f"--category, --platform, or --filter {filter} differs"
+                f"from metadata {metadata.filter}"
             )
 
-        filestem = file_stem_for(category)
-
-        if metapath is not None and filestem != metapath.stem:
-            raise ConfigError(
-                f'metadata category {category} does not match '
-                f'file name "{metapath.name}"'
-            )
-
-        # Merge the metadata ...
+        # Merge with staged metadata (if it exists) and write out again.
+        metapath = storage.staging_root / f"{metadata.stem}.json"
         try:
-            metadata = metadata.merge_with(
-                Metadata.read_json(storage.staging_root / f"{filestem}.json")
-            )
+            metadata = metadata.merge_with(Metadata.read_json(metapath))
+            metadata.write_json(metapath)
         except FileNotFoundError:
             pass
-
-        # ... and write out merged metadata
-        metadata.write_json(storage.staging_root / f"{filestem}.json")
 
     # Handle --first and --last, with the latter including one day for the
     # Americas being a day behind Europe for several hours every day and another
@@ -208,12 +212,11 @@ def get_configuration(
     else:
         last = latest
 
-    range = DateRange(first, last)
+    date_range = DateRange(first, last)
     if options.task == "visualize":
-        range = range.monthlies()
+        range = date_range.monthlies()
     else:
-        range = range.dailies()
-    coverage = Coverage.of(range, category)
+        range = date_range.dailies()
 
     # Handle --workers
     if options.workers < 1:
@@ -227,7 +230,7 @@ def get_configuration(
         raise ConfigError("please only use --clamp-outliers with `visualize` task")
 
     # Finish it all up
-    return storage, coverage, metadata
+    return storage, range, metadata
 
 
 def configure_printing() -> None:
@@ -249,7 +252,7 @@ def configure_printing() -> None:
 
 
 def _run(options: Any) -> None:
-    storage, coverage, metadata = get_configuration(options)
+    storage, range, metadata = get_configuration(options)
     configure_printing()
 
     if options.task == "recover":
@@ -264,7 +267,7 @@ def _run(options: Any) -> None:
         elif storage.extract_root is None:
             task = "summarize-all"
         else:
-            task = "summarize-category"
+            task = "summarize-extract"
 
     if 1 < options.workers:
         dataset = StatementsOfReasons()
@@ -273,7 +276,7 @@ def _run(options: Any) -> None:
         processor = Multiprocessor(
             dataset=dataset,
             storage=storage,
-            coverage=coverage,
+            coverage=range,
             metadata=metadata,
             offline=options.offline,
             size=options.workers,
@@ -284,7 +287,7 @@ def _run(options: Any) -> None:
         processor = Processor(
             dataset=StatementsOfReasons(),
             storage=storage,
-            coverage=coverage,
+            coverage=range,
             metadata=metadata,
             offline=options.offline,
             interactive=options.interactive_report,
@@ -295,7 +298,7 @@ def _run(options: Any) -> None:
 
     if options.task == "summarize":
         assert frame is not None
-        stats = Statistics(f"{coverage.stem()}.parquet", frame)
+        stats = Statistics(f"{metadata.stem}.parquet", frame)
         print("\n")
         print(stats.summary())
 

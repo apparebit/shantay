@@ -14,18 +14,16 @@ def get_parser() -> ArgumentParser:
         `--offline` operation by downloading archives as expediently as possible
         and not performing any other processing.
 
-        `extract` extracts a category-specific subset from the full database. It
-        requires `--archive` and `--extract` directories. For a newly created
-        extract directory, it also requires a `--category`. That category and
-        other metadata are stored in `meta.json`.
+        `extract` extracts a subset from the full database. It requires
+        `--archive` and `--extract` directories. For a newly created extract
+        directory, it also requires a `--category`, `--platform`, or `--filter`.
 
         `recover` scans the `--extract` directory to validate contents and
         restore (some of the) metadata in `meta.json`.
 
-        `summarize` collects summary statistics for the full database or a
-        category-specific subset, depending on whether only `--archive` (for the
-        full database) or both `--archive` and `--extract` (for a subset) are
-        specified.
+        `summarize` collects summary statistics for the full database or some
+        subset, depending on whether only `--archive` (for the full database) or
+        both `--archive` and `--extract` (for a subset) are specified.
 
         `info` displays helpful information about Shantay, critical
         dependencies, the Python interpreter, the operating system, as well as
@@ -36,10 +34,11 @@ def get_parser() -> ArgumentParser:
         visualization.
 
         Summary statistics are stored in `db.parquet` for the full database and
-        in a file named after the category, such as
-        `protection-of-minors.parquet`, for category-specific data. The HTML
-        document follows the same naming convention; only the extension is
-        `.html`.
+        in a file named after the distillation filter otherwise. For example,
+        `protection-of-minors.parquet` stores statistics for the
+        `STATEMENT_CATEGORY_PROTECTION_OF_MINORS` category. The corresponding
+        metadata is stored in a JSON file in the same directory. The same naming
+        convention applies to the JSON metadata and HTML visualizations.
         """
     )
 
@@ -52,7 +51,7 @@ def get_parser() -> ArgumentParser:
     group.add_argument(
         "--extract",
         type=Path,
-        help="set directory for parquet files with category-specific data (optional)"
+        help="set directory for parquet files with distilled data (optional)"
     )
     group.add_argument(
         "--staging",
@@ -73,6 +72,15 @@ def get_parser() -> ArgumentParser:
         "--category",
         help="select subset category (optional; may omit the STATEMENT_CATEGORY_ "
         "prefix and/or use lower case)",
+    )
+    group.add_argument(
+        "--platform",
+        action="append",
+        help="select subset platforms (optional; may be repeated)",
+    )
+    group.add_argument(
+        "--filter",
+        action="provide Pola.rs filter for selecting subset (optional)"
     )
 
     group = parser.add_argument_group("resource requirements")
