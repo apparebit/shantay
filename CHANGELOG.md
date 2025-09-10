@@ -14,8 +14,8 @@ Capture the free-text fields named `decision_ground_reference_url`,
 `incompatible_content_ground`, `incompatible_content_explanation`,
 `decision_facts`, and `source_identity` in summary statistics and reports. With
 addition of those fields, Shantay accounts for all DSA transparency DB fields in
-its summary statistics. Alibaba's values for these fields are ignored; the firm
-includes case-specific identifiers, which require too much storage to track.
+its summary statistics. Since AliExpress submits an extra-ordinarily large
+number of statements with unique text values, Shantay ignores their values.
 
 Mark staging root directories for multiprocessing workers as digital detritus
 after tool run. They are not deleted to aid with debugging upon tool failures.

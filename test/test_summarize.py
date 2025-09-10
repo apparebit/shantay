@@ -56,8 +56,20 @@ class TestSummarize(TestCase):
         frame2 = pl.read_parquet(ARCHIVE / "db.parquet")
         self.assertFrameEqual(frame1, frame2)
 
+        # Validate special-treatment of AliExpress and its free-form text fields.
+        ali = frame1.filter(
+            pl.col("platform").eq("AliExpress").and_(
+                pl.col("column").is_in(["rows", "decision_facts"])
+            )
+        )
+
+        for column, count in (("rows", 6), ("decision_facts", 4)):
+            self.assertEqual(
+                ali.filter(pl.col("column").eq(column)).select("count").item(), count
+            )
+
         # By indirecting through Statistics.read, we ensure that the type of the
-        # fixture's platform column is up to date.s
+        # fixture's platform column is up to date.
         frame2 = Statistics.read(FIXTURE / "db.parquet").frame()
         self.assertFrameEqual(frame1, frame2)
 
@@ -107,3 +119,24 @@ class TestSummarize(TestCase):
             STAGING / "protection-of-minors.parquet",
             EXTRACT / "protection-of-minors.parquet",
         )
+
+
+def load_frame() -> pl.DataFrame:
+    pl.Config.set_tbl_rows(20)
+    pl.Config.set_tbl_cols(10)
+    pl.Config.set_thousands_separator(",")
+
+    dataset = StatementsOfReasons()
+    release = Daily(2024, 3, 14)
+
+    frames = []
+    for index in range(2):
+        frames.append(dataset._read_rows(
+            csv_files=f"{FIXTURE}/csv/sor-global-{release.id}-full-{index:05}-*.csv",
+            release=release,
+            index=0,
+            name="archive",
+            filter=None,
+        ))
+
+    return pl.concat(frames, how="vertical")
