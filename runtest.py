@@ -23,6 +23,7 @@ if __name__ == "__main__":
         help="skip type checking",
     )
     options = parser.parse_args(sys.argv[1:])
+    del sys.argv[1:]
 
     if not options.skip_types and os.name != "nt":
         print(styled.h0("Type Checking…"))
