@@ -4,11 +4,10 @@
 ## v0.6.0 (September ??, 2025)
 
 As an alternative to distilling by `--category`, distill by one or more
-`--platform`s or an arbitrary Pola.rs `--filter` expression. Shantay uses `eval`
-for turning the latter into an executable predicate. The customary `pl` is the
-only global binding available during evaluation. No other bindings, including
-for Python's builtins, are accessible. Still, it would be folly to use an
-untrusted string as `--filter` argument.
+`--platform`s or an arbitrary Pola.rs `--filter` expression. The latter may use
+the customary `pl` for Pola.rs' namespace; no other bindings, including for
+Python's builtins, are available. Still, it would be folly to use an untrusted
+string as the `--filter` argument.
 
 Capture the free-text fields named `decision_ground_reference_url`,
 `illegal_content_legal_ground`, `illegal_content_explanation`,

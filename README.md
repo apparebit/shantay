@@ -101,9 +101,19 @@ control and data recovery. Here are all of them:
     not performing any other processing.
 
   - **distill** extracts a filtered subset from daily distributions. It requires
-    both the `--archive` and `--extract` directories. For a new extract
-    directory, it also requires either a `--category`, `--platform`, or
-    `--filter`. That filter and other metadata are stored in a JSON file.
+    both the `--archive` and `--extract` directories. For a new extract, it also
+    requires one of these options:
+
+      - `--category` to select a statement category such as
+        `STATEMENT_CATEGORY_PROTECTION_OF_MINORS`.
+      - `--platform` to select a platform; use further `--platform` options for
+        selecting more than one.
+      - `--filter` to select all statements matching a [Pola.rs filter
+        expression](https://docs.pola.rs/user-guide/concepts/expressions-and-contexts/#filter);
+        `pl` is the only available binding.
+
+    The filter and other metadata are stored in a JSON file in the extract
+    directory.s
 
   - **recover** scans the `--extract` directory to validate the files and
     restore (some of the) metadata.
@@ -128,7 +138,7 @@ control and data recovery. Here are all of them:
 Unless the `--offline` option is specified, the `distill` and `summarize` tasks
 download daily distributions as needed.
 
-You can restrict the data range with `--first` and `--last`. By default, the
+You can restrict the date range with `--first` and `--last`. By default, the
 `--first` date is 2023-09-25, the day the DSA transparency database became
 operational, and the `--last` date is three days before today—one day to allow
 for the Americas being six to nine hours behind Europe and another two days to

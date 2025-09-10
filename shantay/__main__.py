@@ -14,7 +14,7 @@ def get_parser() -> ArgumentParser:
         `--offline` operation by downloading archives as expediently as possible
         and not performing any other processing.
 
-        `extract` extracts a subset from the full database. It requires
+        `distill` extracts a subset from the full database. It requires
         `--archive` and `--extract` directories. For a newly created extract
         directory, it also requires a `--category`, `--platform`, or `--filter`.
 
@@ -70,17 +70,17 @@ def get_parser() -> ArgumentParser:
     )
     group.add_argument(
         "--category",
-        help="select subset category (optional; may omit the STATEMENT_CATEGORY_ "
-        "prefix and/or use lower case)",
+        help="select statement category for extract (optional; may omit"
+        "`STATEMENT_CATEGORY_` prefix and/or use lower-case)",
     )
     group.add_argument(
         "--platform",
         action="append",
-        help="select subset platforms (optional; may be repeated)",
+        help="select platforms for extract (optional; may be repeated)",
     )
     group.add_argument(
         "--filter",
-        action="provide Pola.rs filter for selecting subset (optional)"
+        help="provide Pola.rs filter expression for extract (optional)",
     )
 
     group = parser.add_argument_group("resource requirements")
