@@ -12,6 +12,7 @@ from typing import (
 )
 
 from .progress import NO_PROGRESS, Progress
+from .schema import humanize
 
 
 _NONWORD = re.compile(r'\W+')
@@ -613,7 +614,7 @@ class Filter:
                 assert isinstance(self.criterion, tuple)
                 assert 0 < len(self.criterion)
                 platforms = ",".join(f'"{p}"' for p in self.criterion)
-                return f'pl.col("platform").is_in({platforms})'
+                return f'pl.col("platform_name").is_in({platforms})'
             case FilterKind.EXPRESSION:
                 assert isinstance(self.criterion, str)
                 return self.criterion
@@ -622,14 +623,22 @@ class Filter:
         match self.kind:
             case FilterKind.CATEGORY:
                 assert isinstance(self.criterion, str)
-                return f'category == "{self.criterion}"'
+                return humanize(self.criterion)
             case FilterKind.PLATFORM:
                 assert isinstance(self.criterion, tuple)
-                assert 0 < len(self.criterion)
-                return f'platform in ({",".join(f'"{p}"' for p in self.criterion)})'
+                match len(self.criterion):
+                    case 0:
+                        assert False, "platform filter has no platforms"
+                    case 1:
+                        return self.criterion[0]
+                    case 2:
+                        return f"{self.criterion[0]} and {self.criterion[1]}"
+                    case _:
+                        elements = ", ".join(self.criterion[:-1])
+                        return f"{elements}, and {self.criterion[-1]}"
             case FilterKind.EXPRESSION:
                 assert isinstance(self.criterion, str)
-                return self.criterion
+                return "Custom Query"
 
 
 class MetadataProtocol[R: Release](Protocol):

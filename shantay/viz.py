@@ -17,7 +17,7 @@ from .framing import (
     aggregates, is_row_within_period, NO_ARGUMENT_PROVIDED, NOT_NULL, predicate
 )
 from .metadata import Metadata
-from .model import ConfigError, file_stem_for, ReleaseRange, Storage
+from .model import ConfigError, file_stem_for, Filter, FilterKind, ReleaseRange, Storage
 from .schema import (
     AccountTypeMetric, AutomatedDecisionMetric, AutomatedDetectionMetric,
     ContentLanguageMetric, CategoryMetric, ContentTypeMetric, DecisionAccountMetric,
@@ -345,17 +345,33 @@ class Visualizer:
         self._chart_num = 0
         self._is_meta = False
 
-    def _timeline_width(self) -> int | str:
+    @property
+    def timeline_width(self) -> int | str:
         return _TIMELINE_WIDTH
 
-    def _timeline_height(self, short: bool = False) -> int:
-        return _TIMELINE_HEIGHT * (2 // 3 if short else 1)
+    @property
+    def timeline_height(self) -> int:
+        return _TIMELINE_HEIGHT
 
-    def _has_all_sors(self) -> bool:
+    @property
+    def filter(self) -> None | Filter:
+        return self._metadata.filter
+
+    @property
+    def is_filtered(self) -> bool:
         return self._metadata.filter is None
 
-    def _is_monthly(self) -> bool:
+    @property
+    def frequency(self) -> str:
+        return self._frequency.title()
+
+    @property
+    def is_monthly(self) -> bool:
         return self._frequency == "monthly"
+
+    @property
+    def period(self) -> str:
+        return "Month" if self.is_monthly else "Day"
 
     # ==================================================================================
 
@@ -593,9 +609,15 @@ class Visualizer:
         )
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-        _logger.debug(
-            "determine Meta's platforms and top-3 platforms other than Meta's"
-        )
+        _logger.debug("determine which platforms to include in report")
+
+        # If the statistics are for select platforms already, just report on
+        # those platforms.
+        filter = self._metadata.filter
+        if filter is not None and filter.kind is FilterKind.PLATFORM:
+            self._meta = Statistics(f"{self._metadata.stem}.parquet")
+            self._top_platforms = filter.criterion if 1 < len(filter.criterion) else []
+            return
 
         meta_data = self._statistics.frame().filter(
             pl.col("platform").is_in(MetaPlatforms)
@@ -661,8 +683,7 @@ class Visualizer:
     def _render_head(self) -> str:
         _logger.debug('render HTML <head>')
 
-        main_tag = self._tags[0]
-        description = "All Data" if main_tag is None else humanize(main_tag)
+        description = str(self.filter) if self.is_filtered else "All Data"
         title = f"The DSA Transparency Database: {description}"
 
         self._html(_DOC_HEAD.format(
@@ -773,8 +794,24 @@ class Visualizer:
             with_head=False,
         )
 
+        if self.filter is None:
+            filter = "in unfiltered form"
+        elif self.filter.kind is FilterKind.CATEGORY:
+            filter = f"filtered by the {self.filter} category"
+        elif self.filter.kind is FilterKind.PLATFORM:
+            filter = f"filtered by the {self.filter} platform"
+            if 1 < len(self.filter.criterion):
+                filter += "s"
+        elif self.filter.kind is FilterKind.EXPRESSION:
+            filter = f"filtered by the {self.filter!r} query"
+        else:
+            raise AssertionError("unreachable")
+
         self._html(
             f"""
+            <p>This report covers the DSA transparency database
+            <strong>{filter}</strong>.
+
             <p><strong><a
             href="https://github.com/apparebit/shantay">Shantay</a></strong>
             created this report on {self._timestamp.date().isoformat()} at
@@ -927,7 +964,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             self._render_overall_statements_by_platform(tag=main_tag),
             self._render_overall_statements_by_platform(
                 tag=main_tag,
-                threshold=10_000_000 if self._has_all_sors() else 50_000
+                threshold=10_000_000 if self.is_filtered else 50_000
             ),
             spacing=_SPACING,
         ).resolve_scale(
@@ -936,7 +973,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             barBandPaddingInner=0.05,
         ))
 
-        if not self._has_all_sors():
+        if not self.is_filtered:
             self._chart("keywords-by-platform", alt.vconcat(
                 self._render_overall_keyword_usage_by_platform(percent=True, tag=main_tag),
                 self._render_overall_keyword_usage_by_platform(percent=False, tag=main_tag),
@@ -1176,8 +1213,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.X("start_date:T").scale(domain=self._date_range.to_limits()).title("Date"),
             alt.Y(f"{source}:Q").title(daily_axis),
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height(),
+            width=self.timeline_width,
+            height=self.timeline_height,
         )
 
         if with_monthly_sum:
@@ -1339,8 +1376,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 range=[Palette.BLUE, Palette.RED],
             ),
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height(),
+            width=self.timeline_width,
+            height=self.timeline_height,
         )
 
         if not with_monthly_mean:
@@ -1484,7 +1521,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             predicate(**filters)
         )
 
-        if self._is_monthly():
+        if self.is_monthly:
             table = table.group_by(
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
@@ -1551,7 +1588,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         return table.collect()
 
     def _compute_cutoff(self, table: pl.DataFrame) -> None | int:
-        if not self._with_no_outliers or not self._is_monthly():
+        if not self._with_no_outliers or not self.is_monthly:
             return None
 
         v3, v2, v1 = table.get_column("count").top_k(3).sort()
@@ -1632,12 +1669,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         }[spec.quantity]
 
         # X-Axis
-        xtitle = ("Month" if self._is_monthly() else "Day") if with_x_title else None
         encoding: list[Any] = [
             alt.X("start_date:T").scale(domain=self._date_range.to_limits())
-            .title(xtitle),
+            .title(self.period if with_x_title else None),
         ]
-        if self._is_monthly():
+        if self.is_monthly:
             encoding.append(alt.X2("end_date:T").title(""))
 
         # Variant Order
@@ -1672,21 +1708,25 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             title = f"Meta: {title}"
         if tag is not None:
             title += f" for {humanize(tag)}"
-        title += f" — {"Monthly" if self._is_monthly() else "Daily"} {quantity}"
+        title += f" — {self.frequency} {quantity}"
 
         # Base Chart
+        height = self.timeline_height
+        if not with_full_height:
+            height = height * 2 // 3
+
         base = alt.Chart(
             table,
             title=title if with_title else alt.Undefined,
         ).encode(
             *encoding
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height(not with_full_height),
+            width=self.timeline_width,
+            height=height,
         )
 
         # Charts
-        if self._is_monthly():
+        if self.is_monthly:
             chart = base.mark_bar(**mark_props)
 
             if spec is StatementCountMetric:
@@ -1867,8 +1907,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).mark_bar(
             color=Palette.BLUE,
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height() * 2 // 3,
+            width=self.timeline_width,
+            height=self.timeline_height * 2 // 3,
         )
 
         mean = alt.Chart(table).encode(
@@ -1878,8 +1918,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ).mark_bar(
             color=Palette.LIGHT_BLUE,
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height() // 2,
+            width=self.timeline_width,
+            height=self.timeline_height // 2,
         )
 
         chart = alt.vconcat(max, mean, spacing=5).resolve_scale(x="shared")
@@ -1898,7 +1938,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             predicate("category_specification", entity=None, tag=self._tags[0])
         )
 
-        if self._is_monthly():
+        if self.is_monthly:
             table = table.group_by(
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
@@ -1950,24 +1990,23 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             value_name="Count",
         ).collect()
 
-        freq = "Monthly" if self._is_monthly() else "Daily"
         chart = alt.Chart(
             table,
             title="Platforms Submitting SoRs with Keywords — "
-            f"Cumulative {freq} Counts"
+            f"Cumulative {self.frequency} Counts"
         ).mark_line(
             tooltip=True
         ).encode(
             alt.X("mid_date:T")
-            .title("Month" if self._is_monthly() else "Day"),
+            .title(self.period),
             alt.Y("Count:Q").title("Number of Platforms"),
             alt.Color("Kind:N").scale(
                 domain=metrics,
                 range=[Palette.GRAY, Palette.ORANGE, Palette.RED],
             ),
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height(),
+            width=self.timeline_width,
+            height=self.timeline_height,
         )
         return chart.interactive() if self._with_interaction else chart
 
@@ -2005,7 +2044,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 alt.Y("count:Q")
                 .scale(type="log", domain=(
                     10_000,
-                    30_000_000_000 if self._has_all_sors() else 100_000_000
+                    30_000_000_000 if self.is_filtered else 100_000_000
                 ), clamp=True)
                 .title("log(Statements of Reasons)"),
                 alt.Text("label"),
@@ -2026,8 +2065,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             tooltip=True,
             color=f"{Palette.PURPLE}90" if threshold else Palette.PURPLE,
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height(),
+            width=self.timeline_width,
+            height=self.timeline_height,
         )
 
         if threshold is not None and 50_000 <= threshold:
@@ -2101,8 +2140,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             alt.Y(y_data).title(y_title),
             color,
         ).properties(
-            width=self._timeline_width(),
-            height=self._timeline_height(),
+            width=self.timeline_width,
+            height=self.timeline_height,
         )
         return chart.interactive() if self._with_interaction else chart
 
