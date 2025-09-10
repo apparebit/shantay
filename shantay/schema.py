@@ -780,8 +780,9 @@ class TransformType(enum.Enum):
     PLATFORM_NAME = enum.auto()
     CATEGORY_NAME = enum.auto()
     SKIPPED_DATE = enum.auto()
-    ROWS = enum.auto()
+    ALL_ROWS_COUNT = enum.auto()
     VALUE_COUNTS = enum.auto()
+    TEXT_ROWS_COUNT = enum.auto()
     TEXT_VALUE_COUNTS = enum.auto()
     LIST_VALUE_COUNTS = enum.auto()
     DECISION_TYPE = enum.auto()
@@ -803,7 +804,7 @@ class ValueCountsPlusTransform:
 
 # The transforms cover all DSA transparency database entries without unconstrained text.
 TRANSFORMS = {
-    "rows": TransformType.ROWS,
+    "rows": TransformType.ALL_ROWS_COUNT,
     "decision_type": TransformType.DECISION_TYPE,
     "decision_visibility": ValueCountsPlusTransform(
         self_is_list=True, other_field="end_date_visibility_restriction"
@@ -907,6 +908,7 @@ ColumnValueType = pl.Enum((
 
 EntityValueType = pl.Enum((
     "is_null",
+    "non_empty",
     "vis",
     "mon",
     "vis_mon",

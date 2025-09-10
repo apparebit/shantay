@@ -214,7 +214,7 @@ class Collector:
         variant: None | pl.Expr = None,
         value_counts: None | pl.Expr = None,
         text_value_counts: None | pl.Expr = None,
-        frame: None | pl.DataFrame = None,
+        frame: None | pl.LazyFrame = None,
         **kwargs: None | int | pl.Expr,
     ) -> None:
         """Add new rows."""
@@ -271,8 +271,8 @@ class Collector:
                 effective_values.append(value.cast(pl.Int64).alias(key))
 
         assert self._release is not None
-        lazy_frame = self._source.lazy() if frame is None else frame.lazy()
-        stats = lazy_frame.select(
+        frame = self._source.lazy() if frame is None else frame
+        stats = frame.select(
             pl.lit(self._release.start_date).alias("start_date"),
             pl.lit(self._release.end_date).alias("end_date"),
             pl.lit(tag).alias("tag"),
@@ -295,8 +295,7 @@ class Collector:
                 column: "text",
             })
 
-        stats = stats.cast(
-            StatisticsSchema) # pyright: ignore[reportArgumentType]
+        stats = stats.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
 
         # Enforce canonical column order, so that frames can be concatenated!
         self._add_partial_frame(stats.select(
@@ -330,7 +329,7 @@ class Collector:
                 else f"with_{other_field}"
             ),
             value_counts=values.cast(pl.String),
-            frame=self._source.filter(
+            frame=self._source.lazy().filter(
                 pl.col(other_field).is_null().not_()
             ),
         )
@@ -362,6 +361,13 @@ class Collector:
     def collect_body_data(self) -> None:
         """Collect the standard statistics for the current data frame."""
         for key, value in TRANSFORMS.items():
+            # AliExpress submits too many statements with unique text values
+            if (
+                self._platform == "AliExpress"
+                and value is TransformType.TEXT_VALUE_COUNTS
+            ):
+                value = TransformType.TEXT_ROWS_COUNT
+
             match value:
                 # Platform name and category name are distinct columns that are
                 # filled in while handling other fields.
@@ -371,10 +377,15 @@ class Collector:
                     assert key == "category"
                 case TransformType.SKIPPED_DATE:
                     pass
-                case TransformType.ROWS:
+                case TransformType.ALL_ROWS_COUNT:
                     self.add_rows(key, count=pl.len())
                 case TransformType.VALUE_COUNTS:
                     self.add_rows(key, value_counts=pl.col(key))
+                case TransformType.TEXT_ROWS_COUNT:
+                    self.add_rows(
+                        key, entity="non_empty",
+                        count=pl.col(key).str.len_chars().gt(0).sum()
+                    )
                 case TransformType.TEXT_VALUE_COUNTS:
                     self.add_rows(key, text_value_counts=pl.col(key))
                 case TransformType.LIST_VALUE_COUNTS:
@@ -711,18 +722,28 @@ class _Summarizer:
     def _summarize_fields(self) -> None:
         """Summarize all fields of summary statistics."""
         for field_name, field_type in TRANSFORMS.items():
+            # AliExpress submits too many statements with unique text values
+            if (
+                self._platform == "AliExpress"
+                and field_type is TransformType.TEXT_VALUE_COUNTS
+            ):
+                field_type = TransformType.TEXT_ROWS_COUNT
+
             match field_type:
                 case TransformType.PLATFORM_NAME:
                     assert field_name == "platform_name"
                     self._collect_platform_names()
                 case TransformType.SKIPPED_DATE:
                     pass
-                case TransformType.ROWS:
+                case TransformType.ALL_ROWS_COUNT:
                     self._collect1("rows")
                     self._spacer()
                 case TransformType.VALUE_COUNTS:
                     self._spacer()
                     self._collect_value_counts(field_name)
+                case TransformType.TEXT_ROWS_COUNT:
+                    self._spacer()
+                    self._collect1(field_name, "non_empty")
                 case TransformType.TEXT_VALUE_COUNTS:
                     self._spacer()
                     self._collect_value_counts(field_name, is_text=True)
