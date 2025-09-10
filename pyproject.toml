@@ -41,6 +41,9 @@ repository = "https://github.com/apparebit/shantay"
 
 
 [dependency-groups]
+dev = [
+    "flit"
+]
 docs = [
     "sphinx",
     "sphinx_design",
