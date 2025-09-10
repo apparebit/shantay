@@ -33,7 +33,7 @@ Alas, should you be able to observe update thrashing between two concurrent
 processes that make no forward progress as a result, I'd love to hear about it.
 """
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 import datetime as dt
 import json
 import logging
@@ -70,10 +70,12 @@ PlatformNames = (
     "App Store",
     "Apple Books",
     "Apple Podcasts",
+    "Atmoskop",
     "Auctronia",
     "AutoRevue",
     "AutoScout24",
     "Azar",
+    "Back Market",
     "Badoo",
     "Behance",
     "BigBang.si",
@@ -84,6 +86,7 @@ PlatformNames = (
     "Bumble",
     "Campfire",
     "Canva",
+    "Casamundo, Wimdu, Eurorelais",
     "Catawiki",
     "Cdiscount",
     "Chrome Web Store",
@@ -115,6 +118,7 @@ PlatformNames = (
     "G2.com",
     "Garmin",
     "Gastrojobs",
+    "GIPHY",
     "GitHub",
     "Glassdoor",
     "Google Maps",
@@ -143,6 +147,7 @@ PlatformNames = (
     "ingatlan.com",
     "Ingatlanbazár",
     "Instagram",
+    "InterNations",
     "irishjobs.ie",
     "JetBrains",
     "JetBrains Marketplace",
@@ -152,14 +157,17 @@ PlatformNames = (
     "Kaggle",
     "Kleinanzeigen",
     "Knowunity",
+    "kununu",
     "La Redoute",
     "leboncoin",
     "Ligaportal",
     "LinkedIn",
     "Livios Forum",
+    "LOVOO",
     "ManoMano",
     "MATY",
     "Meetic",
+    "METRO Markets",
     "Microsoft Operations",
     "Microsoft Store",
     "Microsoft Teams",
@@ -170,6 +178,7 @@ PlatformNames = (
     "Mindmegette",
     "mobile.de",
     "MORE.COM",
+    "mydealz, Pepper, Preisjäger",
     "nebenan.de",
     "Nebius AI",
     "Njuskalo Turizam",
@@ -182,6 +191,7 @@ PlatformNames = (
     "OTTO",
     "Parship",
     "PC Games Store",
+    "Peloton",
     "Pexels",
     "PHAISTOS NETWORKS",
     "Pinterest",
@@ -189,6 +199,7 @@ PlatformNames = (
     "Pornhub",
     "Profesia",
     "profession.hu",
+    "Práce za rohem",
     "Pub.dev",
     "Quora",
     "Rajče",
@@ -202,6 +213,7 @@ PlatformNames = (
     "Samsung PENUP",
     "SAP",
     "SE LOGER",
+    "Seduo",
     "SFDC",
     "Shein",
     "Shopify",
@@ -217,6 +229,7 @@ PlatformNames = (
     "Streamate.com",
     "Stripchat",
     "Studydrive",
+    "Takeaway.com",
     "TAZZ",
     "Telegram",
     "Telia Yhteisö",
@@ -232,6 +245,7 @@ PlatformNames = (
     "Twitch",
     "Uber",
     "Udemy",
+    "Upwork",
     "Vacation Rentals",
     "Vareni.cz",
     "Veepee",
@@ -252,12 +266,14 @@ PlatformNames = (
     "X",
     "Xbox Store",
     "Xbox.com",
+    "XING",
     "XVideos",
     "YouTube",
     "Yubo",
     "Zalando",
     "Zenga",
     "Živě.cz",
+    "ΣΚΡΟΥΤΖ",
 )
 
 
@@ -287,6 +303,7 @@ CanonicalPlatformNames = MappingProxyType({
     "SFDC Ireland Limited": "SFDC",
     'SIA "JOOM"': "Joom",
     "SIA &quot;JOOM&quot;": "Joom",
+    "Takeaway.com Central Core B.V.": "Takeaway.com",
     "Vinted UAB": "Vinted",
     "WhatsApp Channels": "WhatsApp",
     "willhaben internet service GmbH & Co KG": "willhaben",
@@ -294,7 +311,19 @@ CanonicalPlatformNames = MappingProxyType({
     "www.gutefrage.net": "gutefrage.net",
     "Xbox Console Store": "Xbox Store",
     "Xbox.com Website Store": "Xbox.com",
+    "ΣΚΡΟΥΤΖ Α.Ε.": "ΣΚΡΟΥΤΖ",
 })
+
+
+def _create_lookup_table() -> Mapping[str, str]:
+    return MappingProxyType({
+        p.casefold(): p for p in PlatformNames
+    } | {
+        k.casefold(): v for k, v in CanonicalPlatformNames.items()
+    })
+
+
+PlatformLookupTable = _create_lookup_table()
 
 
 class MissingPlatformError(Exception):
@@ -306,21 +335,27 @@ _logger = logging.getLogger(__spec__.parent)
 _ONE_WEEK = 7 * 24 * 60 * 60
 
 
-def sync_web_platforms() -> Literal["skipped", "mtime", "disk", "memory"]:
+def sync_web_platforms(
+    force: bool = False
+) -> Literal["skipped", "mtime", "disk", "memory"]:
     """
     Scrape the list of platform names from the EU's DSA transparency database
-    website and update the local list accordingly.
+    website and update the local list accordingly. By default, this function
+    uses the last-modified-time of the platforms file to avoid querying the
+    website more than once a week. However, if `force` is true, it ignores the
+    timestamp and always queries the server.
     """
-    now = time.time()
-    mtime = _PLATFORM_FILE.stat().st_mtime
+    if not force:
+        now = time.time()
+        mtime = _PLATFORM_FILE.stat().st_mtime
 
-    if now - mtime < _ONE_WEEK:
-        ts = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
-        _logger.info(
-            'skip scraping of platform names for path="%s", mtime="%s"',
-            _PLATFORM_FILE, ts.isoformat()
-        )
-        return "skipped"
+        if now - mtime < _ONE_WEEK:
+            ts = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
+            _logger.info(
+                'skip scraping of platform names for path="%s", mtime="%s"',
+                _PLATFORM_FILE, ts.isoformat()
+            )
+            return "skipped"
 
     _logger.info('scraping platform names')
     new_names = _scrape_platforms()
@@ -363,22 +398,26 @@ _PLATFORM_FILE = Path.home() / ".shantay" / "platforms.json"
 
 def update_platforms(names: Iterable[str]) -> Literal["mtime", "disk", "memory"]:
     """
-    Update the persistent list of platform names with the given names. After
-    converting the given names to their canonical versions, this function reads
-    the list of known platform names from persistent storage, merges the two
-    lists, and writes out the combined list if it is any different.
+    Update the (persistent) list of platform names with the given names.
 
-    The result indicates the extent of this function changes:
-      - `mtime` means that only the last modified time of the platform file was
-        updated. In other words, the given names were already included in the
-        platform file. However, since the names were new to this run of Shantay,
-        it must be restarted.
+    After mapping the given names to there canonical versions, this function
+    re-reads the list of known platform names from storage, merges the two
+    lists, and writes out the combined list to storage if it is any different.
+
+    The result indicates the extent of this function's changes:
+
+      - `mtime` means that only the last-modified-time of the platform file was
+        updated. That does imply that the given names were already included in
+        the file with platform names. However, since this function is only
+        called upon detection of a missing platform name, the in-memory list of
+        platform names was outdated and Shantay must be restarted.
       - `disk` means that the platform file was updated. However, the in-memory
-        version is still outdated and hence Shantay must be restarted.
+        version could not be updated, i.e., is still outdated, and hence Shantay
+        must be restarted.
       - `memory` means that the platform file and the in-memory version were
         updated. It is safe to continue running.
     """
-    global PlatformNames, _KNOWN_PLATFORM_NAMES
+    global PlatformLookupTable, PlatformNames, _KNOWN_PLATFORM_NAMES
 
     names = to_canonical_platforms(names)
 
@@ -396,6 +435,7 @@ def update_platforms(names: Iterable[str]) -> Literal["mtime", "disk", "memory"]
 
     PlatformNames = tuple(sorted_names)
     _KNOWN_PLATFORM_NAMES = frozenset(sorted_names)
+    PlatformLookupTable = _create_lookup_table()
     return "memory"
 
 
@@ -416,6 +456,7 @@ def _write_platforms(names: list[str] | tuple[str, ...]) -> None:
 try:
     PlatformNames = tuple(_read_platforms())
     _KNOWN_PLATFORM_NAMES = frozenset(PlatformNames)
+    PlatformLookupTable = _create_lookup_table()
 except FileNotFoundError:
     _write_platforms(PlatformNames)
 
@@ -467,7 +508,8 @@ def _scrape_platforms() -> list[str]:
 def to_canonical_platforms(names: Iterable[str]) -> set[str]:
     """
     Convert the given names to their canonical versions, while also validating
-    that they do not contain backslashes or double quotes.
+    that they do not contain backslashes or double quotes. This function also
+    normalizes capitalization.
     """
     canonical_names = set()
 
@@ -477,7 +519,7 @@ def to_canonical_platforms(names: Iterable[str]) -> set[str]:
         if '"' in name:
             raise ValueError(f"platform name '{name}' contains double quote")
 
-        canonical_names.add(CanonicalPlatformNames.get(name, name))
+        canonical_names.add(PlatformLookupTable.get(name.casefold(), name))
 
     return canonical_names
 
@@ -551,7 +593,7 @@ if __name__ == "__main__":
     )
 
     # Sync platform names
-    action = sync_web_platforms()
+    action = sync_web_platforms(force=True)
     assert action != "disk"
 
     # Update this module's source code

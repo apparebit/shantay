@@ -18,7 +18,7 @@ from .model import (
 from .multiprocessor import Multiprocessor
 from .processor import Processor
 from .progress import Progress
-from .schema import MissingPlatformError, StatementCategory
+from .schema import MissingPlatformError, PlatformLookupTable, StatementCategory
 from .stats import Statistics
 from .util import scale_time
 
@@ -126,7 +126,14 @@ def get_configuration(
             raise ConfigError(
                 f"--category, --platform, and --filter are mututually exclusive"
             )
-        filter = Filter.with_platforms(*options.platform)
+        # Validate platforms and resolve to canonical form
+        platforms = []
+        for platform in options.platform:
+            resolved_platform = PlatformLookupTable.get(platform.casefold())
+            if resolved_platform is None:
+                raise ConfigError(f'--platform "{platform}" is unknown')
+            platforms.append(resolved_platform)
+        filter = Filter.with_platforms(*platforms)
     elif options.filter is not None:
         filter = Filter.with_expression(options.filter)
     else:

@@ -580,6 +580,7 @@ from ._platform import (
     check_stats_platforms as check_stats_platforms,
     MetaPlatforms as MetaPlatforms,
     MissingPlatformError as MissingPlatformError,
+    PlatformLookupTable as PlatformLookupTable,
     PlatformNames as PlatformNames,
     sync_web_platforms as sync_web_platforms,
     update_platforms as update_platforms,
