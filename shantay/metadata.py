@@ -142,7 +142,10 @@ class Metadata[R: Release]:
     def merge(cls, *sources: None | Path, not_exist_ok: bool = False) -> Self:
         """
         Merge the metadata from the given metadata files. All files must have
-        the same stem and filter.
+        the same stem and filter. If `not_exist_ok` is set, then this method
+        does not raise a `FileNotFoundError` when one of the source files cannot
+        be found. However, if all source files cannot be found, this method
+        always raises a `FileNotFoundError`.
         """
         assert 0 < len(sources), "no source paths given"
 
@@ -163,8 +166,10 @@ class Metadata[R: Release]:
                 merged._merge_filter(source_data._filter)
                 merged._merge_releases(source_data._releases)
 
-        assert merged is not None
-        return merged
+        if merged is None:
+            raise FileNotFoundError(*(p for p in sources if p is not None))
+        else:
+            return merged
 
     def merge_with(self, other: Self) -> Self:
         """
@@ -265,7 +270,7 @@ class Metadata[R: Release]:
             raise ValueError(f'"{file}" is not a valid metadata file for Shantay')
 
         stem = data["stem"]
-        filter = Filter.from_json(data["filter"])
+        filter = None if data["filter"] is None else Filter.from_json(data["filter"])
         releases = data["releases"]
 
         return cls(stem, filter, releases)
