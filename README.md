@@ -135,6 +135,12 @@ control and data recovery. Here are all of them:
     copy of the summary statistics. In addition to generating an HTML report,
     Shantay also saves all charts as SVG graphics.
 
+    The HTML report includes subsections with platform-specific statistics. By
+    default, Shantay automatically selects those platforms based on popularity.
+    However, if an extract was configured with the `--platform` option, Shantay
+    uses the platforms of the extract. In either case, `--platform` can be
+    used to override this default behavior.
+
 Unless the `--offline` option is specified, the `distill` and `summarize` tasks
 download daily distributions as needed.
 

@@ -9,6 +9,9 @@ the customary `pl` for Pola.rs' namespace; no other bindings, including for
 Python's builtins, are available. Still, it would be folly to use an untrusted
 string as the `--filter` argument.
 
+`--platform` can also be used to override Shantay's choice of platforms when
+visualizing results. By default, Shantay selects them by popularity.
+
 Capture the free-text fields named `decision_ground_reference_url`,
 `illegal_content_legal_ground`, `illegal_content_explanation`,
 `incompatible_content_ground`, `incompatible_content_explanation`,
