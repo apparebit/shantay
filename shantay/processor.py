@@ -44,8 +44,9 @@ class Processor[R: Release]:
         coverage: ReleaseRange[Daily],
         metadata: Metadata,
         offline: bool = False,
-        interactive: bool = False,
-        clamp_outliers: bool = False,
+        with_interaction: bool = False,
+        with_clamped_outliers: bool = False,
+        with_platforms: None | list[str] = None,
         progress: Progress = NO_PROGRESS,
     ) -> None:
         self._dataset = dataset
@@ -53,8 +54,9 @@ class Processor[R: Release]:
         self._coverage = coverage
         self._metadata = metadata
         self._offline = offline
-        self._interactive = interactive
-        self._clamp_outliers = clamp_outliers
+        self._with_interaction = with_interaction
+        self._with_clamped_outliers = with_clamped_outliers
+        self._with_platforms = with_platforms
         self._progress = progress
         self._running_time = 0.0
 
@@ -871,8 +873,9 @@ class Processor[R: Release]:
             storage=self._storage,
             coverage=self._coverage,
             metadata=self._metadata,
-            with_interaction=self._interactive,
-            with_no_outliers=self._clamp_outliers,
+            with_interaction=self._with_interaction,
+            with_clamped_outliers=self._with_clamped_outliers,
+            with_platforms=self._with_platforms,
         ).run()
 
 

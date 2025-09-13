@@ -325,15 +325,17 @@ class Visualizer:
         storage: Storage,
         coverage: ReleaseRange,
         metadata: Metadata,
-        with_no_outliers: bool = False,
+        with_clamped_outliers: bool = False,
         with_interaction: bool = False,
         with_notebook: bool = False,
+        with_platforms: None | list[str] = None,
     ) -> None:
         self._storage = storage
         self._coverage = coverage
         self._metadata = metadata
-        self._with_no_outliers = with_no_outliers
+        self._with_clamped_outliers = with_clamped_outliers
         self._with_interaction = with_interaction
+        self._with_platforms = with_platforms or []
         self._chart_dir = storage.staging_root / "charts" / metadata.stem
         if with_notebook:
             self._renderer = _NotebookRenderer(self._chart_dir)
@@ -611,9 +613,12 @@ class Visualizer:
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         _logger.debug("determine which platforms to include in report")
 
-        # If the statistics are for select platforms already, just report on
-        # those platforms.
+        # Handle explicitly requested platforms and extract with limited platforms
         filter = self._metadata.filter
+        if 0 < len(self._with_platforms):
+            self._meta = Statistics(f"{self._metadata.stem}.parquet")
+            self._top_platforms = self._with_platforms
+            return
         if filter is not None and filter.kind is FilterKind.PLATFORM:
             self._meta = Statistics(f"{self._metadata.stem}.parquet")
             self._top_platforms = filter.criterion if 1 < len(filter.criterion) else []
@@ -1588,7 +1593,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         return table.collect()
 
     def _compute_cutoff(self, table: pl.DataFrame) -> None | int:
-        if not self._with_no_outliers or not self.is_monthly:
+        if not self._with_clamped_outliers or not self.is_monthly:
             return None
 
         v3, v2, v1 = table.get_column("count").top_k(3).sort()

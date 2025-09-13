@@ -1,44 +1,58 @@
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 import logging
 from pathlib import Path
+import shutil
 import sys
+from typing import Any
+
+
+_WIDTH = None
+
+def _formatter(**kwargs) -> Any:
+    # ArgumentParser repeatedly instantiates the class with the program name
+    # only, even though the base HelpFormatter supports more options, including
+    # one to limit the width. We inject that option in this wrapper.
+    global _WIDTH
+    if _WIDTH is None:
+        _WIDTH = shutil.get_terminal_size().columns
+    return RawDescriptionHelpFormatter(**kwargs, width=min(_WIDTH, 80))
 
 
 def get_parser() -> ArgumentParser:
     parser = ArgumentParser(
         prog="shantay",
-        formatter_class=RawDescriptionHelpFormatter,
+        formatter_class=_formatter,
         description="""
-        `download` makes sure that daily distributions are locally available,
-        retrieving them as necessary. This task lets your prepare for future
-        `--offline` operation by downloading archives as expediently as possible
-        and not performing any other processing.
+  `download` makes sure that daily distributions are locally available,
+  retrieving them as necessary. This task lets your prepare for future
+  `--offline` operation by downloading archives as expediently as possible
+  and not performing any other processing.
 
-        `distill` extracts a subset from the full database. It requires
-        `--archive` and `--extract` directories. For a newly created extract
-        directory, it also requires a `--category`, `--platform`, or `--filter`.
+  `distill` extracts a subset from the full database. It requires
+  `--archive` and `--extract` directories. For a newly created extract
+  directory, it also requires a `--category`, `--platform`, or `--filter`.
 
-        `recover` scans the `--extract` directory to validate contents and
-        restore (some of the) metadata in `meta.json`.
+  `recover` scans the `--extract` directory to validate contents and
+  restore (some of the) metadata in `meta.json`.
 
-        `summarize` collects summary statistics for the full database or some
-        subset, depending on whether only `--archive` (for the full database) or
-        both `--archive` and `--extract` (for a subset) are specified.
+  `summarize` collects summary statistics for the full database or some
+  subset, depending on whether only `--archive` (for the full database) or
+  both `--archive` and `--extract` (for a subset) are specified.
 
-        `info` displays helpful information about Shantay, critical
-        dependencies, the Python interpreter, the operating system, as well as
-        the contents of the `--archive` and `--extract` directories.
+  `info` displays helpful information about Shantay, critical
+  dependencies, the Python interpreter, the operating system, as well as
+  the contents of the `--archive` and `--extract` directories.
 
-        `visualize` generates an HTML document that visualizes summary
-        statistics. `--archive` and `--extract` again determine the scope of the
-        visualization.
+  `visualize` generates an HTML document that visualizes summary
+  statistics. `--archive` and `--extract` again determine the scope of the
+  visualization.
 
-        Summary statistics are stored in `db.parquet` for the full database and
-        in a file named after the distillation filter otherwise. For example,
-        `protection-of-minors.parquet` stores statistics for the
-        `STATEMENT_CATEGORY_PROTECTION_OF_MINORS` category. The corresponding
-        metadata is stored in a JSON file in the same directory. The same naming
-        convention applies to the JSON metadata and HTML visualizations.
+  Summary statistics are stored in `db.parquet` for the full database and
+  in a file named after the distillation filter otherwise. For example,
+  `protection-of-minors.parquet` stores statistics for the
+  `STATEMENT_CATEGORY_PROTECTION_OF_MINORS` category. The corresponding
+  metadata is stored in a JSON file in the same directory. The same naming
+  convention applies to the JSON metadata and HTML visualizations.
         """
     )
 
@@ -70,13 +84,14 @@ def get_parser() -> ArgumentParser:
     )
     group.add_argument(
         "--category",
-        help="select statement category for extract (optional; may omit"
+        help="select statement category for extract (optional; may omit "
         "`STATEMENT_CATEGORY_` prefix and/or use lower-case)",
     )
     group.add_argument(
         "--platform",
         action="append",
-        help="select platforms for extract (optional; may be repeated)",
+        help="select platforms for extract or visualization (optional; may "
+        "be repeated)",
     )
     group.add_argument(
         "--filter",
@@ -112,13 +127,14 @@ def get_parser() -> ArgumentParser:
     group.add_argument(
         "--interactive-report",
         action="store_true",
-        help="dynamically generate interactive charts with JavaScript"
-        " instead of embedding SVG",
+        help="dynamically generate interactive charts with JavaScript "
+        "instead of embedding SVG",
     )
     group.add_argument(
         "--clamp_outliers",
         action="store_true",
-        help="if one or two months have more SoRs than the rest, clamp those outliers"
+        help="if one or two months have more SoRs than the rest, clamp "
+        "those outliers"
     )
 
     parser.add_argument(

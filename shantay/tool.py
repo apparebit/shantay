@@ -83,7 +83,7 @@ you can safely delete the lock file and run Shantay again.
 
 def get_configuration(
     options: Any
-) -> tuple[Storage, ReleaseRange, Metadata]:
+) -> tuple[Storage, ReleaseRange, Metadata, None | list[str]]:
     """
     Turn the command line options into internal configuration objects.
     """
@@ -115,14 +115,8 @@ def get_configuration(
             )
 
     # Handle --category, --platform, and --filter options
-    if options.category is not None:
-        if 0 < len(options.platform) or options.filter is not None:
-            raise ConfigError(
-                f"--category, --platform, and --filter are mututually exclusive"
-            )
-        filter = Filter.with_category(options.category)
-    elif 0 < len(options.platform):
-        if options.filter is not None:
+    if options.platform is not None:
+        if options.category is not None or options.filter is not None:
             raise ConfigError(
                 f"--category, --platform, and --filter are mututually exclusive"
             )
@@ -133,7 +127,14 @@ def get_configuration(
             if resolved_platform is None:
                 raise ConfigError(f'--platform "{platform}" is unknown')
             platforms.append(resolved_platform)
+
         filter = Filter.with_platforms(*platforms)
+    elif options.category is not None:
+        if options.filter is not None:
+            raise ConfigError(
+                f"--category, --platform, and --filter are mututually exclusive"
+            )
+        filter = Filter.with_category(options.category)
     elif options.filter is not None:
         filter = Filter.with_expression(options.filter)
     else:
@@ -142,7 +143,7 @@ def get_configuration(
     if filter is not None and storage.extract_root is None:
         raise ConfigError(
             "please do not specify --category, --platform, or --filter "
-            "without --extract directory"
+            "without --extract directory or `visualize` task"
         )
 
     # Handle metadata
@@ -154,14 +155,17 @@ def get_configuration(
         metadata = Metadata.for_full_db()
 
     elif storage.extract_root is None:
-        metadata = Metadata.merge(
-            storage.staging_root / "db.json",
-            storage.the_archive_root / "db.json",
-            not_exist_ok=True,
-        )
-        metadata.set_stem("db")
-        if metadata.filter is not None:
-            raise ConfigError(f'metadata for full database has filter')
+        try:
+            metadata = Metadata.merge(
+                storage.staging_root / "db.json",
+                storage.the_archive_root / "db.json",
+                not_exist_ok=True,
+            )
+            metadata.set_stem("db")
+            if metadata.filter is not None:
+                raise ConfigError(f'metadata for full database has filter')
+        except FileNotFoundError:
+            metadata = Metadata.for_full_db()
         metadata.write_json(storage.staging_root / "db.json")
 
     else:
@@ -181,7 +185,9 @@ def get_configuration(
                 metadata.set_filter(filter)
         elif filter is None:
             filter = metadata.filter
-        elif filter != metadata.filter:
+        elif filter != metadata.filter and (
+            options.platform is None or options.task == "visualize"
+        ):
             raise ConfigError(
                 f"--category, --platform, or --filter {filter} differs"
                 f"from metadata {metadata.filter}"
@@ -237,7 +243,7 @@ def get_configuration(
         raise ConfigError("please only use --clamp-outliers with `visualize` task")
 
     # Finish it all up
-    return storage, range, metadata
+    return storage, range, metadata, options.platform
 
 
 def configure_printing() -> None:
@@ -259,7 +265,7 @@ def configure_printing() -> None:
 
 
 def _run(options: Any) -> None:
-    storage, range, metadata = get_configuration(options)
+    storage, range, metadata, platforms = get_configuration(options)
     configure_printing()
 
     if options.task == "recover":
@@ -297,8 +303,9 @@ def _run(options: Any) -> None:
             coverage=range,
             metadata=metadata,
             offline=options.offline,
-            interactive=options.interactive_report,
-            clamp_outliers=options.clamp_outliers,
+            with_interaction=options.interactive_report,
+            with_clamped_outliers=options.clamp_outliers,
+            with_platforms=platforms,
             progress=Progress(),
         )
         frame = processor.run(task)
