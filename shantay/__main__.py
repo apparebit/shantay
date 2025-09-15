@@ -19,11 +19,13 @@ def _formatter(**kwargs) -> Any:
     return RawDescriptionHelpFormatter(**kwargs, width=min(_WIDTH, 80))
 
 
-def get_parser() -> ArgumentParser:
+def get_parser(style: Any) -> ArgumentParser:
     parser = ArgumentParser(
         prog="shantay",
         formatter_class=_formatter,
         description="""
+
+supported tasks:
   `download` makes sure that daily distributions are locally available,
   retrieving them as necessary. This task lets your prepare for future
   `--offline` operation by downloading archives as expediently as possible
@@ -53,7 +55,7 @@ def get_parser() -> ArgumentParser:
   `protection-of-minors.parquet` stores statistics for the
   `STATEMENT_CATEGORY_PROTECTION_OF_MINORS` category. The corresponding
   metadata is stored in a JSON file in the same directory. The same naming
-  convention applies to the JSON metadata and HTML visualizations.
+  convention applies to the JSON metadata and HTML visualizations.\
         """
     )
 
@@ -159,7 +161,8 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
 
 def main(argv: Sequence[str]) -> None:
     # Handle command line options
-    parser = get_parser()
+    from .color import Style
+    parser = get_parser(Style)
     options = parser.parse_args(argv)
     if options.task is None:
         parser.print_help()

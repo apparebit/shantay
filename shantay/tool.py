@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import polars as pl
 
+from .color import Style
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
@@ -22,25 +23,6 @@ from .progress import Progress
 from .schema import MissingPlatformError, PlatformLookupTable, StatementCategory
 from .stats import Statistics
 from .util import scale_time
-
-
-_NO_COLOR = os.getenv("NO_COLOR")
-
-class Style(enum.StrEnum):
-    """
-    Useful terminal styles. Values are empty strings if environment variable
-    `NO_COLOR` is defined.
-    """
-
-    # End-Of-Screen, i.e., the lower right corner
-    EOS = "" if _NO_COLOR else "\x1b[999;999H"
-    HIDE_CURSOR = "" if _NO_COLOR else "\x1b[?25l"
-    SHOW_CURSOR = "" if _NO_COLOR else "\x1b[?25h"
-    BOLD = "" if _NO_COLOR else "\x1b[1m"
-    HAPPY = "" if _NO_COLOR else "\x1b[1;32m"
-    ERROR = "" if _NO_COLOR else "\x1b[1;41;38;5;255m"
-    WARN = "" if _NO_COLOR else "\x1b[1;48;5;220;30m"
-    RESET = "" if _NO_COLOR else "\x1b[m"
 
 
 _LOCK_FILE = None
