@@ -15,7 +15,10 @@ from .metadata import Metadata
 from .model import (
     Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
 )
-from .pool import Cancelled, check_not_cancelled, Pool, Task, WorkerProgress
+from .pool import (
+    Cancelled, check_not_cancelled, ErrorTrace, ErrorTraceFactory, Pool, Task,
+    WorkerProgress
+)
 from .processor import is_distilled, Processor
 from .schema import MissingPlatformError, update_platforms
 from .stats import Collector, Statistics
@@ -258,21 +261,22 @@ class Multiprocessor:
     def _done_with_task(self, task: Task, future: Future) -> None:
         assert self._pool is not None
 
-        try:
-            tag, result = future.result()
-        except Exception as x:
-            # For arbitrary exceptions, fail fast. Trying the same or the next
-            # release may just encounter the same error again.
-            _logger.error(
-                'task running in worker pool raised unexpected exception', exc_info=x
-            )
-            return
+        tag, result = future.result()
 
+        # Retrying the same or the next release on errors probably will fail
+        # again. Hence we fail fast on all error conditions.
         if tag == "cancel":
             raise Cancelled(*result)
         elif tag == "platforms":
             update_platforms(result[0])
             raise MissingPlatformError(*result)
+        elif tag == "error":
+            if not isinstance(result.__cause__, ErrorTrace):
+                print(
+                    f"*** Unexpected cause {type(result.__cause__)}: "
+                    f"{result.__cause__} ***"
+                )
+            raise result
 
         if task.kwargs["task"] == "download":
             pass
@@ -354,7 +358,8 @@ def run_on_worker(
     """
     Run a task in a worker process. The metadata instance should be minimal,
     i.e., comprise only stem, filter, and the entry for the current release (if
-    any).
+    any). This function catches any exceptions raised while processing the given
+    task and instead returns a tuple with an `ErrorTraceFactory`.
     """
     # For reasons unbeknownst to man, the process pool executor unpickles all
     # worker exceptions as instances of the same type. To work around this
@@ -392,9 +397,10 @@ def run_on_worker(
             'unexpected error in task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID, exc_info=x
         )
-        print(f"unexpected exception thrown by worker with pid={_PID}:")
-        traceback.format_exception(x)
-        raise
+        # Sleep for a spell so that the coordinator can catch up with logging.
+        time.sleep(1)
+        return "error", ErrorTraceFactory(x)
+
 
 def _run_on_worker(
     task: str,

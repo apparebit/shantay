@@ -46,6 +46,7 @@ import multiprocessing as mp
 import os
 import shutil
 import threading
+import traceback
 from types import TracebackType
 from typing import Any, Callable, Self
 import uuid
@@ -466,6 +467,47 @@ class Cancelled(Exception):
     def pid(self) -> int:
         """Get the process ID of the cancelled task."""
         return self.args[2]
+
+
+# --------------------------------------------------------------------------------------
+
+
+class ErrorTrace(Exception):
+    """
+    An exception wrapping a textual exception trace akin to
+    `concurrent.futures`' private `_RemoteTraceback`.
+    """
+    def __init__(self, trace: str) -> None:
+        self.trace = trace
+
+    def __str__(self):
+        return self.trace
+
+
+def with_error_trace[E: BaseException](exc: E, trace: str) -> E:
+    """Decorate the given exception with the given error trace."""
+    exc.__cause__ = ErrorTrace(trace)
+    return exc
+
+
+class ErrorTraceFactory:
+    """
+    A factory object to exchange exceptions between multiprocessing queues.
+
+    Python uses the standard library's pickle module for transferring objects
+    through a queue. While exceptions can be (un)pickled, their traceback does
+    not survive serialization, yet is critically needed for debugging. To
+    preserve the trace, this object captures the exception's trace in textual
+    form and uses an `ErrorTrace` as cause for the deserialized exception.
+    """
+    def __init__(self, exc: BaseException) -> None:
+        trace = "".join(traceback.format_exception(exc))
+        self.exc = exc
+        self.exc.__traceback__ = None
+        self.trace = f'\n"""\n{trace}"""'
+
+    def __reduce__(self) -> Any:
+        return with_error_trace, (self.exc, self.trace)
 
 
 # --------------------------------------------------------------------------------------
