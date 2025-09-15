@@ -366,9 +366,7 @@ class Processor[R: Release]:
     def is_archive_downloaded(self, release: Daily) -> bool:
         """Determine whether the archive for the release has been downloaded."""
         return (
-            self._storage.the_archive_root
-            / release.parent_directory
-            / self._dataset.archive_name(release)
+            self._storage.the_archive_root / self._dataset.archive_path(release)
         ).exists()
 
     @annotate_error(filename_arg="root")
@@ -428,7 +426,7 @@ class Processor[R: Release]:
     def validate_archive(self, root: Path, release: Daily) -> None:
         """Validate the SHA1 hash of the downloaded archive."""
         digest = root / release.parent_directory / self._dataset.digest_name(release)
-        archive = root / release.parent_directory / self._dataset.archive_name(release)
+        archive = root / self._dataset.archive_path(release)
         _logger.debug('validate release="%s", file="%s"', release.id, archive)
 
         with open(digest, mode="rt", encoding="ascii") as file:
@@ -477,31 +475,30 @@ class Processor[R: Release]:
             raise ValueError(f"cannot copy over existing {digest_path}")
         shutil.copy(source_dir / digest, digest_path)
 
-    def stage_archive(self, release: Daily) -> None:
+    def stage_archive(self, release: Daily) -> Path:
         """
         Stage the archive for the given release. The archive must have been
         downloaded before.
         """
         assert self.is_archive_downloaded(release)
+        archive_path = self._storage.staging_root / self._dataset.archive_path(release)
 
         if self.is_archive_staged(release):
-            return
+            return archive_path
 
-        archive = self._dataset.archive_name(release)
         self._progress.perform(f"copying release {release.id} from archive to staging")
         self.copy_archive(
             self._storage.the_archive_root, self._storage.staging_root, release
         )
-        _logger.info('staged file="%s"', archive)
+        _logger.info('staged file="%s"', archive_path.name)
         self._progress.perform(f"validating release {release.id}")
         self.validate_archive(self._storage.staging_root, release)
+        return archive_path
 
     def is_archive_staged(self, release: Daily) -> bool:
         """"Determine whether the archive for the given release has been staged."""
         return (
-            self._storage.staging_root
-            / release.parent_directory
-            / self._dataset.archive_name(release)
+            self._storage.staging_root / self._dataset.archive_path(release)
         ).exists()
 
     def _actually_distill_release(self, release: Daily) -> None:
@@ -509,37 +506,39 @@ class Processor[R: Release]:
         assert self.is_archive_staged(release)
         assert self._metadata.filter is not None
 
-        filenames = self.list_archived_files(self._storage.staging_root, release)
-        batch_count = len(filenames)
-        self._progress.activity(
-            f"distilling batches of release {release.id}",
-            f"distilling {release.id} ", "batch", with_rate=False,
-        )
-        self._progress.start(batch_count)
-
-        # Archived files are archives, too. Unarchive one at a time.
-        batch_digests = {}
-        full_counters = Counter(batch_count=batch_count)
-        for index, name in enumerate(filenames):
-            check_not_cancelled()
-
-            self._progress.step(index, "unarchiving data")
-            self.unarchive_file(self._storage.staging_root, release, index, name)
-            digest, counters = self._dataset.distill_release(
-                root=self._storage.staging_root,
-                release=release,
-                index=index,
-                name=name,
-                filter=self._metadata.filter,
-                progress=self._progress
+        archive_path = self._storage.staging_root / self._dataset.archive_path(release)
+        with zipfile.ZipFile(archive_path) as archive:
+            filenames = sorted(archive.namelist())
+            batch_count = len(filenames)
+            self._progress.activity(
+                f"distilling batches of release {release.id}",
+                f"distilling {release.id} ", "batch", with_rate=False,
             )
-            batch_digests[f"{release.id}-{index:05}.parquet"] = digest
-            full_counters += counters
+            self._progress.start(batch_count)
 
-            # The complete CSV data may take up 100 GB of disk space. So we need
-            # to aggressively reclaim storage to avoid filling the file system
-            # with the staging directory.
-            shutil.rmtree(self._storage.staging_root / release.temp_directory)
+            # Archived files are archives, too. Unarchive one at a time.
+            batch_digests = {}
+            full_counters = Counter(batch_count=batch_count)
+            for index, name in enumerate(filenames):
+                check_not_cancelled()
+
+                self._progress.step(index, "unarchiving data")
+                self.unarchive_file(archive, release, index, name)
+                digest, counters = self._dataset.distill_release(
+                    root=self._storage.staging_root,
+                    release=release,
+                    index=index,
+                    name=name,
+                    filter=self._metadata.filter,
+                    progress=self._progress
+                )
+                batch_digests[f"{release.id}-{index:05}.parquet"] = digest
+                full_counters += counters
+
+                # The complete CSV data may take up 100 GB of disk space. So we need
+                # to aggressively reclaim storage to avoid filling the file system
+                # with the staging directory.
+                shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
         digest_file = self._storage.staging_root / release.directory / DIGEST_FILE
         write_digest_file(digest_file, batch_digests)
@@ -575,31 +574,30 @@ class Processor[R: Release]:
 
     def list_archived_files(self, root: Path, release: Daily) -> list[str]:
         """Get the sorted list of files for the archive under the root directory."""
-        path = root / release.parent_directory / self._dataset.archive_name(release)
-        with zipfile.ZipFile(path) as archive:
+        with zipfile.ZipFile(root / self._dataset.archive_path(release)) as archive:
             return sorted(archive.namelist())
 
     @annotate_error(filename_arg="root")
-    def unarchive_file(self, root: Path, release: Daily, index: int, name: str) -> None:
+    def unarchive_file(
+        self, archive: zipfile.ZipFile, release: Daily, index: int, name: str
+    ) -> None:
         """
         Unarchive the file with index and name from the archive under the source
         directory into a suitable directory under the target directory.
         """
-        input = root / release.parent_directory / self._dataset.archive_name(release)
-        with zipfile.ZipFile(input) as archive:
-            with archive.open(name) as source_file:
-                output = root / release.temp_directory
-                output.mkdir(parents=True, exist_ok=True)
+        with archive.open(name) as source_file:
+            output = self._storage.staging_root / release.temp_directory
+            output.mkdir(parents=True, exist_ok=True)
 
-                if name.endswith(".zip"):
-                    kind = "nested archive"
-                    with zipfile.ZipFile(source_file) as nested_archive:
-                        nested_archive.extractall(output)
-                else:
-                    kind = "file"
-                    with open(output / name, mode="wb") as target_file:
-                        shutil.copyfileobj(source_file, target_file)
-                _logger.debug('unarchived type="%s", file="%s"', kind, name)
+            if name.endswith(".zip"):
+                kind = "nested archive"
+                with zipfile.ZipFile(source_file) as nested_archive:
+                    nested_archive.extractall(output)
+            else:
+                kind = "file"
+                with open(output / name, mode="wb") as target_file:
+                    shutil.copyfileobj(source_file, target_file)
+            _logger.debug('unarchived type="%s", file="%s"', kind, name)
 
     @annotate_error(filename_arg="target")
     def copy_distilled_data(
@@ -802,60 +800,59 @@ class Processor[R: Release]:
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 
-        self.stage_archive(release)
+        archive_path = self.stage_archive(release)
 
-        filenames = self.list_archived_files(self._storage.staging_root, release)
-        batch_count = len(filenames)
-        self._progress.activity(
-            f"summarizing batches from release {release.id}",
-            f"summarizing {release.id}", "batch", with_rate=False,
-        )
-        self._progress.start(batch_count)
-
-        full_counts = Counter(batch_count=batch_count)
-
-        # Archived files are archives, too. Unarchive one at a time.
-        for index, name in enumerate(filenames):
-            check_not_cancelled()
-            start_time = time.time()
-
-            self._progress.step(index, "unarchiving data")
-            self.unarchive_file(self._storage.staging_root, release, index, name)
-
-            counts, frame = self._dataset.ingest_release(
-                root=self._storage.staging_root,
-                release=release,
-                index=index,
-                name=name,
-                progress=self._progress
+        with zipfile.ZipFile(archive_path) as archive:
+            filenames = sorted(archive.namelist())
+            batch_count = len(filenames)
+            self._progress.activity(
+                f"summarizing batches from release {release.id}",
+                f"summarizing {release.id}", "batch", with_rate=False,
             )
+            self._progress.start(batch_count)
 
-            full_counts += counts
+            full_counts = Counter(batch_count=batch_count)
 
-            # Check_db_platforms only probes the data frame for hereto unknown
-            # platform names, raising a MissingPlatformError with such names.
-            path = (
-                self._storage.staging_root
-                / release.parent_directory
-                / self._dataset.archive_name(release)
-            )
-            check_db_platforms(path , frame)
+            # Archived files are archives, too. Unarchive one at a time.
+            for index, name in enumerate(filenames):
+                check_not_cancelled()
+                start_time = time.time()
 
-            # We process each batch by itself. When the summary statistics are
-            # finalized, those unit counts add up.s
-            collector.collect(release, frame, metadata_entry={"batch_count": 1})
+                self._progress.step(index, "unarchiving data")
+                self.unarchive_file(archive, release, index, name)
 
-            # A daily release may comprise over 100 GB of uncompressed CSV data.
-            # With three concurrent processes, that would be over 300 GB of disk
-            # space for staging alone. Hence, we must aggressively clean up
-            # temporary files again.
-            shutil.rmtree(self._storage.staging_root / release.temp_directory)
+                counts, frame = self._dataset.ingest_release(
+                    root=self._storage.staging_root,
+                    release=release,
+                    index=index,
+                    name=name,
+                    progress=self._progress
+                )
 
-            latency, time_unit = scale_time(time.time() - start_time)
-            _logger.debug(
-                'summarized file="%s", latency=%.3f, unit="%s"',
-                name, latency, time_unit
-            )
+                full_counts += counts
+
+                # Check_db_platforms only probes the data frame for hereto unknown
+                # platform names, raising a MissingPlatformError with such names.
+                check_db_platforms(
+                    self._storage.staging_root / self._dataset.archive_path(release),
+                    frame
+                )
+
+                # We process each batch by itself. When the summary statistics are
+                # finalized, those unit counts add up.s
+                collector.collect(release, frame, metadata_entry={"batch_count": 1})
+
+                # A daily release may comprise over 100 GB of uncompressed CSV data.
+                # With three concurrent processes, that would be over 300 GB of disk
+                # space for staging alone. Hence, we must aggressively clean up
+                # temporary files again.
+                shutil.rmtree(self._storage.staging_root / release.temp_directory)
+
+                latency, time_unit = scale_time(time.time() - start_time)
+                _logger.debug(
+                    'summarized file="%s", latency=%.3f, unit="%s"',
+                    name, latency, time_unit
+                )
 
         self._metadata[release] = cast(MetadataEntry, full_counts)
         self._metadata.write_json(

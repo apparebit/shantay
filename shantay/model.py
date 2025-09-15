@@ -701,6 +701,10 @@ class Dataset(metaclass=ABCMeta):
     def archive_name(self, release: Daily) -> str:
         """The archive file name for the release."""
 
+    def archive_path(self, release: Daily) -> Path:
+        """The path to the archive for the release relative to a storage root."""
+        return release.parent_directory / self.archive_name(release)
+
     @abstractmethod
     def digest_name(self, release: Daily) -> str:
         """The digest file name for the release."""

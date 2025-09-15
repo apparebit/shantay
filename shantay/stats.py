@@ -1091,7 +1091,9 @@ class Statistics:
         # Slow path: Concat partial frames
         partial_frames, self._partial_frames = self._partial_frames, []
         if self._collector is not None:
-            partial_frames.append(self._collector.frame())
+            frame = self._collector.frame()
+            frame.shrink_to_fit(in_place=True)
+            partial_frames.append(frame)
             self._collector = None
 
         if len(partial_frames) == 0:
