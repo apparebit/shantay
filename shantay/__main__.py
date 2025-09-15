@@ -1,4 +1,5 @@
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
+from collections.abc import Sequence
 import logging
 from pathlib import Path
 import shutil
@@ -156,10 +157,10 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
     )
 
 
-def main() -> None:
+def main(argv: Sequence[str]) -> None:
     # Handle command line options
     parser = get_parser()
-    options = parser.parse_args(sys.argv[1:])
+    options = parser.parse_args(argv)
     if options.task is None:
         parser.print_help()
         sys.exit(1)
@@ -189,4 +190,4 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    main(sys.argv[1:])
