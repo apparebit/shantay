@@ -20,29 +20,46 @@ class TestZzz(unittest.TestCase):
 
         worker_entries = 0
         test_entries = 0
-        warning = None
+        warning_entries = 0
+        traces = []
         release = Release.of(2024, 3, 14)
+        state = None
 
-        for entry in log:
+        for index, entry in enumerate(log):
+            # First log entry is a horizontal rule
+            if index == 0:
+                self.assertTrue(entry.is_rule())
+
+            # Count entries with unusual PID, level, or module; collect traces
             if entry.pid != PID:
                 worker_entries += 1
             if entry.module == "test.test_pool":
                 test_entries += 1
-            if entry.level == "WARNING" and warning is None:
-                warning = entry
-            if release is not None:
+            if entry.level == "WARNING":
+                warning_entries += 1
+                if entry.exc_info is not None:
+                    traces.append(entry.exc_info)
+
+            # Switch release testing on and off as needed
+            if (
+                state != "release"
+                and entry.level == "INFO"
+                and entry.message.prefix in ("staged", "distill")
+            ):
+                state = "release"
+            elif state == "release" and entry.level == "WARNING":
+                state = None
+
+            # Test release
+            if state == "release":
                 self.assertEqual(entry.message.release(), release)
-            if entry.message.has(prefix="summarizing"):
-                release = None
 
         self.assertEqual(worker_entries, 5)
         self.assertEqual(test_entries, 3)
-
-        self.assertIsNotNone(warning)
-        self.assertIsNotNone(
-            warning.exc_info # pyright: ignore[reportOptionalMemberAccess]
-        )
-        self.assertIn(
-            "Traceback (most recent call last):",
-            warning.exc_info # pyright: ignore[reportArgumentType,reportOptionalMemberAccess]
-        )
+        self.assertEqual(warning_entries, 6)
+        self.assertEqual(len(traces), 3)
+        for index in range(1, 3):
+            self.assertEqual(traces[0], traces[index])
+        for trace in traces:
+            trace.startswith("Traceback (most recent call last):")
+            trace.endswith("Akékoľvek metadáta` is not properly escaped.```")
