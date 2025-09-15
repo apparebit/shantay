@@ -1,5 +1,6 @@
 import atexit
 import datetime as dt
+import enum
 import errno
 import os
 from pathlib import Path
@@ -23,8 +24,26 @@ from .stats import Statistics
 from .util import scale_time
 
 
-_LOCK_FILE = None
+_NO_COLOR = os.getenv("NO_COLOR")
 
+class Style(enum.StrEnum):
+    """
+    Useful terminal styles. Values are empty strings if environment variable
+    `NO_COLOR` is defined.
+    """
+
+    # End-Of-Screen, i.e., the lower right corner
+    EOS = "" if _NO_COLOR else "\x1b[999;999H"
+    HIDE_CURSOR = "" if _NO_COLOR else "\x1b[?25l"
+    SHOW_CURSOR = "" if _NO_COLOR else "\x1b[?25h"
+    BOLD = "" if _NO_COLOR else "\x1b[1m"
+    HAPPY = "" if _NO_COLOR else "\x1b[1;32m"
+    ERROR = "" if _NO_COLOR else "\x1b[1;41;38;5;255m"
+    WARN = "" if _NO_COLOR else "\x1b[1;48;5;220;30m"
+    RESET = "" if _NO_COLOR else "\x1b[m"
+
+
+_LOCK_FILE = None
 
 def acquire_staging_lock(staging: Path) -> None:
     """
@@ -55,26 +74,23 @@ def acquire_staging_lock(staging: Path) -> None:
         with open(str(path), mode="r", encoding="utf8") as file:
             provenance = file.read()
         pid, _, ts = provenance.strip().partition("@")
-        info = f"It was created by process {pid} at {ts}."
+        info = f"process {pid} at {ts}"
     except Exception as x:
         info = x
 
     if isinstance(info, str):
         print(textwrap.fill(f"""\
-The staging root "{staging}" already contains a "staging.lock" file.
-{info}
-If that process is still running, please use another staging directory.
-Otherwise, feel free to delete the lock file and run Shantay again.
+The staging root "{staging}" contains a "staging.lock" file created by {info}.
+{Style.BOLD}You can safely delete the lock file and run Shantay again---as long
+as that process stopped running.{Style.RESET}
 """
         ))
     else:
         print(textwrap.fill(f"""\
-The staging root {staging} already contains a "staging.lock" file.
-However, trying to read that file failed with an error:
-{info}
-If that file still exists and some process is still running Shantay,
-please use another staging directory. If no process is running Shantay,
-you can safely delete the lock file and run Shantay again.
+The staging root "{staging}" contains a "staging.lock" file. However, trying to
+read that file results in an {info} error. {Style.BOLD}You can safely delete the
+lock file and run Shantay again---as long as no other instance of the tool is
+running.{Style.RESET}
 """
         ))
 
@@ -320,61 +336,47 @@ def _run(options: Any) -> None:
     print(f"\nCompleted task {task} in {v:,.1f} {u}")
 
 
-_BOLD_STYLE = "\x1b[1m"
-_HAPPY_STYLE = "\x1b[1;32m"
-_ERROR_STYLE = "\x1b[1;41;38;5;255m"
-_WARN_STYLE = "\x1b[1;48;5;220;30m"
-_RESET_STYLE = "\x1b[m"
-
-
 def run(options: Any) -> int:
     """Run Shantay with the given options and return the appropriate
     exit code."""
-    no_color = os.getenv("NO_COLOR")
-    bold = "" if no_color else _BOLD_STYLE
-    happy = "" if no_color else _HAPPY_STYLE
-    error = "" if no_color else _ERROR_STYLE
-    warning = "" if no_color else _WARN_STYLE
-    reset = "" if no_color else _RESET_STYLE
-
-    # Hide cursor
-    print("\x1b[?25l", end="", flush=True)
+    print(Style.HIDE_CURSOR, end="", flush=True)
 
     try:
         _run(options)
-        print(f'\x1b[999;999H\n{happy}Happy, happy, joy, joy!{reset}')
+        print(f'{Style.EOS}\n{Style.HAPPY}Happy, happy, joy, joy!{Style.RESET}')
         return 0
     except StagingIsBusy:
         return 1
     except KeyboardInterrupt as x:
         print("".join(traceback.format_exception(x)))
         # Put cursor into bottom right corner of terminal before printing
-        print(f'\x1b[999;999H\n\n{warning} Terminated by user {reset}')
+        print(f'{Style.EOS}\n\n{Style.WARN} Terminated by user {Style.RESET}')
         return 1
     except MissingPlatformError as x:
         platforms = "platform" if len(x.args[0]) == 1 else "platforms"
         names = ", ".join(f'"{n}"' for n in x.args[0])
         print(
-            f"\x1b[999;999H\n\n{error} Source data contains "
-            f"new {platforms} {names} {reset}"
+            f"{Style.EOS}\n\n{Style.ERROR} Source data contains "
+            f"new {platforms} {names} {Style.RESET}"
         )
         print(
-            f"{bold}Please rerun shantay with the same command line arguments!{reset}"
+            f"{Style.BOLD}Please rerun shantay with the same command line "
+            f"arguments!{Style.RESET}"
         )
         return 1
     except (ConfigError, DownloadFailed, MetadataConflict) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
-        print(f"\x1b[999;999H\n{error} {x} {reset}")
+        print(f"{Style.EOS}\n{Style.ERROR} {x} {Style.RESET}")
         return 1
     except Exception as x:
         # For all other exceptions, that most certainly doesn't hold. They are
         # surprising and we need as much information about them as we can get.
-        print(f"\x1b[999;999H\n{error} {x} {reset}")
+        print(f"{Style.EOS}\n{Style.ERROR} {x} {Style.RESET}")
         print("".join(traceback.format_tb(x.__traceback__)))
         print(
-            f"{bold}Shantay's log in \"{options.logfile}\" may contain "
-            f"further information{reset}"
+            f"{Style.BOLD}Shantay's log in \"{options.logfile}\" may contain "
+            f"further information{Style.RESET}"
         )
         return 1
     finally:
@@ -383,4 +385,4 @@ def run(options: Any) -> int:
             _LOCK_FILE.unlink(missing_ok=True)
 
         # Show cursor again
-        print("\x1b[?25h", end="", flush=True)
+        print(Style.SHOW_CURSOR, end="", flush=True)
