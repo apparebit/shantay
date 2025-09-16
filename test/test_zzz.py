@@ -3,6 +3,7 @@ module needs to run last because it further tests the contents of the log."""
 from pathlib import Path
 import os
 import unittest
+import sys
 
 from shantay.log import LogEntry
 from shantay.model import Release
@@ -17,6 +18,10 @@ class TestZzz(unittest.TestCase):
     def test_log(self) -> None:
         # The next line tests the parser...
         log = [*LogEntry.parse_file(LOG)]
+
+        if os.getenv("DEBUG", None) is not None:
+            for entry in log:
+                entry.print(sys.stdout)
 
         worker_entries = 0
         test_entries = 0
