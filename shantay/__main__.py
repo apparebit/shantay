@@ -100,6 +100,17 @@ supported tasks:
         "--filter",
         help="provide Pola.rs filter expression for extract (optional)",
     )
+    group.add_argument(
+        "--stratify-by-category",
+        action="store_true",
+        help="break down summary statistics by category in addition to platform"
+    )
+    group.add_argument(
+        "--stratify-all-text",
+        action="store_true",
+        help="include value counts for all text-valued columns in the summary "
+        "statistics"
+    )
 
     group = parser.add_argument_group("resource requirements")
     group.add_argument(

@@ -641,6 +641,40 @@ class Filter:
                 return "Custom Query"
 
 
+@dataclass(frozen=True)
+class Config:
+    """Assorted configuration options."""
+
+    # Runtime
+    offline: bool = False
+    workers: int = 0
+
+    # DB Extract
+    platforms: None | tuple[str, ...] = None
+
+    # Summary Statistics
+    stratify_by_category: bool = False
+    stratify_all_text: bool = False
+
+    # Report
+    interactive_report: bool = False
+    clamp_outliers: bool = False
+
+    @classmethod
+    def of(cls, **kwargs: Any) -> Self:
+        ps = kwargs.get("platforms", None)
+
+        return cls(
+            offline=kwargs.get("offline", False),
+            workers=kwargs.get("workers", 0),
+            platforms=None if ps is None else tuple(ps),
+            stratify_by_category=kwargs.get("stratify_by_category", False),
+            stratify_all_text=kwargs.get("stratify_all_text", False),
+            interactive_report=kwargs.get("interactive_report", False),
+            clamp_outliers=kwargs.get("clamp_outliers", False),
+        )
+
+
 class MetadataProtocol[R: Release](Protocol):
     """The protocol for release metadata."""
 

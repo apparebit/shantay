@@ -7,7 +7,7 @@ from .runtime import TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
-from shantay.model import Daily, ReleaseRange, Storage
+from shantay.model import Config, Daily, ReleaseRange, Storage
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Statistics
@@ -43,8 +43,8 @@ class TestSummarize(TestCase):
             dataset=dataset,
             storage=storage,
             coverage=coverage,
+            config=Config(),
             metadata=metadata,
-            offline=True,
         )
 
         processor.run("summarize-all")
@@ -87,8 +87,8 @@ class TestSummarize(TestCase):
             dataset=dataset,
             storage=storage,
             coverage=coverage,
+            config=Config(),
             metadata=metadata,
-            offline=True,
         )
 
         processor.run("summarize-extract")

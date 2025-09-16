@@ -26,10 +26,10 @@ from .framing import (
 )
 from .model import Daily, DateRange, MetadataEntry, Release
 from .schema import (
-    CanonicalPlatformNames, check_stats_platforms, DurationTransform, humanize,
-    KeywordChildSexualAbuseMaterial, StatisticsSchema, STRATIFY_BY_CATEGORY,
-    TRANSFORM_COUNT, TRANSFORMS, TransformType, ValueCountsPlusTransform,
-    VariantValueType,
+    CanonicalPlatformNames, CategoryValueType, check_stats_platforms, ColumnValueType,
+    DurationTransform, EntityValueType, humanize, KeywordChildSexualAbuseMaterial,
+    PlatformValueType, StatisticsSchema, TagValueType, TRANSFORM_COUNT, TRANSFORMS,
+    TransformType, ValueCountsPlusTransform, VariantValueType,
 )
 from .util import scale_time
 
@@ -128,7 +128,11 @@ class Collector:
     # available and well-formed. Use lazy partial frames and only materialize
     # when needed to maximize opportunities for Pola.rs' optimizations.
 
-    def __init__(self) -> None:
+    def __init__(
+        self, stratify_by_category: bool = False, stratify_all_text: bool = False
+    ) -> None:
+        self._stratify_by_category = stratify_by_category
+        self._stratify_all_text = stratify_all_text
         self._source: pl.DataFrame = pl.DataFrame()
         self._source_categories = pl.Series()
         self._source_platforms = pl.Series()
@@ -138,7 +142,6 @@ class Collector:
         self._category = None
         self._partial_frames: list[pl.LazyFrame] = []
         self._full_frame: None | pl.DataFrame = None
-
 
     @contextmanager
     def source_data(
@@ -157,7 +160,7 @@ class Collector:
         self._source_platforms = frame.select(
             pl.col("platform_name").unique()
         ).get_column("platform_name")
-        if STRATIFY_BY_CATEGORY:
+        if self._stratify_by_category:
             self._source_categories = frame.select(
                 pl.col("category").unique()
             ).get_column("category")
@@ -235,13 +238,19 @@ class Collector:
                         .alias("variant")
                 )
         else:
-            # Without the cast before value_counts(), Pola.rs fails analyze
-            # archive with a "can not cast to enum with global mapping" error.
+            # We must rename the source column eagerly. Otherwise, there is a
+            # conflict between the "category" column in the source data and the
+            # "category" column in the resulting statistics frame.
             effective_values.append(
                 value_counts
+                    .alias("variant")
                     .cast(pl.String)
+                    .cast(VariantValueType)
                     .value_counts(sort=True)
                     .list.explode()
+                    .struct.with_fields(
+                        pl.field("count").cast(pl.Int64)
+                    )
                     .struct.unnest()
             )
 
@@ -252,8 +261,12 @@ class Collector:
         else:
             effective_values.append(
                 text_value_counts
+                    .alias("text")
                     .value_counts(sort=True)
                     .list.explode()
+                    .struct.with_fields(
+                        pl.field("count").cast(pl.Int64)
+                    )
                     .struct.unnest()
             )
 
@@ -270,40 +283,27 @@ class Collector:
             else:
                 effective_values.append(value.cast(pl.Int64).alias(key))
 
+        category = self._category if self._stratify_by_category else None
+
         assert self._release is not None
         frame = self._source.lazy() if frame is None else frame
         stats = frame.select(
-            pl.lit(self._release.start_date).alias("start_date"),
-            pl.lit(self._release.end_date).alias("end_date"),
-            pl.lit(tag).alias("tag"),
-            pl.lit(self._platform).alias("platform"),
-            *(
-                [pl.lit(self._category).alias("category")] if STRATIFY_BY_CATEGORY
-                else []
-            ),
-            pl.lit(column).alias("column"),
-            pl.lit(entity).alias("entity"),
+            pl.lit(self._release.start_date, dtype=pl.Date).alias("start_date"),
+            pl.lit(self._release.end_date, dtype=pl.Date).alias("end_date"),
+            pl.lit(tag, dtype=TagValueType).alias("tag"),
+            pl.lit(self._platform, dtype=PlatformValueType).alias("platform"),
+            pl.lit(category, dtype=CategoryValueType).alias("category"),
+            pl.lit(column, dtype=ColumnValueType).alias("column"),
+            pl.lit(entity, dtype=EntityValueType).alias("entity"),
             *effective_values,
         )
-
-        if value_counts is not None:
-            stats = stats.rename({
-                column: "variant",
-            })
-        elif text_value_counts is not None:
-            stats = stats.rename({
-                column: "text",
-            })
-
-        stats = stats.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
 
         # Enforce canonical column order, so that frames can be concatenated!
         self._add_partial_frame(stats.select(
             pl.col(
-                "start_date", "end_date", "tag", "platform",
-                *(["category"] if STRATIFY_BY_CATEGORY else []),
-                "column", "entity",
-                "variant", "text", "count", "min", "mean", "max"
+                "start_date", "end_date",
+                "tag", "platform", "category", "column", "entity", "variant", "text",
+                "count", "min", "mean", "max"
             )
         ))
 
@@ -361,16 +361,12 @@ class Collector:
     def collect_body_data(self) -> None:
         """Collect the standard statistics for the current data frame."""
         for key, value in TRANSFORMS.items():
-            # AliExpress submits too many statements with unique text values
-            if (
-                self._platform == "AliExpress"
-                and value is TransformType.TEXT_VALUE_COUNTS
-            ):
-                value = TransformType.TEXT_ROWS_COUNT
+            if not self._stratify_by_category and value is TransformType.CATEGORY_NAME:
+                value = TransformType.VALUE_COUNTS
+            if self._stratify_all_text and value is TransformType.TEXT_ROW_COUNT:
+                value = TransformType.TEXT_VALUE_COUNTS
 
             match value:
-                # Platform name and category name are distinct columns that are
-                # filled in while handling other fields.
                 case TransformType.PLATFORM_NAME:
                     assert key == "platform_name"
                 case TransformType.CATEGORY_NAME:
@@ -381,9 +377,9 @@ class Collector:
                     self.add_rows(key, count=pl.len())
                 case TransformType.VALUE_COUNTS:
                     self.add_rows(key, value_counts=pl.col(key))
-                case TransformType.TEXT_ROWS_COUNT:
+                case TransformType.TEXT_ROW_COUNT:
                     self.add_rows(
-                        key, entity="non_empty",
+                        key, entity="rows_of_text",
                         count=pl.col(key).str.len_chars().gt(0).sum()
                     )
                 case TransformType.TEXT_VALUE_COUNTS:
@@ -442,7 +438,7 @@ class Collector:
         """Collect statistics about platforms. This method forces evaluation."""
         for name in self._source_platforms:
             with self.platform_data(name) as this:
-                if STRATIFY_BY_CATEGORY:
+                if self._stratify_by_category:
                     this.collect_categories()
                 else:
                     this.collect_body_data()
@@ -479,9 +475,7 @@ class Collector:
                 for k in pairs.keys()
             ],
             "platform": height * [None],
-        } | (
-            {"category": height * [None]} if STRATIFY_BY_CATEGORY else {}
-        ) | {
+            "category": height * [None],
             "column": [k for k in pairs.keys()],
             "entity": height * [None],
             "variant": height * [None],
@@ -524,7 +518,7 @@ class Collector:
         # Slow path for combining more than one lazy frame
         self._full_frame = frame = pl.concat(
             self._partial_frames, how="vertical"
-        ).collect().cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        ).collect()
         self._partial_frames = []
         return frame
 
@@ -679,7 +673,7 @@ class _Summarizer:
                 var = f"{var}.{entity}"
 
             if is_text:
-                if text is None:
+                if text is None and entity != "rows_of_text":
                     var = f"{var}.is_null"
                 else:
                     text = _WHITESPACE.sub(" ", text).replace("|", "")
@@ -722,17 +716,14 @@ class _Summarizer:
     def _summarize_fields(self) -> None:
         """Summarize all fields of summary statistics."""
         for field_name, field_type in TRANSFORMS.items():
-            # AliExpress submits too many statements with unique text values
-            if (
-                self._platform == "AliExpress"
-                and field_type is TransformType.TEXT_VALUE_COUNTS
-            ):
-                field_type = TransformType.TEXT_ROWS_COUNT
-
             match field_type:
                 case TransformType.PLATFORM_NAME:
                     assert field_name == "platform_name"
                     self._collect_platform_names()
+                case TransformType.CATEGORY_NAME:
+                    assert field_name == "category_name"
+                    self._spacer()
+                    self._collect_value_counts(field_name)
                 case TransformType.SKIPPED_DATE:
                     pass
                 case TransformType.ALL_ROWS_COUNT:
@@ -741,9 +732,9 @@ class _Summarizer:
                 case TransformType.VALUE_COUNTS:
                     self._spacer()
                     self._collect_value_counts(field_name)
-                case TransformType.TEXT_ROWS_COUNT:
+                case TransformType.TEXT_ROW_COUNT:
                     self._spacer()
-                    self._collect1(field_name, "non_empty")
+                    self._collect1(field_name, "rows_of_text")
                 case TransformType.TEXT_VALUE_COUNTS:
                     self._spacer()
                     self._collect_value_counts(field_name, is_text=True)
@@ -963,6 +954,18 @@ class _Summarizer:
 # =================================================================================================
 
 
+def _extract_config(frame: pl.DataFrame) -> tuple[bool, bool]:
+    if frame.height == 0:
+        return False, False
+
+    categories, textrows = frame.select(
+        pl.col("category").is_not_null().sum(),
+        pl.col("entity").eq("rows_of_text").sum(),
+    ).row(0)
+
+    return categories != 0, textrows == 0
+
+
 class Statistics:
     """
     Wrapper around statistics describing the DSA transparency database.
@@ -982,8 +985,29 @@ class Statistics:
     # and otherwise only concatenates partial frames (optionally applying
     # finalization when writing). Hence partial frames are eager, too.
 
-    def __init__(self, file: str, *frames: pl.DataFrame) -> None:
+    def __init__(
+        self,
+        file: str,
+        *frames: pl.DataFrame,
+        stratify_by_category: bool = False,
+        stratify_all_text: bool = False,
+    ) -> None:
         self._file = file
+
+        config = None
+        for frame in frames:
+            c = _extract_config(frame)
+            if config is None:
+                config = c
+            elif config != c:
+                raise ValueError("data frames with inconsistent stratifications")
+
+        if config is None:
+            config = stratify_by_category, stratify_all_text
+        elif config != (stratify_by_category, stratify_all_text):
+            raise ValueError("data frame stratification inconsistent with configuration")
+
+        self._stratify_by_category, self._stratify_all_text = config
 
         # If the instance wraps a full frame, the partial frames and collector
         # must be empty. Vice versa, if the instance wraps partial frames and/or
@@ -1057,12 +1081,12 @@ class Statistics:
             pl.col("platform").cast(str).replace(CanonicalPlatformNames)
         )
 
-        # If the platform names are out-of-whack, the cast below will fail. But
-        # Pola.rs error messages tend to be less than helpful. So instead we
-        # check for unknown platform names ourselves. That way, we can initiate
-        # largely automatic recovery as well.
+        # The statistics schema incorporates the platform names into an
+        # enumeration type. Hence, if the frame includes unknown platforms, the
+        # cast below will fail, with a Pola.rs error message that does NOT
+        # identify the offending name(s). So instead we proactively check for
+        # unknown platform names and initiate (mostly) automatic recovery.
         check_stats_platforms(path, frame)
-
         return cls(
             path.name,
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
@@ -1072,6 +1096,16 @@ class Statistics:
     def file(self) -> str:
         """Access the file name."""
         return self._file
+
+    @property
+    def stratify_by_category(self) -> bool:
+        """The flag for stratifying by category."""
+        return self._stratify_by_category
+
+    @property
+    def stratify_all_text(self) -> bool:
+        """The flag for stratifying all text."""
+        return self._stratify_all_text
 
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
@@ -1102,7 +1136,7 @@ class Statistics:
 
         self._full_frame = frame = pl.concat(
             partial_frames, how="vertical"
-        ).cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+        )
         return frame
 
     def _prepare_for_update(self) -> None:
@@ -1119,7 +1153,9 @@ class Statistics:
             self._monthly = self.frame().group_by(
                 pl.col("start_date").dt.year().alias("year"),
                 pl.col("start_date").dt.month().alias("month"),
-                pl.col("tag", "platform", "column", "entity", "variant", "text"),
+                pl.col(
+                    "tag", "platform", "category", "column", "entity", "variant", "text"
+                ),
             ).agg(*aggregates())
         return self._monthly
 
@@ -1127,7 +1163,9 @@ class Statistics:
         """Create view with total counts."""
         if self._totals is None:
             self._totals = self.frame().group_by(
-                pl.col("tag", "platform", "column", "entity", "variant", "text"),
+                pl.col(
+                    "tag", "platform", "category", "column", "entity", "variant", "text"
+                ),
             ).agg(*aggregates())
         return self._totals
 
@@ -1179,7 +1217,10 @@ class Statistics:
         self._prepare_for_update()
 
         if self._collector is None:
-            self._collector = Collector()
+            self._collector = Collector(
+                stratify_by_category=self._stratify_by_category,
+                stratify_all_text=self._stratify_all_text,
+            )
         self._collector.collect(release, frame, tag=tag, metadata_entry=metadata_entry)
 
     def append(self, frame: pl.DataFrame) -> None:

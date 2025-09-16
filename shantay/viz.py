@@ -1,5 +1,5 @@
 from abc import ABCMeta, abstractmethod
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 import datetime as dt
 from io import StringIO
 import logging
@@ -328,7 +328,7 @@ class Visualizer:
         with_clamped_outliers: bool = False,
         with_interaction: bool = False,
         with_notebook: bool = False,
-        with_platforms: None | list[str] = None,
+        with_platforms: None | Sequence[str] = None,
     ) -> None:
         self._storage = storage
         self._coverage = coverage
@@ -645,7 +645,7 @@ class Visualizer:
             meta_data.group_by(
                 pl.col(
                     "start_date", "end_date",
-                    "tag", "column", "entity", "variant", "text"
+                    "tag", "category", "column", "entity", "variant", "text"
                 ),
                 maintain_order=True,
             ).agg(

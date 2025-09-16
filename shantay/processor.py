@@ -15,7 +15,7 @@ from .digest import (
 )
 from .metadata import Metadata
 from .model import (
-    CollectorProtocol, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
+    Config, CollectorProtocol, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
     DownloadFailed, MetadataEntry, Release, ReleaseRange, Storage
 )
 from .pool import check_not_cancelled
@@ -42,21 +42,15 @@ class Processor[R: Release]:
         dataset: Dataset,
         storage: Storage,
         coverage: ReleaseRange[Daily],
+        config: Config,
         metadata: Metadata,
-        offline: bool = False,
-        with_interaction: bool = False,
-        with_clamped_outliers: bool = False,
-        with_platforms: None | list[str] = None,
         progress: Progress = NO_PROGRESS,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
+        self._config = config
         self._metadata = metadata
-        self._offline = offline
-        self._with_interaction = with_interaction
-        self._with_clamped_outliers = with_clamped_outliers
-        self._with_platforms = with_platforms
         self._progress = progress
         self._running_time = 0.0
 
@@ -73,17 +67,19 @@ class Processor[R: Release]:
     def run(self, task: str) -> None | DataFrameType:
         """Run the given task."""
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
+        _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
+        _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
         _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency)
+        _logger.info('    key="stratify.category",    value="%s"', self._config.stratify_by_category)
+        _logger.info('    key="stratify.all.text",    value="%s"', self._config.stratify_all_text)
+        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
-        _logger.info('    key="network.offline",      value="%s"', self._offline)
-        _logger.info('    key="pool.size",            value=1')
 
         # Arguably, time.process_time() would be the more accurate time source
         # for measuring latency. However, that may not hold for the parallel
@@ -266,7 +262,7 @@ class Processor[R: Release]:
         """Filter data for all covered releases."""
         for release in self._coverage:
             # Ensure graceful termination in offline mode
-            if self._offline and not self.is_archive_downloaded(release):
+            if self._config.offline and not self.is_archive_downloaded(release):
                 _logger.debug(
                     'stopping due to missing archive in offline mode '
                     'for task="distill", release="%s"',
@@ -317,7 +313,7 @@ class Processor[R: Release]:
 
     def download(self) -> None:
         """Download the archives for this processor's coverage."""
-        if self._offline:
+        if self._config.offline:
             raise ValueError("can't download daily distributions in offline mode")
 
         for release in self._coverage:
@@ -329,7 +325,7 @@ class Processor[R: Release]:
 
     def download_archive(self, release: Daily) -> None:
         """Download the archive for the given release."""
-        if self._offline:
+        if self._config.offline:
             raise ValueError("can't download daily distributions in offline mode")
         if self.is_archive_downloaded(release):
             _logger.debug('already downloaded release="%s"', release.id)
@@ -372,7 +368,7 @@ class Processor[R: Release]:
     @annotate_error(filename_arg="root")
     def _actually_download_archive(self, root: Path, release: Daily) -> int:
         """Download the release archive and digest."""
-        if self._offline:
+        if self._config.offline:
             raise ValueError("can't download daily distributions in offline mode")
 
         digest = self._dataset.digest_name(release)
@@ -657,11 +653,15 @@ class Processor[R: Release]:
         )
         self._progress.start(self._coverage.last - self._coverage.first + 1)
 
-        stats = Statistics(self.stats_file)
+        stats = Statistics(
+            self.stats_file,
+            stratify_by_category=self._config.stratify_by_category,
+            stratify_all_text=self._config.stratify_all_text,
+        )
 
         for index, release in enumerate(self._coverage):
             # Ensure graceful termination in offline mode
-            if self._offline and not self.is_archive_downloaded(release):
+            if self._config.offline and not self.is_archive_downloaded(release):
                 _logger.info(
                     'stopping due to missing archive in offline mode '
                     'for task="summarize-extract", release="%s"',
@@ -758,7 +758,7 @@ class Processor[R: Release]:
                 continue
 
             # Ensure graceful termination in offline mode
-            if self._offline and not self.is_archive_downloaded(release):
+            if self._config.offline and not self.is_archive_downloaded(release):
                 _logger.debug(
                     'stopping due to missing archive in offline mode '
                     'for task="summarize-all", release="%s"',
@@ -870,9 +870,9 @@ class Processor[R: Release]:
             storage=self._storage,
             coverage=self._coverage,
             metadata=self._metadata,
-            with_interaction=self._with_interaction,
-            with_clamped_outliers=self._with_clamped_outliers,
-            with_platforms=self._with_platforms,
+            with_interaction=self._config.interactive_report,
+            with_clamped_outliers=self._config.clamp_outliers,
+            with_platforms=self._config.platforms,
         ).run()
 
 

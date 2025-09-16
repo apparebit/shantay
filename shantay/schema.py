@@ -772,9 +772,6 @@ del _generate_schemata
 # Declaration of Statistics Transforms
 
 
-STRATIFY_BY_CATEGORY = False
-
-
 class TransformType(enum.Enum):
     """Non-parametric transform types."""
     PLATFORM_NAME = enum.auto()
@@ -782,7 +779,7 @@ class TransformType(enum.Enum):
     SKIPPED_DATE = enum.auto()
     ALL_ROWS_COUNT = enum.auto()
     VALUE_COUNTS = enum.auto()
-    TEXT_ROWS_COUNT = enum.auto()
+    TEXT_ROW_COUNT = enum.auto()
     TEXT_VALUE_COUNTS = enum.auto()
     LIST_VALUE_COUNTS = enum.auto()
     DECISION_TYPE = enum.auto()
@@ -837,15 +834,12 @@ TRANSFORMS = {
     "account_type": TransformType.VALUE_COUNTS,
     "decision_ground": TransformType.VALUE_COUNTS,
     "decision_ground_reference_url": TransformType.TEXT_VALUE_COUNTS,
-    "illegal_content_legal_ground": TransformType.TEXT_VALUE_COUNTS,
-    "illegal_content_explanation": TransformType.TEXT_VALUE_COUNTS,
-    "incompatible_content_ground": TransformType.TEXT_VALUE_COUNTS,
-    "incompatible_content_explanation": TransformType.TEXT_VALUE_COUNTS,
+    "illegal_content_legal_ground": TransformType.TEXT_ROW_COUNT,
+    "illegal_content_explanation": TransformType.TEXT_ROW_COUNT,
+    "incompatible_content_ground": TransformType.TEXT_ROW_COUNT,
+    "incompatible_content_explanation": TransformType.TEXT_ROW_COUNT,
     "incompatible_content_illegal": TransformType.VALUE_COUNTS,
-    "category": (
-        TransformType.CATEGORY_NAME if STRATIFY_BY_CATEGORY
-        else TransformType.VALUE_COUNTS
-    ),
+    "category": TransformType.CATEGORY_NAME,
     "category_addition": TransformType.LIST_VALUE_COUNTS,
     "category_specification": TransformType.LIST_VALUE_COUNTS,
     "category_specification_other": TransformType.TEXT_VALUE_COUNTS,
@@ -856,7 +850,7 @@ TRANSFORMS = {
     "territorial_scope": TransformType.LIST_VALUE_COUNTS,
     "disclosure_delay": DurationTransform("application_date", "created_at"),
     #"release_delay": DurationTransform("created_at", "released_on"),
-    "decision_facts": TransformType.TEXT_VALUE_COUNTS,
+    "decision_facts": TransformType.TEXT_ROW_COUNT,
     "source_type": TransformType.VALUE_COUNTS,
     "source_identity": TransformType.TEXT_VALUE_COUNTS,
     "automated_detection": TransformType.VALUE_COUNTS,
@@ -908,7 +902,7 @@ ColumnValueType = pl.Enum((
 
 EntityValueType = pl.Enum((
     "is_null",
-    "non_empty",
+    "rows_of_text",
     "vis",
     "mon",
     "vis_mon",
@@ -987,9 +981,7 @@ StatisticsSchema = pl.Schema({
     "end_date": pl.Date,
     "tag": TagValueType,
     "platform": PlatformValueType,
-} | (
-    {"category": CategoryValueType} if STRATIFY_BY_CATEGORY else {}
-) | {
+    "category": CategoryValueType,
     "column": ColumnValueType,
     "entity": EntityValueType,
     "variant": VariantValueType,
@@ -1063,3 +1055,23 @@ def normalize_keyword(keyword: None | str) -> None | str:
     if key not in Keyword:
         raise ValueError(f'"{keyword}" does not match any valid keyword')
     return key
+
+
+# ======================================================================================
+
+
+def validate(frame: pl.DataFrame, schema: pl.Schema) -> None:
+    expected_columns = frozenset(schema.names())
+
+    for name in frame.columns:
+        if name not in expected_columns:
+            raise TypeError(f"frame includes unexpected column {name}")
+
+    for name in expected_columns:
+        if name not in frame.columns:
+            raise TypeError(f"frame lacks column {name}")
+
+        actual = frame.schema[name]
+        expected = schema[name]
+        if actual != expected:
+            raise TypeError(f"column {name} has type {actual} instead of {expected}")

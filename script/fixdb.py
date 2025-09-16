@@ -14,7 +14,7 @@ import polars as pl
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.metadata import Metadata
-from shantay.model import ConfigError, Daily, Release, ReleaseRange, Storage
+from shantay.model import Config, ConfigError, Daily, Release, ReleaseRange, Storage
 from shantay.processor import Processor
 from shantay.progress import Progress
 from shantay.stats import Statistics
@@ -115,8 +115,8 @@ def recompute(
         dataset=dataset,
         storage=storage,
         coverage=coverage,
+        config=Config(),
         metadata=metadata,
-        offline=True,
         progress=progress,
     )
 
@@ -135,28 +135,28 @@ def recompute(
 
     archive_path = storage.staging_root / dataset.archive_path(release)
     with zipfile.ZipFile(archive_path) as archive:
-    for index, name in enumerate(filenames):
-        progress.step(index, "unarchive data")
+        for index, name in enumerate(filenames):
+            progress.step(index, "unarchive data")
             processor.unarchive_file(archive, release, index, name)
 
-        counter, frame = dataset.ingest_release(
-            root=storage.staging_root,
-            release=release,
-            index=index,
-            name=name,
-            progress=progress,
-        )
+            counter, frame = dataset.ingest_release(
+                root=storage.staging_root,
+                release=release,
+                index=index,
+                name=name,
+                progress=progress,
+            )
 
-        total_rows1 += counter["total_rows"]
-        total_rows_with_keywords1 += counter["total_rows_with_keywords"]
+            total_rows1 += counter["total_rows"]
+            total_rows_with_keywords1 += counter["total_rows_with_keywords"]
 
-        path = storage.staging_root / release.temp_directory
-        for csv_file in path.glob(f"sor-global-{release.id}-full-{index:05}-*.csv"):
-            ttl, kw = dataset.get_total_row_counts(csv_file)
-            total_rows2 += ttl
-            total_rows_with_keywords2 += kw
+            path = storage.staging_root / release.temp_directory
+            for csv_file in path.glob(f"sor-global-{release.id}-full-{index:05}-*.csv"):
+                ttl, kw = dataset.get_total_row_counts(csv_file)
+                total_rows2 += ttl
+                total_rows_with_keywords2 += kw
 
-        shutil.rmtree(storage.staging_root / release.temp_directory)
+            shutil.rmtree(storage.staging_root / release.temp_directory)
 
     shutil.rmtree(storage.staging_root / release.parent_directory)
     progress.perform("")
@@ -294,7 +294,9 @@ def main(argv: list[str]) -> int:
                 "total_rows", "total_rows_with_keywords",
             ])
         ).select(
-            pl.col("start_date", "end_date", "tag", "platform", "column", "count")
+            pl.col(
+                "start_date", "end_date",
+                "tag", "platform", "category", "column", "count")
         ))
 
     if not is_data_ok:

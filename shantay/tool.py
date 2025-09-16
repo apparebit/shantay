@@ -1,6 +1,5 @@
 import atexit
 import datetime as dt
-import enum
 import errno
 import os
 from pathlib import Path
@@ -14,8 +13,8 @@ from .color import Style
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
-    ConfigError, DateRange, DownloadFailed, Filter, MetadataConflict, ReleaseRange,
-    StagingIsBusy, Storage
+    Config, ConfigError, DateRange, DownloadFailed, Filter, MetadataConflict,
+    ReleaseRange, StagingIsBusy, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -81,7 +80,7 @@ running.{Style.RESET}
 
 def get_configuration(
     options: Any
-) -> tuple[Storage, ReleaseRange, Metadata, None | list[str]]:
+) -> tuple[Storage, ReleaseRange, Metadata, Config]:
     """
     Turn the command line options into internal configuration objects.
     """
@@ -113,6 +112,7 @@ def get_configuration(
             )
 
     # Handle --category, --platform, and --filter options
+    platforms = None
     if options.platform is not None:
         if options.category is not None or options.filter is not None:
             raise ConfigError(
@@ -241,7 +241,7 @@ def get_configuration(
         raise ConfigError("please only use --clamp-outliers with `visualize` task")
 
     # Finish it all up
-    return storage, range, metadata, options.platform
+    return storage, range, metadata, Config.of(platforms=platforms, **options)
 
 
 def configure_printing() -> None:
@@ -263,7 +263,7 @@ def configure_printing() -> None:
 
 
 def _run(options: Any) -> None:
-    storage, range, metadata, platforms = get_configuration(options)
+    storage, range, metadata, config = get_configuration(options)
     configure_printing()
 
     if options.task == "recover":
@@ -280,7 +280,7 @@ def _run(options: Any) -> None:
         else:
             task = "summarize-extract"
 
-    if 1 < options.workers:
+    if 1 < config.workers:
         dataset = StatementsOfReasons()
         # Since the multiprocessor doesn't do `visualize`, there is no need for
         # stat_source either
@@ -288,9 +288,8 @@ def _run(options: Any) -> None:
             dataset=dataset,
             storage=storage,
             coverage=range,
+            config=config,
             metadata=metadata,
-            offline=options.offline,
-            size=options.workers,
         )
         frame = processor.run(task)
     else:
@@ -300,10 +299,7 @@ def _run(options: Any) -> None:
             storage=storage,
             coverage=range,
             metadata=metadata,
-            offline=options.offline,
-            with_interaction=options.interactive_report,
-            with_clamped_outliers=options.clamp_outliers,
-            with_platforms=platforms,
+            config=config,
             progress=Progress(),
         )
         frame = processor.run(task)

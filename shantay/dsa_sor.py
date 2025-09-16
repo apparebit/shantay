@@ -12,7 +12,8 @@ from .model import (
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA, CanonicalPlatformNames, KeywordChildSexualAbuseMaterial,
-    PARTIAL_SCHEMA, SCHEMA, StatementCategoryProtectionOfMinors, TerritorialAlias
+    PARTIAL_SCHEMA, SCHEMA, StatementCategoryProtectionOfMinors, TerritorialAlias,
+    validate
 )
 from .util import annotate_error
 
@@ -95,7 +96,7 @@ class StatementsOfReasons(Dataset):
             filter=None,
             progress=progress
         )
-        self._validate_schema(frame)
+        validate(frame, SCHEMA)
 
         counter = Counter(
             total_rows=frame.height,
@@ -137,8 +138,8 @@ class StatementsOfReasons(Dataset):
             filter=filter,
             progress=progress
         )
+        validate(frame, SCHEMA)
 
-        self._validate_schema(frame)
         path = root / release.directory
         path.mkdir(parents=True, exist_ok=True)
         path = path / release.batch_file(index)
@@ -413,14 +414,6 @@ class StatementsOfReasons(Dataset):
                 pl.lit(release.date, dtype=pl.Date).alias("released_on"),
             )
         )
-
-    def _validate_schema(self, frame: pl.DataFrame) -> None:
-        """Validate the schema of the given data frame."""
-        for name in frame.columns:
-            actual = frame.schema[name]
-            expected = SCHEMA[name]
-            if actual != expected:
-                raise TypeError(f"column {name} has type {actual} not {expected}")
 
     def _assemble_frame_counters(
         self, frame: pl.DataFrame, total_rows: int, total_rows_with_keywords: int

@@ -122,7 +122,21 @@ control and data recovery. Here are all of them:
     category-specific subset, depending on whether `--archive` only (for the
     full database) or both `--archive` and `--extract` (for a subset) are
     specified. If you specify neither, Shantay materializes the builtin copy of
-    the summary statistics in staging.
+    the summary statistics in staging. You can customize the summary statistics
+    with the following options:
+
+      - `--stratify-by-category` instructs Shantay to break down all statistics
+        by both statement category and platform instead of platform only.
+      - `--stratify-all-text` instructs Shantay to determine value counts for
+        the DSA transparency DB's `illegal_content_legal_ground`,
+        `illegal_content_explanation`, `incompatible_content_ground`,
+        `incompatible_content_explanation`, and `decision_facts` columns instead
+        of simply counting non-empty rows.
+
+    *Beware*: Enabling either option by itself significantly increases the
+    memory requirements for collected data, in case of `--stratify-all-text`
+    quadrupling the size of the statistics. You may need to restrict the covered
+    data range and/or the number of worker processes.
 
   - **info** prints helpful information about Shantay, key dependencies, the
     Python runtime, and operating system, as well as the `--archive` and

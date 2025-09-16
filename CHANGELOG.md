@@ -3,35 +3,61 @@
 
 ## v0.6.0 (September ??, 2025)
 
-As an alternative to distilling by `--category`, distill by one or more
-`--platform`s or an arbitrary Pola.rs `--filter` expression. The latter may use
-the customary `pl` for Pola.rs' namespace; no other bindings, including for
-Python's builtins, are available. Still, it would be folly to use an untrusted
-string as the `--filter` argument.
+Shantay now covers all transparency DB columns in its summary statistics, while
+also providing more control over the extent of transparency DB extracts and the
+granularity of summary statistics.
 
-`--platform` can also be used to override Shantay's choice of platforms when
-visualizing results. By default, Shantay selects them by popularity.
+### Cover All Transparency DB Columns
 
-Capture the free-text fields named `decision_ground_reference_url`,
+Shantay now also captures the free-text columns `decision_ground_reference_url`,
 `illegal_content_legal_ground`, `illegal_content_explanation`,
 `incompatible_content_ground`, `incompatible_content_explanation`,
-`decision_facts`, and `source_identity` in summary statistics and reports. With
-addition of those fields, Shantay accounts for all DSA transparency DB fields in
-its summary statistics. Since AliExpress submits an extra-ordinarily large
-number of statements with unique text values, Shantay ignores their values.
+`decision_facts`, and `source_identity` in its summary statistics, thus covering
+*all* DSA transparency DB columns.
 
-Mark staging root directories for multiprocessing workers as digital detritus
-after tool run. They are not deleted to aid with debugging upon tool failures.
+In practice, most values in these string-valued columns are repeated many times,
+just as for enum-valued columns. However, values in string-valued columns are
+not known a-priori and their distribution has a very long tail of values that
+are hardly repeated or even unique. As a result, memory requirements for summary
+statistics quadruple when including value counts for the newly added columns.
+Since the `illegal_content_legal_ground`, `illegal_content_explanation`,
+`incompatible_content_ground`, `incompatible_content_explanation`, and
+`decision_facts` columns include the most text while providing hardly any
+additional information, Shantay only tracks the number of non-empty rows for
+these columns.
 
-Fix labelling of mean moderation and disclosure delay lines. Move mean
-disclosure delay to lower panel.
+### Configure DB Extract and Summary Statistics
 
-Fix crashing errors when cleaning up directories during archive download, when
-forwarding cancellations during multiprocessing, when just downloading archives
-with multiprocessing, and when the archive already contains the requested
-statistics.
+In addition to distilling the transparency DB by `--category`, Shantay now also
+supports generating extracts for one or more `--platform`s or with an arbitrary
+Pola.rs `--filter` expression. The latter may use the customary `pl` for
+Pola.rs' namespace, but no other bindings, including for Python's builtins, are
+available. Still, it would be folly to use an untrusted string as the `--filter`
+argument.
 
-Fix name of statistics file in tool help.
+With `--stratify-by-category`, Shantay collects summary statistics broken down
+by platform and statement category instead of only by platform. With
+`--stratify-all-text`, Shantay collects value counts for _all_ string-valued
+columns, including the five columns explicitly exempted by default. Each of
+these two options significantly increases Shantay's memory requirements. As a
+result, you may have to reduce the date range or the number of worker processes.
+
+### Minor Improvements and Bug Fixes
+
+This release also contains several minor improvements and bug fixes:
+
+  * `--platform` can also be used to override Shantay's choice of platforms when
+    visualizing results. By default, Shantay selects them by popularity.
+  * Mark staging root directories for multiprocessing workers as digital
+    detritus after tool run. They are not deleted to aid with debugging upon
+    tool failures.
+  * Fix labelling of mean moderation and disclosure delay lines. Move mean
+    disclosure delay to lower panel.
+  * Fix crashing errors when cleaning up directories during archive download,
+    when forwarding cancellations during multiprocessing, when just downloading
+    archives with multiprocessing, and when the archive already contains the
+    requested statistics.
+  * Fix name of statistics file in tool help.
 
 
 ## v0.5.0 (July 28, 2025)

@@ -78,13 +78,14 @@ def predicate(
     platform: (
         NoArgumentProvided | NotNull | None | str | Sequence[str]
     ) = NO_ARGUMENT_PROVIDED,
+    category: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
-    Create the predicate over the "tag", "platform", "column", "entity", and
-    "variant" columns. If the argument is a string or list of strings, the
-    predicate tests that column for the literal string value(s). If it is None,
-    the predicate tests for the column being null. If it is `NOT_NULL`, the
-    predicate tests for it being not null. Finally, if it is
+    Create the predicate over the "tag", "platform", "category", "column",
+    "entity", and "variant" columns. If the argument is a string or list of
+    strings, the predicate tests that column for the literal string value(s). If
+    it is None, the predicate tests for the column being null. If it is
+    `NOT_NULL`, the predicate tests for it being not null. Finally, if it is
     `NO_ARGUMENT_PROVIDED`, the predicate does not test that column.
     """
     result = None
@@ -99,6 +100,7 @@ def predicate(
     for key, value in (
         ("tag", tag),
         ("platform", platform),
+        ("category", category),
         ("column", column),
         ("entity", entity),
         ("variant", variant),
@@ -184,8 +186,8 @@ def finalize(frame: pl.DataFrame) -> pl.DataFrame:
     rechunks the data frame.
     """
     return frame.group_by(
-        "start_date", "end_date", "tag", "platform",
-        "column", "entity", "variant", "text",
+        "start_date", "end_date",
+        "tag", "platform", "category", "column", "entity", "variant", "text",
         maintain_order=True
     ).agg(
         *aggregates()

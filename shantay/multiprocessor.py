@@ -7,13 +7,12 @@ import os
 import signal
 import sys
 import time
-import traceback
 from types import FrameType
 from typing import Any, cast
 
 from .metadata import Metadata
 from .model import (
-    Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
+    Config, Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
 )
 from .pool import (
     Cancelled, check_not_cancelled, ErrorTrace, ErrorTraceFactory, Pool, Task,
@@ -37,16 +36,15 @@ class Multiprocessor:
         dataset: Dataset,
         storage: Storage,
         coverage: ReleaseRange[Daily],
+        config: Config,
         metadata: Metadata,
-        size: int,
-        offline: bool = False,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
         self._coverage = coverage
+        self._config = config
         self._metadata = metadata
         self._stats = None
-        self._offline = offline
 
         self._task = None
         self._iter = None
@@ -55,7 +53,7 @@ class Multiprocessor:
         self._pool = None
         self._register_handlers()
         # Use the same level as the root logger
-        self._pool = Pool(size=size, log_level=logging.getLogger().level)
+        self._pool = Pool(size=config.workers, log_level=logging.getLogger().level)
 
         self._running_time = 0
 
@@ -72,17 +70,19 @@ class Multiprocessor:
         self._task = task
 
         _logger.info('running multiprocessor with pid=%d, task="%s"', _PID, task)
+        _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
+        _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
         _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")
         _logger.info('    key="storage.staging_root", value="%s"', self._storage.staging_root)
-        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency)
+        _logger.info('    key="stratify.category",    value="%s"', self._config.stratify_by_category)
+        _logger.info('    key="stratify.all.text",    value="%s"', self._config.stratify_all_text)
+        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
-        _logger.info('    key="network.offline",      value="%s"', self._offline)
-        _logger.info('    key="pool.size",            value=%d', self._pool.size)
 
         # See Processor.run() for an explanation for time.time()
         start_time = time.time()
@@ -207,9 +207,9 @@ class Multiprocessor:
                     task=effective_task,
                     dataset=self._dataset,
                     storage=self._storage,
+                    config=self._config,
                     release=release,
                     metadata=metadata,
-                    offline=self._offline,
                 )
             )
 
@@ -243,7 +243,7 @@ class Multiprocessor:
                 release = next(self._iter, None)
 
         # Ensure graceful termination in offline mode.
-        if self._offline and release is not None and not (
+        if self._config.offline and release is not None and not (
             self._storage.the_archive_root
             / release.parent_directory
             / self._dataset.archive_name(release)
@@ -351,9 +351,9 @@ def run_on_worker(
     task: str,
     dataset: Dataset,
     storage: Storage,
+    config: Config,
     release: Daily,
     metadata: Metadata,
-    offline: bool,
 ) -> Any:
     """
     Run a task in a worker process. The metadata instance should be minimal,
@@ -371,9 +371,9 @@ def run_on_worker(
             task,
             dataset,
             storage,
+            config,
             release,
             metadata,
-            offline,
         )
         _logger.info(
             'returning result for task="%s", release="%s", filter="%s", worker=%d',
@@ -406,9 +406,9 @@ def _run_on_worker(
     task: str,
     dataset: Dataset,
     storage: Storage,
+    config: Config,
     release: Daily,
     metadata: Metadata,
-    offline: bool,
 ) -> Any:
     # Check for cancellation
     check_not_cancelled()
@@ -421,8 +421,8 @@ def _run_on_worker(
         dataset=dataset,
         storage=storage.isolate(_PID),
         coverage=coverage,
+        config=config,
         metadata=metadata,
-        offline=offline,
         progress=WorkerProgress(),
     )
 
