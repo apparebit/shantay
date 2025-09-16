@@ -6,6 +6,7 @@ from pathlib import Path
 import shutil
 import sys
 from typing import Any, cast
+import zipfile
 
 sys.path.insert(0, '')
 
@@ -132,9 +133,11 @@ def recompute(
     total_rows1 = total_rows2 = 0
     total_rows_with_keywords1 = total_rows_with_keywords2 = 0
 
+    archive_path = storage.staging_root / dataset.archive_path(release)
+    with zipfile.ZipFile(archive_path) as archive:
     for index, name in enumerate(filenames):
         progress.step(index, "unarchive data")
-        processor.unarchive_file(storage.staging_root, release, index, name)
+            processor.unarchive_file(archive, release, index, name)
 
         counter, frame = dataset.ingest_release(
             root=storage.staging_root,

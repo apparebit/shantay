@@ -1,6 +1,7 @@
 from collections import Counter
 import datetime as dt
 from pathlib import Path
+import zipfile
 
 import polars as pl
 
@@ -75,7 +76,8 @@ class TestDistill(TestCase):
             workdir = STAGING / release.temp_directory
             self.assertFalse(workdir.exists())
 
-            processor.unarchive_file(STAGING, release, 0, ZIP_FILES[0])
+            with zipfile.ZipFile(STAGING / dataset.archive_path(release)) as archive:
+                processor.unarchive_file(archive, release, 0, ZIP_FILES[0])
             self.assertTrue(workdir.exists())
             self.assertListEqual(
                 sorted(p.name for p in workdir.glob("*")), CSV_FILES[:2]
@@ -133,7 +135,8 @@ class TestDistill(TestCase):
             batch1 = STAGING / release.directory / release.batch_file(1)
             self.assertFalse(batch1.exists())
 
-            processor.unarchive_file(STAGING, release, 1, ZIP_FILES[1])
+            with zipfile.ZipFile(STAGING / dataset.archive_path(release)) as archive:
+                processor.unarchive_file(archive, release, 1, ZIP_FILES[1])
 
             assert metadata.filter is not None
             digest, more_counters = dataset.distill_release(
