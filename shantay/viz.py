@@ -3,6 +3,7 @@ from collections.abc import Iterable, Sequence
 import datetime as dt
 from io import StringIO
 import logging
+import os
 from pathlib import Path
 import re
 import shutil
@@ -257,11 +258,12 @@ class _PlainTextRenderer(_Renderer):
         else:
             chart.save(self._charts / name)
 
-
+display = HTML = Markdown = None
 try:
-    from IPython.display import display, HTML, Markdown
+    if os.getenv("CI", None) is not None:
+        from IPython.display import display, HTML, Markdown
 except ImportError:
-    display = HTML = Markdown = None
+    pass
 
 if display is None:
     _NotebookRenderer = None # pyright: ignore[reportAssignmentType]
