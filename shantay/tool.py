@@ -241,7 +241,7 @@ def get_configuration(
         raise ConfigError("please only use --clamp-outliers with `visualize` task")
 
     # Finish it all up
-    return storage, range, metadata, Config.of(platforms=platforms, **options)
+    return storage, range, metadata, Config.of(platforms=platforms, **vars(options))
 
 
 def configure_printing() -> None:
