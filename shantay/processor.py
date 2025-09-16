@@ -25,7 +25,6 @@ from .schema import (
 )
 from .stats import Statistics
 from .util import annotate_error, scale_time
-from .viz import Visualizer
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -866,6 +865,8 @@ class Processor[R: Release]:
 
     def visualize(self) -> None:
         """Visualize summary statistics."""
+        from .viz import Visualizer
+
         Visualizer(
             storage=self._storage,
             coverage=self._coverage,
