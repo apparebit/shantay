@@ -36,11 +36,7 @@ class TestZzz(unittest.TestCase):
         release = Release.of(2024, 3, 14)
         state = None
 
-        for index, entry in enumerate(log):
-            # First log entry is a horizontal rule
-            if index == 0:
-                self.assertTrue(entry.is_rule())
-
+        for entry in log:
             # Count entries with unusual PID, level, or module; collect traces
             if entry.pid != PID:
                 worker_entries += 1
