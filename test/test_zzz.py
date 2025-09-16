@@ -19,7 +19,7 @@ class TestZzz(unittest.TestCase):
         # The next line tests the parser...
         log = [*LogEntry.parse_file(LOG)]
 
-        if os.getenv("DEBUG", None) is not None:
+        if os.getenv("DEBUG", None) == "true":
             for entry in log:
                 entry.print(sys.stdout)
 

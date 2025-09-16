@@ -13,6 +13,8 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      DEBUG: ${{ vars.DEBUG }}
     steps:
     - name: Check Out Repository
       uses: actions/checkout@v4
