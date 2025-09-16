@@ -170,11 +170,15 @@ def configure_logging(logfile: str, *, verbose: bool) -> None:
     )
 
 
-def main(argv: Sequence[str]) -> None:
+def main(argv: None | Sequence[str] = None) -> int:
     # Handle command line options
     from .color import Style
     parser = get_parser(Style)
+
+    if argv is None:
+        argv = sys.argv[1:]
     options = parser.parse_args(argv)
+
     if options.task is None:
         parser.print_help()
         sys.exit(1)
@@ -200,8 +204,8 @@ def main(argv: Sequence[str]) -> None:
         )
 
     from .tool import run
-    sys.exit(run(options))
+    return run(options)
 
 
 if __name__ == "__main__":
-    main(sys.argv[1:])
+    sys.exit(main())
