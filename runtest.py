@@ -26,15 +26,15 @@ if __name__ == "__main__":
     del sys.argv[1:]
 
     if not options.skip_types and os.name != "nt":
-        print(styled.h0("Type Checking…"))
+        print(styled.h0("Type Checking…"), flush=True)
         try:
             subprocess.run(["npm", "run", "pyright"], check=True)
         except subprocess.CalledProcessError:
-            print(styled.failure("shantay failed to type check!"))
+            print(styled.failure("shantay failed to type check!"), flush=True)
             sys.exit(1)
 
     print(styled.h0("Testing…"))
-    print()
+    print("", flush=True)
 
     # Prepare staging, version number, logging, and test classes.
     ticker = get_ticker(stream)
@@ -67,6 +67,6 @@ if __name__ == "__main__":
     except Exception as x:
         trace = traceback.format_exception(x)
         print("".join(trace[:-1]))
-        print(styled.err(trace[-1]))
+        print(styled.err(trace[-1]), flush=True)
 
     sys.exit(not successful)

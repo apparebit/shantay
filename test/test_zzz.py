@@ -5,6 +5,8 @@ import os
 import unittest
 import sys
 
+from .runtime import StyledStream
+
 from shantay.log import LogEntry
 from shantay.model import Release
 
@@ -20,8 +22,12 @@ class TestZzz(unittest.TestCase):
         log = [*LogEntry.parse_file(LOG)]
 
         if os.getenv("DEBUG", None) == "true":
+            styled = StyledStream(sys.stdout)
+            print()
+            print(styled.h1("Shantay's Log"))
             for entry in log:
                 entry.print(sys.stdout)
+            print("", flush=True)
 
         worker_entries = 0
         test_entries = 0
