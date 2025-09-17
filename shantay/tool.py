@@ -3,6 +3,8 @@ import datetime as dt
 import errno
 import os
 from pathlib import Path
+import re
+import shutil
 import textwrap
 import traceback
 from typing import Any, cast
@@ -94,6 +96,12 @@ def get_configuration(
     # Acquire lock file
     storage.staging_root.mkdir(parents=True, exist_ok=True)
     acquire_staging_lock(storage.staging_root)
+
+    # Clean up done staging
+    pattern = re.compile(fr"^{storage.staging_root.name}[.]\d+[.]done$")
+    for path in storage.staging_root.parent.glob("*.done"):
+        if pattern.match(path.name):
+            shutil.rmtree(path, ignore_errors=True)
 
     # Check task-specific conditions
     if options.task == "download":

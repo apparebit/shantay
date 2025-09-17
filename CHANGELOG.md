@@ -48,11 +48,11 @@ This release also contains several minor improvements and bug fixes:
 
   * `--platform` can also be used to override Shantay's choice of platforms when
     visualizing results. By default, Shantay selects them by popularity.
-  * Mark staging root directories for multiprocessing workers as digital
-    detritus after tool run. They are not deleted to aid with debugging upon
-    tool failures.
+  * Mark staging root directories for multiprocessing workers as `<name>.done`
+    upon completion. For debuggability, they are not deleted at the time; though
+    they are removed upon Shantay's next run with the same staging root.
   * Fix labelling of mean moderation and disclosure delay lines. Move mean
-    disclosure delay to lower panel.
+    disclosure delay to second, lower panel.
   * Fix crashing errors when cleaning up directories during archive download,
     when forwarding cancellations during multiprocessing, when just downloading
     archives with multiprocessing, and when the archive already contains the

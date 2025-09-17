@@ -110,10 +110,11 @@ control and data recovery. Here are all of them:
         selecting more than one.
       - `--filter` to select all statements matching a [Pola.rs filter
         expression](https://docs.pola.rs/user-guide/concepts/expressions-and-contexts/#filter);
-        `pl` is the only available binding.
+        `pl` is the only available binding. Still, it would be folly to pass an
+        untrusted string as filter argument.
 
     The filter and other metadata are stored in a JSON file in the extract
-    directory.s
+    directory.
 
   - **recover** scans the `--extract` directory to validate the files and
     restore (some of the) metadata.
@@ -163,6 +164,11 @@ You can restrict the date range with `--first` and `--last`. By default, the
 operational, and the `--last` date is three days before today—one day to allow
 for the Americas being six to nine hours behind Europe and another two days to
 allow for some posting delay.
+
+Depending on available memory and processor cores, `--workers` may speed up
+distillation and/or summarization. It takes the number of worker processes as
+its only argument. Since Pola.rs is rather aggressive in its use of hardware
+resources, the number of workers should probably be small, 2 or 3, no more.
 
 Summary statistics are stored in `db.parquet` for the full database and in a
 file named after the category, platform, or filter for distilled data. For
