@@ -16,12 +16,12 @@ from .digest import (
 from .metadata import Metadata
 from .model import (
     Config, CollectorProtocol, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
-    DownloadFailed, MetadataEntry, Release, ReleaseRange, Storage
+    DownloadFailed, FilterKind, MetadataEntry, Release, ReleaseRange, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
 from .schema import (
-    check_db_platforms, is_category_file, MissingPlatformError, update_platforms
+    check_db_platforms, MissingPlatformError, update_platforms
 )
 from .stats import Statistics
 from .util import annotate_error, scale_time
@@ -117,133 +117,137 @@ class Processor[R: Release]:
         keys = []
         values = []
 
-        def emit_pair(key, value) -> None:
-            keys.append(key)
-            values.append(value)
-
         def emit_rule(strong: bool = False) -> None:
             keys.append(None)
             values.append(2 if strong else 1)
 
-        def emit_range(dirname: str, source: str, range: None | DateRange) -> None:
-            first = "n/a" if range is None else range.first.isoformat()
-            last = "n/a" if range is None else range.last.isoformat()
+        def emit_key_value(key, value) -> None:
+            keys.append(key)
+            values.append(value)
 
-            emit_pair(f'{dirname}.date-range.source', source)
-            emit_pair(f'{dirname}.date-range.first', first)
-            emit_pair(f'{dirname}.date-range.last', last)
+        def emit_range(root: str, range: None | DateRange | ReleaseRange[Daily]) -> None:
+            if range is None:
+                emit_key_value(f"{root}.range", "null")
+                return
+
+            if isinstance(range, DateRange):
+                first = range.first.isoformat()
+                last = range.last.isoformat()
+            else:
+                first = range.first.id
+                last = range.last.id
+
+            emit_key_value(f"{root}.range.first", first)
+            emit_key_value(f"{root}.range.last", last)
+
+        def emit_meta_data(
+            root: str, stem: str, metadata: None | Metadata, data: None | Statistics
+        ) -> None:
+            if metadata is not None:
+                emit_key_value(f"{root}.file", f"{stem}.json")
+                emit_key_value(f"{root}.stem", metadata.stem)
+
+                filter = metadata.filter
+                if filter is None:
+                    emit_key_value(f"{root}.filter", "null")
+                else:
+                    emit_key_value(f"{root}.filter.kind", filter.kind)
+                    if filter.kind is FilterKind.PLATFORM:
+                        criterion = ", ".join(filter.criterion)
+                    else:
+                        criterion = filter.criterion
+                    emit_key_value(f"{root}.filter.criterion", criterion)
+
+                emit_range(root, metadata.release_range)
+
+            if data is not None:
+                if metadata is not None:
+                    emit_rule()
+                emit_key_value(f"{root}.file", f"{stem}.parquet")
+
+                by_category = str(data.stratify_by_category).lower()
+                all_text = str(data.stratify_all_text).lower()
+                emit_key_value(f"{root}.stratify_by_category", by_category)
+                emit_key_value(f"{root}.stratify_all_text", all_text)
+
+                emit_range(root, data.release_range())
+
+        def emit_directory(root: str, path: Path, strong: bool = False) -> None:
+            files = sorted(
+                (
+                    *(p for p in path.glob("*.json") if p.is_file()),
+                    *(p for p in path.glob("*.parquet") if p.is_file())
+                ),
+            )
+
+            index = 0
+            file_count = len(files)
+
+            while index < file_count:
+                file = files[index]
+                index += 1
+
+                metadata = data = None
+                if file.suffix == ".json":
+                    metadata = Metadata.read_json(file)
+                    if index < file_count and file.stem == files[index].stem:
+                        data = Statistics.read(files[index])
+                        index += 1
+                else:
+                    data = Statistics.read(file)
+
+                emit_rule(strong=strong)
+                strong = False
+
+                emit_meta_data(root, file.stem, metadata, data)
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Shantay, its dependencies, Python, and OS
 
         emit_rule(strong=True)
-        emit_pair("shantay.version", __version__)
+        emit_key_value("shantay.version", __version__)
         emit_rule()
-        import altair
-        emit_pair("altair.version", altair.__version__)
         import polars
-        emit_pair("polars.version", polars.__version__)
+        emit_key_value("polars.version", polars.__version__)
         import pyarrow
-        emit_pair("pyarrow.version", pyarrow.__version__)
+        emit_key_value("pyarrow.version", pyarrow.__version__)
+        import altair
+        emit_key_value("altair.version", altair.__version__)
         emit_rule()
-        emit_pair("platform.id", platform.platform())
-        emit_pair("python.implementation", platform.python_implementation())
-        emit_pair("python.version", platform.python_version())
-        emit_pair("os.system", platform.system())
-        emit_pair("os.release", platform.release())
+        emit_key_value("platform.id", platform.platform())
+        emit_key_value("python.implementation", platform.python_implementation())
+        emit_key_value("python.version", platform.python_version())
+        emit_key_value("os.system", platform.system())
+        emit_key_value("os.release", platform.release())
         #record("os.version", platform.version())
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-        # Archive Root
 
         emit_rule(strong=True)
-        emit_pair("archive.path", "<builtin>")
-        emit_rule()
-        emit_range("archive", "db.parquet", Statistics.builtin().date_range())
+        emit_meta_data("builtin", "db", None, Statistics.builtin())
 
         if self._storage.archive_root is not None:
             emit_rule(strong=True)
-            emit_pair("archive.path", str(self._storage.archive_root))
-            emit_rule()
-            emit_range("archive", "<file-system>", self._storage.coverage_of_archive())
-
-            path = self._storage.archive_root / "db.json"
-            if path.exists():
-                try:
-                    metarange = Metadata.read_json(path).range
-                except FileNotFoundError | ValueError:
-                    metarange = None
-
-                emit_rule()
-                emit_range("archive", "db.json", metarange)
-
-            path = self._storage.archive_root / "db.parquet"
-            if path.exists():
-                try:
-                    stats_range = Statistics.read(path).date_range()
-                except FileNotFoundError:
-                    stats_range = None
-
-                emit_rule()
-                emit_range("archive", "db.parquet", stats_range)
-
-        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-        # Extract Root
+            emit_key_value("archive.fs.root", str(self._storage.archive_root))
+            emit_range("archive.fs", self._storage.coverage_of_archive())
+            emit_directory("archive", self._storage.archive_root, strong=True)
 
         if self._storage.extract_root is not None:
             emit_rule(strong=True)
-            emit_pair("extract.path", str(self._storage.extract_root))
-            emit_rule()
-            emit_range("extract", "<file-system>", self._storage.coverage_of_extract())
-
-            try:
-                metapath = Metadata.find_file(self._storage.extract_root)
-            except FileNotFoundError:
-                metapath = None
-            if metapath is not None:
-                metarange = Metadata.read_json(metapath).range
-
-                emit_rule()
-                emit_range("extract", metapath.name, metarange)
-
-            path = self._storage.extract_root / f"{self._metadata.stem}.parquet"
-            if path.exists():
-                stats_range = Statistics.read(path).date_range()
-
-                emit_rule()
-                emit_range("extract", path.name, stats_range)
-
-        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-        # Staging Root
+            emit_key_value("extract.fs.root", str(self._storage.extract_root))
+            emit_range("extract.fs", self._storage.coverage_of_extract())
+            emit_directory("extract", self._storage.extract_root)
 
         emit_rule(strong=True)
-        emit_pair("staging.path", str(self._storage.staging_root))
-
-        for file in sorted(self._storage.staging_root.glob("*.json")):
-            if file.name != "db.json" and not is_category_file(file.stem):
-                continue
-
-            try:
-                metarange = Metadata.read_json(file).range
-            except ValueError:
-                metarange = None
-
-            emit_rule()
-            emit_range("staging", file.name, metarange)
-
-        for file in sorted(self._storage.staging_root.glob("*.parquet")):
-            if file.name != "db.parquet" and not is_category_file(file.stem):
-                continue
-
-            emit_rule()
-            emit_range("staging", file.name, Statistics.read(file).date_range())
+        emit_key_value("staging.fs.root", str(self._storage.staging_root))
+        emit_directory("staging", self._storage.staging_root, strong=True)
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Actually emit the output
 
         key_width = max(0 if k is None else len(k) for k in keys)
         value_width = max(0 if v in (1, 2) else len(v) for v in values)
-        width = key_width + 3 + value_width
+        width = key_width + 5 + value_width
 
         for key, value in zip(keys, values):
             if key is None:
@@ -252,7 +256,7 @@ class Processor[R: Release]:
                 else:
                     line = '━' * width
             else:
-                line = f'{key:<{key_width}} = {value}'
+                line = f' {key:<{key_width}} = {value}'
 
             print(line)
             _logger.debug(line)
@@ -436,7 +440,7 @@ class Processor[R: Release]:
         if actual != expected:
             _logger.error(
                 'failed to validate file="%s", algo="%s", expected="%s", actual="%s"',
-                archive, algo, digest, actual
+                archive.name, algo, digest, actual
             )
             raise ValueError(
                 f'{archive} should have {algo} digest {digest} but has {actual}'
@@ -444,7 +448,7 @@ class Processor[R: Release]:
 
         _logger.info(
             'validated release="%s", file="%s", digest="%s"',
-            release.id, archive, expected
+            release.id, archive.name, expected
         )
 
     @annotate_error(filename_arg="target")
