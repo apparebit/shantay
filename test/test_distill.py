@@ -205,34 +205,33 @@ class TestDistill(TestCase):
                     break
 
             self.assertNotEqual(offset, -1)
-            self.assertTrue(offset + 38 <= len(lines))
+            self.assertTrue(offset + 37 <= len(lines))
             self.assertIn("staged file", lines[offset + 0])
-            self.assertIn("validate release", lines[offset + 1])
-            self.assertIn("validated release", lines[offset + 2])
-            self.assertIn('unarchived type="nested archive"', lines[offset + 3])
+            self.assertIn("validated release", lines[offset + 1])
+            self.assertIn('unarchived type="nested archive"', lines[offset + 2])
             self.assertIn(
                 'counted rows=50, rows-with-keywords=4, file='
                 '"sor-global-2024-03-14-full-00000-00000.csv"',
-                lines[offset + 4]
+                lines[offset + 3]
             )
             self.assertIn(
                 'counted rows=50, rows-with-keywords=8, file='
                 '"sor-global-2024-03-14-full-00000-00001.csv"',
-                lines[offset + 5]
+                lines[offset + 4]
             )
-            self.assertIn("ingested rows=8", lines[offset + 6])
-            self.assertIn('unarchived type="nested archive"', lines[offset + 7])
+            self.assertIn("ingested rows=8", lines[offset + 5])
+            self.assertIn('unarchived type="nested archive"', lines[offset + 6])
             self.assertIn(
                 'counted rows=50, rows-with-keywords=0, file='
                 '"sor-global-2024-03-14-full-00001-00000.csv"',
-                lines[offset + 8]
+                lines[offset + 7]
             )
             self.assertIn(
                 'counted rows=52, rows-with-keywords=1, file='
                 '"sor-global-2024-03-14-full-00001-00001.csv"',
-                lines[offset + 9]
+                lines[offset + 8]
             )
-            offset += 10
+            offset += 9
             # Trying to parse both CSV files in one Pola.rs operation fails:
             self.assertIn(
                 'shantay︙WARNING︙failed to read CSV with strategy=1, using="globbing Pola.rs"',

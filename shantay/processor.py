@@ -426,7 +426,6 @@ class Processor[R: Release]:
         """Validate the SHA1 hash of the downloaded archive."""
         digest = root / release.parent_directory / self._dataset.digest_name(release)
         archive = root / self._dataset.archive_path(release)
-        _logger.debug('validate release="%s", file="%s"', release.id, archive)
 
         with open(digest, mode="rt", encoding="ascii") as file:
             expected = file.read().strip()
