@@ -212,7 +212,7 @@ class StatementsOfReasons(Dataset):
                 self._scan_csv_with_polars(csv_files, filter)
             ).collect()
             _logger.debug(
-                'read rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
+                'ingested rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
                 frame.height, name
             )
             return frame
@@ -243,7 +243,7 @@ class StatementsOfReasons(Dataset):
                 frames.append(frame)
 
                 _logger.debug(
-                    'read rows=%d, strategy=2, using="Pola.rs", file="%s"',
+                    'ingested rows=%d, strategy=2, using="Pola.rs", file="%s"',
                     frame.height, file_path.name
                 )
                 continue
@@ -259,7 +259,7 @@ class StatementsOfReasons(Dataset):
                 frames.append(frame)
 
                 _logger.debug(
-                    'read rows=%d, strategy=3, using="Python\'s CSV module", file="%s"',
+                    'ingested rows=%d, strategy=3, using="Python\'s CSV module", file="%s"',
                     frame.height, file_path.name
                 )
             except Exception as x:

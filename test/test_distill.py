@@ -220,7 +220,7 @@ class TestDistill(TestCase):
                 '"sor-global-2024-03-14-full-00000-00001.csv"',
                 lines[offset + 5]
             )
-            self.assertIn("read rows=8", lines[offset + 6])
+            self.assertIn("ingested rows=8", lines[offset + 6])
             self.assertIn('unarchived type="nested archive"', lines[offset + 7])
             self.assertIn(
                 'counted rows=50, rows-with-keywords=0, file='
@@ -281,7 +281,7 @@ class TestDistill(TestCase):
             self.assertTrue(lines[offset + 12].startswith('Field `"Napodobňovanie'))
             # Parsing the first CSV file by itself with Pola.rs works:
             self.assertIn(
-                'read rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
+                'ingested rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
             )
             # Parsing the second CSV file by itself with Pola.rs fails:
             self.assertIn(
@@ -290,7 +290,7 @@ class TestDistill(TestCase):
             )
             # Parsing the second CSV fail by itself with Python's csv works:
             self.assertIn(
-                'read rows=1, strategy=3, using="Python\'s CSV module"',
+                'ingested rows=1, strategy=3, using="Python\'s CSV module"',
                 lines[offset + 15],
             )
 
