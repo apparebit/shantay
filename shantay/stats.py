@@ -721,7 +721,7 @@ class _Summarizer:
                     assert field_name == "platform_name"
                     self._collect_platform_names()
                 case TransformType.CATEGORY_NAME:
-                    assert field_name == "category_name"
+                    assert field_name == "category"
                     self._spacer()
                     self._collect_value_counts(field_name)
                 case TransformType.SKIPPED_DATE:
