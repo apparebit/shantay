@@ -177,7 +177,10 @@ def main(argv: list[str]) -> int:
     frame = pl.read_parquet(storage.the_archive_root / "db.parquet")
 
     # Limit summary statistics to intersection with metadata
-    range = metadata.range
+    range = metadata.date_range
+    if range is None:
+        raise ValueError("empty metadata")
+
     frame = frame.filter(
         (range.first <= pl.col("start_date")) & (pl.col("end_date") <= range.last)
     )

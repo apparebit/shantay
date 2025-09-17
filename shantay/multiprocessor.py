@@ -109,6 +109,7 @@ class Multiprocessor:
             assert self._stats is not None
             if not self._stats.is_empty():
                 date_range = self._stats.date_range()
+                assert date_range is not None
                 _logger.info(
                     'existing statistics cover start_date="%s", end_date="%s"',
                     date_range.first, date_range.last
@@ -308,7 +309,7 @@ class Multiprocessor:
         # staging, making this write safe.
         meta_json = f"{self._metadata.stem}.json"
         meta_staging = self._storage.staging_root / meta_json
-        self._metadata.write_json(meta_staging, sort_keys=True)
+        self._metadata.write_json(meta_staging)
 
         return cast(Daily, release)
 

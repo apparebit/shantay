@@ -741,6 +741,7 @@ class Processor[R: Release]:
 
         if not stats.is_empty():
             range = stats.date_range()
+            assert range is not None
             _logger.info(
                 'existing statistics cover start_date="%s", end_date="%s"',
                 range.first, range.last

@@ -60,7 +60,7 @@ def main(argv: list[str]) -> int:
     metadata = metadata.without_filter()
 
     if options.store:
-        metadata.write_json(options.staging / "db.json", sort_keys=True)
+        metadata.write_json(options.staging / "db.json")
         print(f"wrote {options.staging / 'db.json'}")
 
     return 0

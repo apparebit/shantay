@@ -560,7 +560,11 @@ class Visualizer:
         # Capture frequency, tags, date range
         self._frequency = self._coverage.frequency
         self._tags = get_tags(statistics.frame())
-        self._date_range = statistics.date_range().intersection(
+        if statistics.is_empty():
+            raise ValueError(f"empty statistics {statistics.file}")
+        range = statistics.date_range()
+        assert range is not None
+        self._date_range = range.intersection(
             self._coverage.date_range(), empty_ok=False
         ).monthlies().date_range() # Restrict to full months
 

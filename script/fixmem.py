@@ -124,7 +124,7 @@ def main(argv: list[str]) -> int:
                 del value["batch_memory"]
 
         if options.store:
-            metadata.write_json(file, sort_keys=True)
+            metadata.write_json(file)
             print(f"fixed {file}")
         else:
             print(f"processed {file}")

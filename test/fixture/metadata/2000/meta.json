@@ -1,9 +1,11 @@
 {
     "@id": "Shantay 665.0",
-    "stem": "doom",
-    "filter": {
-        "kind": "platform",
-        "criterion": ["End", "of", "THE WORLD"]
+    "config": {
+        "stem": "doom",
+        "filter": {
+            "kind": "platform",
+            "criterion": ["End", "of", "THE WORLD"]
+        }
     },
     "releases": {
         "1999-12-31": {

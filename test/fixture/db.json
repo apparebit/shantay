@@ -1,7 +1,9 @@
 {
   "@id": "Shantay 665.0",
-  "stem": "db",
-  "filter": null,
+  "config": {
+    "stem": "db",
+    "filter": null
+  },
   "releases": {
     "2024-03-14": {
       "batch_count": 2,

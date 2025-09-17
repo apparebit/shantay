@@ -24,7 +24,7 @@ import polars as pl
 from .framing import (
     aggregates, finalize, get_quantity, NOT_NULL, predicate, Quantity
 )
-from .model import Daily, DateRange, MetadataEntry, Release
+from .model import Daily, DateRange, MetadataEntry, Release, ReleaseRange
 from .schema import (
     CanonicalPlatformNames, CategoryValueType, check_stats_platforms, ColumnValueType,
     DurationTransform, EntityValueType, humanize, KeywordChildSexualAbuseMaterial,
@@ -1060,6 +1060,12 @@ class Statistics:
 
         r1 = s1.date_range()
         r2 = s2.date_range()
+
+        if r1 is None:
+            return cls(file) if r2 is None else s2
+        elif r2 is None:
+            return s1
+
         if r1.first != r2.first:
             raise ValueError(
                 f"inconsistent start dates {r1.first.isoformat()} "
@@ -1192,14 +1198,16 @@ class Statistics:
             pl.col("start_date").le(date).and_(pl.col("end_date").ge(date))
         ).height
 
-    def date_range(self) -> DateRange:
-        """
-        Determine the range from minimum start date to maximum end date
-        covered by the summary statistics.
-        """
+    def release_range(self) -> None | ReleaseRange[Daily]:
+        """Determine the range of releases covered by the summary statistics."""
+        range = self.date_range()
+        return None if range is None else range.dailies()
+
+    def date_range(self) -> None | DateRange:
+        """Determine the range of dates covered by the summary statistics."""
         frame = self.frame()
         if frame.height == 0:
-            raise ValueError("no statistics available")
+            return None
         return date_range_of(frame)
 
     def collect(

@@ -11,13 +11,13 @@ from typing import Callable, cast, Self
 from . import __version__
 from .digest import compute_digest, read_digest_file, write_digest_file
 from .model import (
-    DateRange, DIGEST_FILE, file_stem_for, Filter, FullMetadataEntry,
-    MetadataConflict, MetadataEntry, Release
+    Daily, DateRange, DIGEST_FILE, file_stem_for, Filter, FullMetadataEntry,
+    MetadataConflict, MetadataEntry, Release, ReleaseRange
 )
 from .progress import NO_PROGRESS, Progress
 
 
-_FILE_TYPE = re.compile(r'^{\s*"@id":\s?"Shantay ')
+_FILE_TYPE = re.compile(r'^{\s*"@id":\s?"Shantay \d+[.]\d+[.]\d+"')
 _logger = logging.getLogger(__spec__.parent)
 
 
@@ -82,15 +82,43 @@ class Metadata[R: Release]:
         for release, entry in self._releases.items():
             yield cast(FullMetadataEntry, dict(release=release, **entry))
 
-    @property
-    def range(self) -> DateRange:
-        """Get the date for the first and last release."""
+    def _label_range(self) -> None | tuple[str, str]:
         if len(self._releases) == 0:
-            raise ValueError("no coverage available")
-        releases = sorted(self._releases)
+            return None
+
+        first = last = None
+        for release in self._releases.keys():
+            if first is None or release < first:
+                first = release
+            if last is None or last < release:
+                last = release
+
+        assert first is not None
+        assert last is not None
+        return first, last
+
+    @property
+    def release_range(self) -> None | ReleaseRange[Daily]:
+        """Get the range of releases as textual labels."""
+        range = self._label_range()
+        if range is None:
+            return None
+
+        return ReleaseRange(
+            cast(Daily, Release.of(range[0])),
+            cast(Daily, Release.of(range[1])),
+        )
+
+    @property
+    def date_range(self) -> None | DateRange:
+        """Get the date for the first and last release."""
+        range = self._label_range()
+        if range is None:
+            return None
+
         return DateRange(
-            dt.date.fromisoformat(releases[0]),
-            dt.date.fromisoformat(releases[-1])
+            dt.date.fromisoformat(range[0]),
+            dt.date.fromisoformat(range[1]),
         )
 
     def set_stem(self, stem: str) -> None:
@@ -269,13 +297,16 @@ class Metadata[R: Release]:
         if id is None or not id.startswith("Shantay "):
             raise ValueError(f'"{file}" is not a valid metadata file for Shantay')
 
-        stem = data["stem"]
-        filter = None if data["filter"] is None else Filter.from_json(data["filter"])
+        config = data["config"]
+        f = config["filter"]
+        filter = None if f is None else Filter.from_json(f)
+        stem = config["stem"]
+
         releases = data["releases"]
 
         return cls(stem, filter, releases)
 
-    def write_json(self, file: Path, *, sort_keys: bool = False) -> None:
+    def write_json(self, file: Path) -> None:
         """Write the metadata to the given file."""
         if self._stem != file.stem:
             raise ValueError(
@@ -286,10 +317,12 @@ class Metadata[R: Release]:
         with open(tmp, mode="w", encoding="utf8") as handle:
             json.dump({
                 "@id": f"Shantay {__version__}",
-                "stem": self._stem,
-                "filter": None if self._filter is None else self._filter.to_json(),
-                "releases": self._releases
-            }, handle, indent=2, sort_keys=sort_keys)
+                "config": {
+                    "stem": self._stem,
+                    "filter": None if self._filter is None else self._filter.to_json(),
+                },
+                "releases": dict(sorted(self._releases.items())),
+            }, handle, indent=2)
             handle.write("\n")
         tmp.replace(file)
 
