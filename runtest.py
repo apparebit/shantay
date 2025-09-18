@@ -49,7 +49,7 @@ if __name__ == "__main__":
     ticker()
 
     from shantay.__main__ import configure_logging
-    configure_logging(str(STAGING / "log.log"), verbose=True)
+    configure_logging(str(STAGING / "log.log"))
     ticker()
 
     load_tests()

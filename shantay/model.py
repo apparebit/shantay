@@ -897,7 +897,7 @@ class Storage:
         return self.extract_root
 
     @property
-    def best_available_root(self) -> Path:
+    def best_root(self) -> Path:
         if self.extract_root is not None:
             return self.extract_root
         if self.archive_root is not None:

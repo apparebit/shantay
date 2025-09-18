@@ -18,7 +18,7 @@ from .pool import (
     Cancelled, check_not_cancelled, ErrorTrace, ErrorTraceFactory, Pool, Task,
     WorkerProgress
 )
-from .processor import is_distilled, Processor
+from .processor import is_distilled, prepare_for_summaries, Processor
 from .schema import MissingPlatformError, update_platforms
 from .stats import Collector, Statistics
 
@@ -45,6 +45,7 @@ class Multiprocessor:
         self._config = config
         self._metadata = metadata
         self._stats = None
+        self._db_tmp_dir = None
 
         self._task = None
         self._iter = None
@@ -88,36 +89,24 @@ class Multiprocessor:
         start_time = time.time()
 
         # Determine cursor's first and final values as well as increment
-        if task in ("download", "distill"):
-            pass
+        if task not in ("download", "distill", "summarize-all", "summarize-extract"):
+            raise ValueError(f"invalid task {task}")
+
+        if task == "summarize-all":
+            self._db_tmp_dir, _ = prepare_for_summaries(self._storage)
         elif task == "summarize-extract":
-            self._stats = Statistics.from_storage(
+            self._stats = Statistics.pick(
                 self.stats_file,
                 self._storage.staging_root,
                 self._storage.the_extract_root,
             )
-        elif task == "summarize-all":
-            self._stats = Statistics.from_storage(
-                self.stats_file,
-                self._storage.staging_root,
-                self._storage.the_archive_root,
-            )
-        else:
-            raise ValueError(f"invalid task {task}")
 
-        if task.startswith("summarize"):
-            assert self._stats is not None
-            if not self._stats.is_empty():
-                date_range = self._stats.date_range()
-                assert date_range is not None
+            range = None if self._stats.is_empty() else self._stats.date_range()
+            if range is not None:
                 _logger.info(
                     'existing statistics cover start_date="%s", end_date="%s"',
-                    date_range.first, date_range.last
+                    range.first, range.last
                 )
-
-        self._iter = iter(self._coverage)
-        _logger.info('    key="iter.first",           value="%s"', self._coverage.first)
-        _logger.info('    key="iter.last",            value="%s"', self._coverage.last)
 
         try:
             self._run(task)
@@ -137,35 +126,31 @@ class Multiprocessor:
         assert self._pool is not None
         self._pool.run(self._task_iter(), self._done_with_task)
 
-        if task in ("distill", "summarize-extract"):
-            meta_json = f"{self._metadata.stem}.json"
-            Metadata.copy_json(
-                self._storage.staging_root / meta_json,
-                self._storage.the_extract_root / meta_json)
-        elif task == "summarize-all":
-            Metadata.copy_json(
-                self._storage.staging_root / "db.json",
-                self._storage.the_archive_root / "db.json",
-            )
+        if not task.startswith("summarize"):
+            return
 
-        if task.startswith("summarize"):
+        # Put data and metadata into long-term storage
+        meta_json = f"{self._metadata.stem}.json"
+        Metadata.copy_json(
+            self._storage.staging_root / meta_json,
+            self._storage.best_root / meta_json
+        )
+
+        if task == "summarize-all":
+            assert self._db_tmp_dir is not None
+            stats = Statistics.read_all(self._db_tmp_dir, "db-*.parquet", "db.parquet")
+        else:
             assert self._stats is not None
+            stats = self._stats
+        stats.write(self._storage.staging_root, should_finalize=True)
 
-            _logger.info(
-                'writing rechunked summary statistics to file="%s"',
-                self._storage.staging_root / self.stats_file
-            )
-            self._stats.write(self._storage.staging_root, should_finalize=True)
-
-            if self._storage.extract_root is not None:
-                persistent = self._storage.the_extract_root
-            else:
-                persistent = self._storage.the_archive_root
-            _logger.info(
-                'copying summary statistics to persistent file="%s"',
-                persistent / self.stats_file
-            )
-            Statistics.copy(self.stats_file, self._storage.staging_root, persistent)
+        _logger.info(
+            'copying summary statistics to persistent file="%s"',
+            self._storage.best_root / self.stats_file
+        )
+        Statistics.copy(
+            self.stats_file, self._storage.staging_root, self._storage.best_root
+        )
 
     def _task_iter(self) -> Iterator[Task]:
         assert self._pool is not None
@@ -261,7 +246,6 @@ class Multiprocessor:
 
     def _done_with_task(self, task: Task, future: Future) -> None:
         assert self._pool is not None
-
         tag, result = future.result()
 
         # Retrying the same or the next release on errors probably will fail
@@ -287,15 +271,15 @@ class Multiprocessor:
             # If distill was scheduled as part of summarize, schedule summarization
             if self._task == "summarize-extract":
                 self._continuations.append(release)
-        elif task.kwargs["task"].startswith("summarize"):
-            if result[0] is not None:
-                self._update_metadata(result[0])
-
+        elif task.kwargs["task"] == "summarize-all":
+            release = self._update_metadata(result[0])
+            # The coordinator can safely update its own staging area
+            result[1].write(self._db_tmp_dir, should_finalize=True)
+        elif task.kwargs["task"] == "summarize-extract":
+            assert result[0] is None
             assert self._stats is not None
             self._stats.append(result[1])
-
-            # This method executes in coordinator and writes to coordinator's
-            # staging, making it safe to update the file.
+            # The coordinator can safely update its own staging area
             self._stats.write(self._storage.staging_root)
         else:
             raise AssertionError(f"invalid task {self._task}")
@@ -439,11 +423,13 @@ def _run_on_worker(
         processor.distill_release(release)
         result = metadata[release] | dict(release=release)
     elif task == "summarize-all":
-        collector = Collector()
-        processor.summarize_full_release(release, collector)
-        result = metadata[release] | dict(release=release), collector.frame()
+        stats = processor.summarize_full_release(release)
+        result = metadata[release] | dict(release=release), stats.frame()
     elif task == "summarize-extract":
-        collector = Collector()
+        collector = Collector(
+            stratify_by_category=config.stratify_by_category,
+            stratify_all_text=config.stratify_all_text,
+        )
         processor.summarize_release_extract(release, collector)
         result = None, collector.frame()
     else:

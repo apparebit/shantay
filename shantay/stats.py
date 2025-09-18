@@ -1037,7 +1037,7 @@ class Statistics:
             return cls.read(path)
 
     @classmethod
-    def from_storage(cls, file: str, staging: Path, persistent: Path) -> Self:
+    def pick(cls, file: str, staging: Path, persistent: Path) -> Self:
         """
         Pick the more complete statistics from staging and the persistent root
         directory, i.e., archive or extract. This method assumes that if both
@@ -1075,11 +1075,23 @@ class Statistics:
         return s1 if r2.last < r1.last else s2
 
     @classmethod
+    def read_all(cls, directory: Path, glob: str, file: str) -> Self:
+        """
+        Instantiate a new statistics frame from *all* files matching the given
+        glob. The resulting frame uses the given file name.
+        """
+        return cls._do_read(f"{directory}/{glob}", file)
+
+    @classmethod
     def read(cls, path: Path) -> Self:
         """
         Instantiate a new statistics frame from the given file path. This method
         assumes that the file exists and throws an exception otherwise.
         """
+        return cls._do_read(path, path.name)
+
+    @classmethod
+    def _do_read(cls, path: str | Path, file: str) -> Self:
         frame = pl.read_parquet(
             path
         ).with_columns(
@@ -1094,7 +1106,7 @@ class Statistics:
         # unknown platform names and initiate (mostly) automatic recovery.
         check_stats_platforms(path, frame)
         return cls(
-            path.name,
+            file,
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         )
 
@@ -1247,18 +1259,28 @@ class Statistics:
         summarizer.summarize(self.frame())
         return summarizer.formatted_summary(markdown)
 
-    def write(self, directory: Path, should_finalize: bool = False) -> Self:
+    def write(
+        self,
+        directory: Path,
+        *,
+        release: None | Release = None,
+        should_finalize: bool = False,
+    ) -> Self:
         """
         Write this statistics frame to the given directory. If `finalize` is
         `True`, this method groups and aggregates the frame at daily
         granularity, sorts the entries by date, and rechunks the memory consumed
-        by the data frame before writing it out. The updated version also
-        replaces the original version.
+        by the data frame before writing it out. The updated frame also becomes
+        the internal version. If `release` is given, this method treats the
+        frame as a partial frame for that release and stores it in the nested
+        directory named after the release.
         """
         frame = self.frame()
         if should_finalize:
             self._full_frame = frame = finalize(frame)
 
+        if release is not None:
+            directory = directory / release.directory
         path = directory / self.file
         tmp = path.with_suffix(".tmp.parquet")
         frame.write_parquet(tmp)

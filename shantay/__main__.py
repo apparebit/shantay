@@ -167,7 +167,7 @@ supported tasks:
     return parser
 
 
-def configure_logging(logfile: str, *, level: int = logging.INFO) -> None:
+def configure_logging(logfile: str, *, level: int = logging.NOTSET) -> None:
     logging.Formatter.default_msec_format = "%s.%03d"
     logging.basicConfig(
         format='%(asctime)s︙%(process)d︙%(name)s︙%(levelname)s︙%(message)s',

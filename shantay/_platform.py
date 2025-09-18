@@ -370,7 +370,7 @@ def check_db_platforms(path: Path, frame: Any) -> None:
     _check_platforms(path, frame, "platform_name")
 
 
-def check_stats_platforms(path: Path, frame: Any) -> None:
+def check_stats_platforms(path: str | Path, frame: Any) -> None:
     """
     Check the data frame with summary statistics for previously unknown platform
     names and raise a missing platform error with any unknown names.
@@ -378,7 +378,7 @@ def check_stats_platforms(path: Path, frame: Any) -> None:
     _check_platforms(path, frame, "platform")
 
 
-def _check_platforms(path: Path, frame: Any, column: str) -> None:
+def _check_platforms(path: str | Path, frame: Any, column: str) -> None:
     import polars as pl
     used_names = frame.select(pl.col(column).drop_nulls().unique()).get_column(column)
 

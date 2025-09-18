@@ -735,20 +735,7 @@ class Processor[R: Release]:
 
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""
-        stats = Statistics.from_storage(
-            self.stats_file, self._storage.staging_root, self._storage.the_archive_root
-        )
-
-        staged = self._storage.staging_root / self.stats_file
-        archive = self._storage.the_archive_root / self.stats_file
-
-        if not stats.is_empty():
-            range = stats.date_range()
-            assert range is not None
-            _logger.info(
-                'existing statistics cover start_date="%s", end_date="%s"',
-                range.first, range.last
-            )
+        db_tmp_dir, existing_range = prepare_for_summaries(self._storage)
 
         # Due to variability of daily record numbers and worker process timing,
         # the multiprocessing version of summarize may add daily statistics out
@@ -756,28 +743,33 @@ class Processor[R: Release]:
         # order, this loop ensures that any holes are filled, making this a
         # robust, self-healing implementation strategy.
         for release in self._coverage:
-            if cast(Daily, release) in stats:
+            assert release.date is not None
+            if existing_range is not None and release.date in existing_range:
                 _logger.debug('summary statistics already cover release="%s"', release)
                 continue
 
             # Ensure graceful termination in offline mode
             if self._config.offline and not self.is_archive_downloaded(release):
-                _logger.debug(
-                    'stopping due to missing archive in offline mode '
+                _logger.error(
+                    'archive is missing while in offline mode '
                     'for task="summarize-all", release="%s"',
                     release.id
                 )
                 break
 
             try:
-                self.summarize_full_release(release, stats)
+                stats = self.summarize_full_release(release)
             except MissingPlatformError as x:
                 # This method is only executed during single-process runs and
                 # hence it is safe-ish to update the list of platforms here.
                 update_platforms(x.args[0])
                 raise
-            _logger.debug('writing summary statistics to file="%s"', staged)
-            stats.write(self._storage.staging_root)
+
+            stats.write(db_tmp_dir, should_finalize=True)
+            _logger.debug(
+                'saved summary statistics to file="%s", release="%s"',
+                f"db.tmp/{stats.file}", release
+            )
 
         meta_json = f"{self._metadata.stem}.json"
         Metadata.copy_json(
@@ -786,25 +778,30 @@ class Processor[R: Release]:
         )
 
         # Rewrite saved statistics after rechunking and copy to persistent root
-        _logger.info('writing rechunked summary statistics to file="%s"', staged)
+        _logger.info('combining summary statistics to file="db.parquet"')
+        stats = Statistics.read_all(db_tmp_dir, "db-*.parquet", "db.parquet")
         stats.write(self._storage.staging_root, should_finalize=True)
+        shutil.rmtree(db_tmp_dir)
 
-        _logger.info('copying summary statistics to archive file="%s"', archive)
+        _logger.info(
+            'copying summary statistics to archive file="%s/db.parquet"',
+            self._storage.archive_root
+        )
         Statistics.copy(
             self.stats_file, self._storage.staging_root, self._storage.the_archive_root
         )
         return stats.frame()
 
-    def summarize_full_release(
-        self, release: Daily, collector: CollectorProtocol
-    ) -> None:
-        """Determine summary statistics for the given release of the full database."""
+    def summarize_full_release(self, release: Daily) -> Statistics:
+        """
+        Determine summary statistics for the given release of the full database
+        and return the result.
+        """
         _logger.info('summarizing release="%s"', release.id)
         if not self.is_archive_downloaded(release):
             self.download_archive(release)
 
         archive_path = self.stage_archive(release)
-
         with zipfile.ZipFile(archive_path) as archive:
             filenames = sorted(archive.namelist())
             batch_count = len(filenames)
@@ -813,8 +810,9 @@ class Processor[R: Release]:
                 f"summarizing {release.id}", "batch", with_rate=False,
             )
             self._progress.start(batch_count)
-
             full_counts = Counter(batch_count=batch_count)
+
+            (self._storage.staging_root / release.directory).mkdir(parents=True)
 
             # Archived files are archives, too. Unarchive one at a time.
             for index, name in enumerate(filenames):
@@ -842,8 +840,15 @@ class Processor[R: Release]:
                 )
 
                 # We process each batch by itself. When the summary statistics are
-                # finalized, those unit counts add up.s
-                collector.collect(release, frame, metadata_entry={"batch_count": 1})
+                # finalized, those unit counts add up.
+                stats = Statistics(
+                    f"db-{index:05}.parquet",
+                    stratify_by_category=self._config.stratify_by_category,
+                    stratify_all_text=self._config.stratify_all_text,
+                )
+                stats.collect(release, frame, metadata_entry={"batch_count": 1})
+                stats.write(self._storage.staging_root, release=release)
+                stats = None
 
                 # A daily release may comprise over 100 GB of uncompressed CSV data.
                 # With three concurrent processes, that would be over 300 GB of disk
@@ -857,6 +862,15 @@ class Processor[R: Release]:
                     name, latency, time_unit
                 )
 
+        _logger.debug(
+            'combining file-count=%d, glob="db-*.parquet", release="%s"',
+            batch_count, release
+        )
+        stats = Statistics.read_all(
+            self._storage.staging_root / release.directory,
+            "db-*.parquet", f"db-{release}.parquet"
+        )
+
         self._metadata[release] = cast(MetadataEntry, full_counts)
         self._metadata.write_json(
             self._storage.staging_root / f"{self._metadata.stem}.json"
@@ -866,6 +880,8 @@ class Processor[R: Release]:
         # can still weigh 8 GB. Hence we aggressively clean staged releases as
         # well.
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
+
+        return stats
 
     def visualize(self) -> None:
         """Visualize summary statistics."""
@@ -879,6 +895,29 @@ class Processor[R: Release]:
             with_clamped_outliers=self._config.clamp_outliers,
             with_platforms=self._config.platforms,
         ).run()
+
+
+def prepare_for_summaries(storage: Storage) -> tuple[Path, None | DateRange]:
+    """
+    Recreate the directory for per-release summary statistics and copy existing
+    statistics (if they exist) into it.
+    """
+    db_tmp_dir = storage.staging_root / "db.tmp"
+    db_tmp_dir.mkdir()
+
+    stats = Statistics.pick(
+        "db.parquet", storage.staging_root, storage.the_archive_root
+    )
+
+    range = None if stats.is_empty() else stats.date_range()
+    if range is not None:
+        _logger.info(
+            'existing statistics cover start_date="%s", end_date="%s"',
+            range.first, range.last
+        )
+        stats.frame().write_parquet(f"{db_tmp_dir}/db-{range.last}.parquet")
+
+    return db_tmp_dir, range
 
 
 def is_distilled(root: Path, release: Daily) -> bool:
