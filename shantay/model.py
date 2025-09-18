@@ -363,6 +363,11 @@ class ReleaseRange[R: Release](Period):
         """Determine the release frequency of this range."""
         return self.first.frequency
 
+    def __contains__(self, release: R) -> bool:
+        if isinstance(release, type(self.first)):
+            return self.first <= release <= self.last
+        return NotImplemented
+
     def __iter__(self) -> Iterator[R]:
         cursor = self.first
         last = self.last
@@ -371,6 +376,9 @@ class ReleaseRange[R: Release](Period):
             if cursor == last:
                 break
             cursor = cursor.next()
+
+    def __str__(self) -> str:
+        return f"{self.first}-{self.last}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -458,6 +466,9 @@ class DateRange(Period):
 
     def __len__(self) -> int:
         return (self.last - self.first).days + 1
+
+    def __contains__(self, date: dt.date) -> bool:
+        return self.first <= date <= self.last
 
     def __iter__(self) -> Iterator[dt.date]:
         cursor = self.first
