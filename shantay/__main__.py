@@ -1,6 +1,7 @@
 from argparse import ArgumentParser, RawDescriptionHelpFormatter
 from collections.abc import Sequence
 import logging
+import os
 from pathlib import Path
 import shutil
 import sys
@@ -152,6 +153,12 @@ supported tasks:
     )
 
     parser.add_argument(
+        "--debug",
+        help="print detailed information about tool execution to the console, "
+        "including for Pola.rs"
+    )
+
+    parser.add_argument(
         "task",
         choices=["info", "download", "distill", "recover", "summarize", "visualize"],
         help="select the task to execute",
@@ -160,13 +167,13 @@ supported tasks:
     return parser
 
 
-def configure_logging(logfile: str, *, verbose: bool) -> None:
+def configure_logging(logfile: str, *, level: int = logging.INFO) -> None:
     logging.Formatter.default_msec_format = "%s.%03d"
     logging.basicConfig(
         format='%(asctime)s︙%(process)d︙%(name)s︙%(levelname)s︙%(message)s',
         filename=logfile,
         encoding="utf8",
-        level=logging.DEBUG if verbose else logging.INFO,
+        level=level,
     )
 
 
@@ -183,8 +190,17 @@ def main(argv: None | Sequence[str] = None) -> int:
         parser.print_help()
         sys.exit(1)
 
+    if options.debug:
+        os.environ["SHANTAY_DEBUG"] = "pool"
+        os.environ["POLARS_VERBOSE"] = "1"
+        level = logging.NOTSET
+    elif options.verbose:
+        level = logging.DEBUG
+    else:
+        level = logging.INFO
+
     # Configure logging, since sync_web_platforms writes to the log
-    configure_logging(options.logfile, verbose=options.verbose)
+    configure_logging(options.logfile, level=level)
     logger = logging.getLogger(__package__)
     logger.info(
         '▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁▁'
