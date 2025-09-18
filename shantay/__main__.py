@@ -154,6 +154,7 @@ supported tasks:
 
     parser.add_argument(
         "--debug",
+        action="store_true",
         help="print detailed information about tool execution to the console, "
         "including for Pola.rs"
     )
