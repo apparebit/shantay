@@ -45,6 +45,7 @@ import logging
 import multiprocessing as mp
 import os
 import shutil
+import sys
 import threading
 import traceback
 from types import TracebackType
@@ -56,7 +57,7 @@ from .progress import Progress
 
 _PID = os.getpid()
 _PROGRESS = ["activity", "start", "step", "perform"]
-_logger = logging.getLogger(__spec__.parent)
+_logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -197,6 +198,7 @@ class Pool:
     ) -> None:
         """Run this pool."""
         # Loosely based on https://github.com/alexwlchan/concurrently
+        _logger.debug('start processing tasks in pool="%s"', self._id)
         with self:
             futures = {}
             for task in itertools.islice(tasks, self._size):
@@ -239,7 +241,7 @@ class Pool:
         completion.
         """
         if self._state.set_finishing():
-            _logger.debug('finish pool="%s"', self._id)
+            _logger.debug('finishing pool="%s"', self._id)
 
     def stop(self) -> None:
         """
@@ -250,7 +252,7 @@ class Pool:
         if not self._state.set_stopping():
             return
 
-        _logger.debug('stop pool="%s"', self._id)
+        _logger.debug('stopping pool="%s"', self._id)
         for _ in range(self._size):
             try:
                 self._cancel_queue.put(None)
@@ -395,7 +397,7 @@ def _manage_status(
             _logger.error('failed to read from queue="status"', exc_info=x)
             break
         if message is None:
-            _logger.debug('cancelled thread="status_manager"')
+            _logger.debug('received command="finish" thread="status_manager"')
             break
 
         pid, cmd, *args = message
@@ -407,7 +409,7 @@ def _manage_status(
             getattr(trackers[index_table.setdefault(pid)], cmd)(*args)
             continue
 
-        _logger.error('invalid command="%s", worker=%d', cmd, pid)
+        _logger.error('received invalid command="%s", worker=%d', cmd, pid)
 
 
 # ======================================================================================
@@ -569,10 +571,22 @@ class WorkerLogHandler(logging.Handler):
 # --------------------------------------------------------------------------------------
 
 
-# The two globals are only used within worker processes, which are tied to a
+def _has_console_handler(logger: logging.Logger) -> bool:
+    """Determine whether the logger has a handler printing to the console."""
+    for handler in logger.handlers:
+        if not isinstance(handler, logging.StreamHandler):
+            continue
+        if handler.stream in (sys.stdout, sys.stderr):
+            return True
+    return False
+
+
+# The three globals are only used within worker processes, which are tied to a
 # pool instance. In other words, a process may instantiate more than one Pool.
 _status_queue = None
 _terminator = None
+class _worker:
+    logger = _logger
 
 
 def _initialize_worker(
@@ -585,12 +599,19 @@ def _initialize_worker(
     status_queue._reader.close() # pyright: ignore[reportAttributeAccessIssue]
     _status_queue = status_queue
 
-    # Provide root logger with a handler that forwards to coordinator
+    # If root logger has no handler, add one that forwards to coordinator
     logger = logging.getLogger()
     if len(logger.handlers) == 0:
         logger.addHandler(WorkerLogHandler())
         logger.setLevel(log_level)
 
+    # While debugging pool activity, be sure to print log entries to console
+    if "pool" in os.getenv("DEBUG_SHANTAY", ""):
+        if not _has_console_handler(logger):
+            logger.addHandler(logging.StreamHandler())
+        logger.setLevel(logging.DEBUG)
+
+    # Set up thread waiting for cancel signal
     _terminator = threading.Thread(
         target=_wait_for_cancellation,
         args=(cancel_queue,),
@@ -599,26 +620,29 @@ def _initialize_worker(
     _terminator.start()
 
     # Log under module name
-    logger = logging.getLogger(__name__)
-    logger.info('initialized worker process pid=%d, pool="%s"', _PID, pool_id)
+    _worker.logger = logging.getLogger(__name__)
+    _worker.logger.info('initialized worker process pid=%d, pool="%s"', _PID, pool_id)
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
     try:
         signal.get()
     except BaseException as x:
-        _logger.error('failed reading from queue="cancel", worker=%d', _PID, exc_info=x)
+        _worker.logger.error(
+            'failed reading from queue="cancel", worker=%d', _PID, exc_info=x
+        )
     else:
-        _logger.info("cancellation signal received by worker=%d", _PID)
+        _worker.logger.info("cancellation signal received by worker=%d", _PID)
         _is_cancelled.set()
 
 
 def _send_status_update(cmd: str, *args: Any) -> bool:
-    if _status_queue is None:
-        return False
     try:
+        assert _status_queue is not None
         _status_queue.put((_PID, cmd, *args))
         return True
     except BaseException as x:
-        _logger.error('failed writing to queue="status", worker=%d', _PID, exc_info=x)
+        _worker.logger.error(
+            'failed writing to queue="status", worker=%d', _PID, exc_info=x
+        )
         return False

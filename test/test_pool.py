@@ -65,31 +65,29 @@ class TestPool(unittest.TestCase):
 
             offset = -1
             for offset, line in enumerate(lines):
-                if 'submit fn=' in line:
+                if "shantay.pool" in line:
                     break
             self.assertNotEqual(offset, -1)
 
             # Since the log combines entries written by three processes, their
-            # order is mostly non-deterministic. For that reason, we only check
-            # that all expected lines are present—after lexically sorting the
-            # lines. We also account for Python's worker pool not starting all
-            # of its workers.
-            self.assertTrue(offset + 9 <= len(lines))
-            if offset + 10 <= len(lines):
-                lines = lines[offset:offset + 10]
-                expected_init = 2
-            else:
-                lines = lines[offset:offset + 9]
-                expected_init = 1
+            # order is mostly non-deterministic. To nonetheless make meaningful
+            # assertions about the log entries, we sort them in lexical
+            # order.
+            lines = sorted(l[l.index("︙", 24) + 1:] for l in lines[offset:])
 
-            lines = sorted(l[l.index("︙", 24) + 1:] for l in lines)
-            for index in range(expected_init):
-                self.assertIn("shantay.pool︙INFO︙initialized worker process pid=", lines[index])
-            self.assertIn('shantay︙DEBUG︙cancelled thread="status_manager"', lines[expected_init])
-            self.assertIn('shantay︙DEBUG︙done processing tasks in pool=', lines[expected_init + 1])
-            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task1", pool=', lines[expected_init + 2])
-            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task2", pool=', lines[expected_init + 3])
-            self.assertIn('shantay︙DEBUG︙submit fn="test.test_pool.task3", pool=', lines[expected_init + 4])
-            self.assertIn('test.test_pool︙INFO︙task1 processes "1"', lines[expected_init + 5])
-            self.assertIn('test.test_pool︙INFO︙task2 processes "2"', lines[expected_init + 6])
-            self.assertIn('test.test_pool︙INFO︙task3 processes "3"', lines[expected_init + 7])
+            length = len(lines)
+            self.assertIn(length, (10, 11))
+
+            for index, snippet in enumerate([
+                'shantay.pool︙DEBUG︙done processing tasks in pool=',
+                'shantay.pool︙DEBUG︙received command="finish" thread="status_manager"',
+                'shantay.pool︙DEBUG︙start processing tasks in pool=',
+                'shantay.pool︙DEBUG︙submit fn="test.test_pool.task1", pool=',
+                'shantay.pool︙DEBUG︙submit fn="test.test_pool.task2", pool=',
+                'shantay.pool︙DEBUG︙submit fn="test.test_pool.task3", pool=',
+                *(['shantay.pool︙INFO︙initialized worker process pid='] * (length-9)),
+                'test.test_pool︙INFO︙task1 processes "1"',
+                'test.test_pool︙INFO︙task2 processes "2"',
+                'test.test_pool︙INFO︙task3 processes "3"',
+            ]):
+                self.assertIn(snippet, lines[index ])
