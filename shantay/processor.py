@@ -24,7 +24,7 @@ from .schema import (
     check_db_platforms, MissingPlatformError, update_platforms
 )
 from .stats import Statistics
-from .util import annotate_error, scale_time
+from .util import annotate_error, get_max_rss, scale_bytes, scale_time
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -733,6 +733,11 @@ class Processor[R: Release]:
             release.id, filter or "", latency, time_unit
         )
 
+        max_rss = get_max_rss()
+        if max_rss is not None:
+            value, unit = scale_bytes(max_rss)
+            _logger.debug('maximum resident-set-size=%.0f, unit="%s"', value, unit)
+
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""
         db_tmp_dir, existing_range = prepare_for_summaries(self._storage)
@@ -770,6 +775,11 @@ class Processor[R: Release]:
                 'saved summary statistics to file="%s", release="%s"',
                 f"db.tmp/{stats.file}", release
             )
+
+            max_rss = get_max_rss()
+            if max_rss is not None:
+                value, unit = scale_bytes(max_rss)
+                _logger.debug('maximum resident-set-size=%.0f, unit="%s"', value, unit)
 
         meta_json = f"{self._metadata.stem}.json"
         Metadata.copy_json(
@@ -897,12 +907,13 @@ class Processor[R: Release]:
         ).run()
 
 
-def prepare_for_summaries(storage: Storage) -> tuple[Path, None | DateRange]:
+def prepare_for_summaries(storage: Storage) -> tuple[Path, Statistics]:
     """
     Recreate the directory for per-release summary statistics and copy existing
     statistics (if they exist) into it.
     """
     db_tmp_dir = storage.staging_root / "db.tmp"
+    shutil.rmtree(db_tmp_dir, ignore_errors=True)
     db_tmp_dir.mkdir()
 
     stats = Statistics.pick(
@@ -917,7 +928,7 @@ def prepare_for_summaries(storage: Storage) -> tuple[Path, None | DateRange]:
         )
         stats.frame().write_parquet(f"{db_tmp_dir}/db-{range.last}.parquet")
 
-    return db_tmp_dir, range
+    return db_tmp_dir, stats
 
 
 def is_distilled(root: Path, release: Daily) -> bool:

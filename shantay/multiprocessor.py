@@ -20,7 +20,8 @@ from .pool import (
 )
 from .processor import is_distilled, prepare_for_summaries, Processor
 from .schema import MissingPlatformError, update_platforms
-from .stats import Collector, Statistics
+from .stats import Statistics
+from .util import get_max_rss, scale_bytes
 
 
 _PID = os.getpid()
@@ -93,7 +94,7 @@ class Multiprocessor:
             raise ValueError(f"invalid task {task}")
 
         if task == "summarize-all":
-            self._db_tmp_dir, _ = prepare_for_summaries(self._storage)
+            self._db_tmp_dir, self._stats = prepare_for_summaries(self._storage)
         elif task == "summarize-extract":
             self._stats = Statistics.pick(
                 self.stats_file,
@@ -108,8 +109,10 @@ class Multiprocessor:
                     range.first, range.last
                 )
 
+        self._iter = iter(self._coverage)
+
         try:
-            self._run(task)
+            frame = self._run(task)
         finally:
             # Mark workers' staging roots as used
             for worker in self._pool.workers:
@@ -119,15 +122,15 @@ class Multiprocessor:
                 staging.rename(staging.with_name(f"{staging.name}.done"))
 
         self._running_time = time.time() - start_time
-        return None if self._stats is None else self._stats.frame()
+        return frame
 
-    def _run(self, task: str) -> None:
+    def _run(self, task: str) -> None | DataFrameType:
         # Do the work
         assert self._pool is not None
         self._pool.run(self._task_iter(), self._done_with_task)
 
         if not task.startswith("summarize"):
-            return
+            return None
 
         # Put data and metadata into long-term storage
         meta_json = f"{self._metadata.stem}.json"
@@ -151,6 +154,8 @@ class Multiprocessor:
         Statistics.copy(
             self.stats_file, self._storage.staging_root, self._storage.best_root
         )
+
+        return stats.frame()
 
     def _task_iter(self) -> Iterator[Task]:
         assert self._pool is not None
@@ -284,6 +289,14 @@ class Multiprocessor:
         else:
             raise AssertionError(f"invalid task {self._task}")
 
+        max_rss = get_max_rss()
+        if max_rss is not None:
+            value, unit = scale_bytes(max_rss)
+            _logger.debug(
+                'maximum resident-set-size=%.0f, unit="%s", coordinator=%d',
+                value, unit, _PID
+            )
+
     def _update_metadata(self, entry: FullMetadataEntry) -> Daily:
         release = entry["release"]
         del entry["release"] # pyright: ignore[reportGeneralTypeIssues]
@@ -385,6 +398,14 @@ def run_on_worker(
         # Sleep for a spell so that the coordinator can catch up with logging.
         time.sleep(1)
         return "error", ErrorTraceFactory(x)
+    finally:
+        max_rss = get_max_rss()
+        if max_rss is not None:
+            value, unit = scale_bytes(max_rss)
+            _logger.debug(
+                'maximum resident-set-size=%.0f, unit="%s", worker=%d',
+                value, unit, _PID
+            )
 
 
 def _run_on_worker(
@@ -424,14 +445,15 @@ def _run_on_worker(
         result = metadata[release] | dict(release=release)
     elif task == "summarize-all":
         stats = processor.summarize_full_release(release)
-        result = metadata[release] | dict(release=release), stats.frame()
+        result = metadata[release] | dict(release=release), stats
     elif task == "summarize-extract":
-        collector = Collector(
+        stats = Statistics(
+            f"{metadata.stem}.parquet",
             stratify_by_category=config.stratify_by_category,
             stratify_all_text=config.stratify_all_text,
         )
-        processor.summarize_release_extract(release, collector)
-        result = None, collector.frame()
+        processor.summarize_release_extract(release, stats)
+        result = None, stats
     else:
         raise AssertionError(f"invalid task {task}")
 

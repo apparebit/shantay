@@ -2,6 +2,7 @@ from collections.abc import Iterable, Sequence
 import functools
 import inspect
 import math
+import sys
 from typing import Callable
 
 
@@ -79,6 +80,24 @@ def scale(value: float) -> tuple[float, str]:
         return sign * value / 1_000_000, "mega"
     else:
         return sign * value / 1_000_000_000, "giga"
+
+
+def scale_bytes(value: float) -> tuple[float, str]:
+    """Scale the value to multiples of 1,024 and a unit label."""
+    if value < 0:
+        sign = -1
+        value *= -1
+    else:
+        sign = 1
+
+    if value < 1_024:
+        return sign * value, "B"
+    elif value < 1_024**2:
+        return sign * value / 1_000, "KB"
+    elif value < 1_024**3:
+        return sign * value / 1_000_000, "MB"
+    else:
+        return sign * value / 1_000_000_000, "GB"
 
 
 def scale_time(value: float) -> tuple[float, str]:
@@ -227,3 +246,21 @@ def _get_format(tp: type) -> Callable[[object], str]:
         return lambda c: "" if c is None else f"{c:.1f}"
     else:
         return lambda c: "" if c is None else f"{c}"
+
+
+if sys.platform == "darwin":
+    import resource
+    def get_max_rss() -> None | int:
+        """Get the maximum resident set size."""
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss
+
+elif sys.platform == "linux":
+    import resource
+    def get_max_rss() -> None | int:
+        """Get the maximum resident set size."""
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1_024
+
+else:
+    def get_max_rss() -> None | int:
+        """Get the maximum resident set size."""
+        return None
