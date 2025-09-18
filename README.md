@@ -310,14 +310,14 @@ computer. In addition, Shantay makes the most of available resources and
 supports parallel execution across a (small) number of processes, which does
 make a difference in my experience.
 
-### 4.1 Reliability Challenges
+### 4.1 Reliability Challenges and Solutions
 
-Fundamentally, big data in the small is only possible if both data and
-computation can be broken into units small enough to be feasible on consumer
-hardware. For the DSA transparency database, daily releases are still too big.
-Thankfully, the EU already breaks them down further, distributing each daily
-release as a zip file of zip files of CSV files. With each nested zip file of
-CSV files maxing out at 100,000 rows or statements of reasons, such "chunks"
+**Challenges**: Fundamentally, big data in the small is only possible if both
+data and computation can be broken into units small enough to be feasible on
+consumer hardware. For the DSA transparency database, daily releases are still
+too big. Thankfully, the EU already breaks them down further, distributing each
+daily release as a zip file of zip files of CSV files. With each nested zip file
+of CSV files maxing out at 100,000 rows or statements of reasons, such "chunks"
 *are* manageable. Hence, Shantay sticks to that same data partitioning when
 distilling or summarizing transparency data.
 
@@ -325,14 +325,10 @@ While that sounds straight-forward enough, doing so reliably can be challenging.
 That may not sound surprising, since reliability also is a major challenge for
 cluster-based systems. But whereas clusters, by their very design, can leverage
 redundancy towards reliability, that isn't possible when targeting a single
-computer.
-
-Worse, some of the targeted hardware adds to the reliability challenges.
-Notably, external USB drives are a cost-effective solution for providing the
-necessary bulk storage. But those drives are at their most reliable and
-performant for bulk-reads and -writes only. That is the primary reason for
-Shantay using a *staging directory* that is is distinct from long-term, external
-storage and should be located on the computer's internal drive.
+computer. Worse, some of the targeted hardware adds to the reliability
+challenges. Notably, external USB drives are a cost-effective solution for
+providing the necessary bulk storage. But those drives are at their most
+reliable and performant for bulk-reads and -writes only.
 
 However, since such internal drives are not dedicated to storing transparency
 data, they also may only have 100-200 GB of free space. But with a 3.5 GB daily
@@ -343,8 +339,25 @@ crash at worst. Similarly, when processing transparency data, each worker needs
 to handle a rapidly increasing amount of storage and can easily consume all
 virtual memory—which does trigger an operating system crash.
 
-These are not theoretical challenges. I have encountered them all during
-development of Shantay.
+**Solutions**: These are not theoretical challenges. I have encountered all of
+them during the development of Shantay. The solution to solution to bulk storage
+being reliable and performant only for large reads and writes is use of the
+*staging directory*, which is assumed to be on the internal disk. The solution
+to running out of space on that disk is to aggressively delete intermediate
+state again.
+
+Finally, the solution to running out of virtual memory is more involved.
+Originally, Shantay incrementally built one data frame with all of the summary
+statistics. That was resulting in unreasonably fast growth of resident-set size
+(RSS).
+
+Instead, an approach that stores a data frame with partial statistics for each
+batch from the daily release, combines those partial statistics into one data
+frame for the daily release when done processing all data for that release, and
+finally combines those daily statistics into a single data frame fares much
+better, with much smaller initial RSS and much slower growth. I also added
+instrumentation for tracking the maximum RSS, which can be used to automatically
+recreate the worker pool in the future.
 
 ### 4.2 The Implementation
 
@@ -353,29 +366,42 @@ distinguishes between code that orchestrates the data processing and code that
 performs the actual data analysis:
 
  1. The higher-level orchestration code has its own data structures defined in
-    `shantay.model` and `shantay.metadata`, a conventional single-threaded,
-    single-process implementation in `shantay.processor`, and a multi-threaded,
-    multi-process version in `shantay.multiprocessor` that delegates to the
-    single-process version as much as possible. This code largely treats the
-    data being processed as opaque blobs.
+    [`shantay.model`](https://github.com/apparebit/shantay/blob/boss/shantay/model.py)
+    and
+    [`shantay.metadata`](https://github.com/apparebit/shantay/blob/boss/shantay/metadata.py),
+    a conventional single-threaded, single-process implementation in
+    [`shantay.processor`](https://github.com/apparebit/shantay/blob/boss/shantay/processor.py),
+    and a multi-threaded, multi-process version in
+    [`shantay.multiprocessor`](https://github.com/apparebit/shantay/blob/boss/shantay/multiprocessor.py)
+    that delegates to the single-process version as much as possible. This code
+    largely treats the data being processed as opaque blobs.
 
  2. Other than ingesting CSV files (with two different parsers), the lower-level
     data wrangling code handles data frames and hence makes liberal use of
-    Pola.rs. It is spread over three modules, with `shantay.dsa_sor` ingesting
-    transparency DB releases, `shantay.stats` extracting summary statistics from
-    the transparency data, and `shantay.viz` turning extracted statistics into
-    detailed, illustration-heavy reports. In support, `shantay.schema` defines
-    the necessary schemas and `shantay.framing` provides some commonly needed
-    helper functions.
+    Pola.rs. It is spread over three modules, with
+    [`shantay.dsa_sor`](https://github.com/apparebit/shantay/blob/boss/shantay/dsa_sor.py)
+    ingesting transparency DB releases,
+    [`shantay.stats`](https://github.com/apparebit/shantay/blob/boss/shantay/stats.py)
+    extracting summary statistics from the transparency data, and
+    [`shantay.viz`](https://github.com/apparebit/shantay/blob/boss/shantay/viz.py)
+    turning extracted statistics into detailed, illustration-heavy reports. In
+    support,
+    [`shantay.schema`](https://github.com/apparebit/shantay/blob/boss/shantay/schema.py)
+    defines the necessary schemas and
+    [`shantay.framing`](https://github.com/apparebit/shantay/blob/boss/shantay/framing.py)
+    provides some commonly needed helper functions.
 
-While both `shantay.stats` and `shantay.viz` do contain plenty of bespoke,
-application-specific code, much of the extraction of summary statistics and
-their visualization through timeseries graphs is rather mechanical and
-repetitive. That makes it possible to concisely specify extraction and
-visualization through type declarations. `shantay.schema.TRANSFORM` defines how
-to process each column of transparency data and `shantay.schema.FIELDS` defines
-how to visualize each metric. The `stats` and `viz` modules implement the
-corresponding interpreters.
+While both
+[`shantay.stats`](https://github.com/apparebit/shantay/blob/boss/shantay/stats.py)
+and
+[`shantay.viz`](https://github.com/apparebit/shantay/blob/boss/shantay/viz.py)
+do contain plenty of bespoke, application-specific code, much of the extraction
+of summary statistics and their visualization through timeseries graphs is
+rather mechanical and repetitive. That makes it possible to concisely specify
+extraction and visualization through type declarations.
+`shantay.schema.TRANSFORM` defines how to process each column of transparency
+data and `shantay.schema.FIELDS` defines how to visualize each metric. The
+`stats` and `viz` modules implement the corresponding interpreters.
 
 ----
 
