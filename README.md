@@ -261,6 +261,7 @@ inside root directories.
       - `start_date` and `end_date` denote the date coverage of a row.
       - `tag` is the filter for distilled source data.
       - `platform` is the online platform making the disclosures.
+      - `category` is the coarse statement category.
       - `column` is the original transparency database column, with a few
         virtual column names added.
       - `entity` describes the metric contained in that row.
@@ -287,10 +288,10 @@ inside root directories.
 ## 4. Big Data in the Small
 
 Unlike most big data tools, Shantay is designed to run on consumer-level
-hardware, e.g., a reasonably fast laptop or desktop with an external flash
-drive, such as the Samsung T7, will do. In fact, that's my own setup: My primary
-development machine is a four-year-old x86 iMac and all data is stored on a 2 TB
-Samsung drive—though I'll have to upgrade to the next larger size soon enough.
+hardware. A reasonably fast laptop or desktop with an external flash drive, such
+as the Samsung T7, should do. And it does do: My primary development machine is
+a four-year-old x86 iMac, albeit with 10 processor cores and 128 GB RAM, and all
+data is stored on a 4 TB Samsung T7 drive.
 
 Shantay targets consumer-level hardware because transparency as an
 accountability mechanism mustn't be limited to people who have access to compute
@@ -308,6 +309,73 @@ frame library, which is much simpler and faster when running on a single
 computer. In addition, Shantay makes the most of available resources and
 supports parallel execution across a (small) number of processes, which does
 make a difference in my experience.
+
+### 4.1 Reliability Challenges
+
+Fundamentally, big data in the small is only possible if both data and
+computation can be broken into units small enough to be feasible on consumer
+hardware. For the DSA transparency database, daily releases are still too big.
+Thankfully, the EU already breaks them down further, distributing each daily
+release as a zip file of zip files of CSV files. With each nested zip file of
+CSV files maxing out at 100,000 rows or statements of reasons, such "chunks"
+*are* manageable. Hence, Shantay sticks to that same data partitioning when
+distilling or summarizing transparency data.
+
+While that sounds straight-forward enough, doing so reliably can be challenging.
+That may not sound surprising, since reliability also is a major challenge for
+cluster-based systems. But whereas clusters, by their very design, can leverage
+redundancy towards reliability, that isn't possible when targeting a single
+computer.
+
+Worse, some of the targeted hardware adds to the reliability challenges.
+Notably, external USB drives are a cost-effective solution for providing the
+necessary bulk storage. But those drives are at their most reliable and
+performant for bulk-reads and -writes only. That is the primary reason for
+Shantay using a *staging directory* that is is distinct from long-term, external
+storage and should be located on the computer's internal drive.
+
+However, since such internal drives are not dedicated to storing transparency
+data, they also may only have 100-200 GB of free space. But with a 3.5 GB daily
+release archive easily expanding into 70 GB of CSV data, it would take only 2 to
+3 worker processes fully expanding daily releases to completely fill the
+internal drive, which will trigger dire operating system warnings at best and a
+crash at worst. Similarly, when processing transparency data, each worker needs
+to handle a rapidly increasing amount of storage and can easily consume all
+virtual memory—which does trigger an operating system crash.
+
+These are not theoretical challenges. I have encountered them all during
+development of Shantay.
+
+### 4.2 The Implementation
+
+To keep separate concerns actually separate, Shantay's implementation
+distinguishes between code that orchestrates the data processing and code that
+performs the actual data analysis:
+
+ 1. The higher-level orchestration code has its own data structures defined in
+    `shantay.model` and `shantay.metadata`, a conventional single-threaded,
+    single-process implementation in `shantay.processor`, and a multi-threaded,
+    multi-process version in `shantay.multiprocessor` that delegates to the
+    single-process version as much as possible. This code largely treats the
+    data being processed as opaque blobs.
+
+ 2. Other than ingesting CSV files (with two different parsers), the lower-level
+    data wrangling code handles data frames and hence makes liberal use of
+    Pola.rs. It is spread over three modules, with `shantay.dsa_sor` ingesting
+    transparency DB releases, `shantay.stats` extracting summary statistics from
+    the transparency data, and `shantay.viz` turning extracted statistics into
+    detailed, illustration-heavy reports. In support, `shantay.schema` defines
+    the necessary schemas and `shantay.framing` provides some commonly needed
+    helper functions.
+
+While both `shantay.stats` and `shantay.viz` do contain plenty of bespoke,
+application-specific code, much of the extraction of summary statistics and
+their visualization through timeseries graphs is rather mechanical and
+repetitive. That makes it possible to concisely specify extraction and
+visualization through type declarations. `shantay.schema.TRANSFORM` defines how
+to process each column of transparency data and `shantay.schema.FIELDS` defines
+how to visualize each metric. The `stats` and `viz` modules implement the
+corresponding interpreters.
 
 ----
 
