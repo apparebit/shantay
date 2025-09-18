@@ -7,7 +7,7 @@ from pathlib import Path
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Daily, Dataset, Filter, FilterKind, MetadataProtocol
+    CollectorProtocol, Daily, Dataset, Filter, FilterKind, MetadataProtocol, Release
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
@@ -18,10 +18,33 @@ from .schema import (
 from .util import annotate_error
 
 
+PROBLEMATIC_RELEASES = tuple(Release.of(*d) for d in (
+    (2024, 3, 23),
+    (2024, 3, 24),
+    (2024, 3, 25),
+    (2024, 3, 26),
+    (2024, 3, 27),
+    (2024, 3, 28),
+    (2024, 3, 29),
+    (2024, 3, 30),
+    (2024, 3, 31),
+    (2024, 4, 1),
+    (2024, 4, 2),
+    (2024, 4, 9),
+    (2024, 4, 10),
+    (2024, 4, 11),
+    (2024, 4, 12),
+    (2024, 4, 13),
+    (2024, 4, 14),
+    (2024, 4, 15),
+    (2024, 4, 16),
+))
+
+
 _logger = logging.getLogger(__spec__.parent)
 
 
-def parse_list(*columns: str) -> pl.Expr:
+def _parse_list(*columns: str) -> pl.Expr:
     """
     This function currently assumes that list values do *not* contain commas,
     which holds for list-valued DSA SoR DB entries.
@@ -50,7 +73,7 @@ def parse_list(*columns: str) -> pl.Expr:
     )
 
 
-def empty_list_to_null(column: str) -> pl.Expr:
+def _empty_list_to_null(column: str) -> pl.Expr:
     return pl.when(
         pl.col(column).list.len() == 0
     ).then(
@@ -377,7 +400,7 @@ class StatementsOfReasons(Dataset):
             )
             # Parse list-valued columns
             .with_columns(
-                parse_list(
+                _parse_list(
                     "decision_visibility",
                     "category_addition",
                     "category_specification",
@@ -389,10 +412,10 @@ class StatementsOfReasons(Dataset):
                 # Replace empty lists with None. This method used to assume that
                 # the value never is the empty list. That assumption becomes
                 # superfluous with introduction of this clause.
-                empty_list_to_null("decision_visibility"),
-                empty_list_to_null("category_specification"),
-                empty_list_to_null("content_type"),
-                empty_list_to_null("territorial_scope"),
+                _empty_list_to_null("decision_visibility"),
+                _empty_list_to_null("category_specification"),
+                _empty_list_to_null("content_type"),
+                _empty_list_to_null("territorial_scope"),
             )
             # Cast list elements and date columns to their types. Add released_on.
             .with_columns(
