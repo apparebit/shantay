@@ -18,7 +18,7 @@ from .pool import (
     Cancelled, check_not_cancelled, ErrorTrace, ErrorTraceFactory, Pool, Task,
     WorkerProgress
 )
-from .processor import is_distilled, prepare_for_summaries, Processor
+from .processor import is_distilled, prepare_statistics, Processor
 from .schema import MissingPlatformError, update_platforms
 from .stats import Statistics
 from .util import get_max_rss, scale_bytes
@@ -45,8 +45,7 @@ class Multiprocessor:
         self._coverage = coverage
         self._config = config
         self._metadata = metadata
-        self._stats = None
-        self._db_tmp_dir = None
+        self._pre_existing_stats = None
 
         self._task = None
         self._iter = None
@@ -89,26 +88,10 @@ class Multiprocessor:
         # See Processor.run() for an explanation for time.time()
         start_time = time.time()
 
-        # Determine cursor's first and final values as well as increment
         if task not in ("download", "distill", "summarize-all", "summarize-extract"):
             raise ValueError(f"invalid task {task}")
-
-        if task == "summarize-all":
-            self._db_tmp_dir, self._stats = prepare_for_summaries(self._storage)
-        elif task == "summarize-extract":
-            self._stats = Statistics.pick(
-                self.stats_file,
-                self._storage.staging_root,
-                self._storage.the_extract_root,
-            )
-
-            range = None if self._stats.is_empty() else self._stats.date_range()
-            if range is not None:
-                _logger.info(
-                    'existing statistics cover start_date="%s", end_date="%s"',
-                    range.first, range.last
-                )
-
+        if task.startswith("summarize"):
+            self._pre_existing_stats = prepare_statistics(self._storage, self._config)
         self._iter = iter(self._coverage)
 
         try:
@@ -139,12 +122,9 @@ class Multiprocessor:
             self._storage.best_root / meta_json
         )
 
-        if task == "summarize-all":
-            assert self._db_tmp_dir is not None
-            stats = Statistics.read_all(self._db_tmp_dir, "db-*.parquet", "db.parquet")
-        else:
-            assert self._stats is not None
-            stats = self._stats
+        stats = Statistics.read_all(
+            self._storage.tmp_stem_dir, "*.parquet", self.stats_file
+        )
         stats.write(self._storage.staging_root, should_finalize=True)
 
         _logger.info(
@@ -228,9 +208,17 @@ class Multiprocessor:
             ):
                 release = next(self._iter, None)
         elif self._task is not None and self._task.startswith("summarize"):
-            assert self._stats is not None
-            while release is not None and release.date in self._stats:
-                _logger.debug('summary statistics already cover release="%s"', release.id)
+            assert self._pre_existing_stats is not None
+            while release is not None:
+                stats_path = self._storage.tmp_stem_dir / f"{release}.parquet"
+                pre_exists = release in self._pre_existing_stats
+                if not pre_exists and not stats_path.exists():
+                    break
+
+                _logger.debug('summary statistics already cover release="%s"', release)
+                if pre_exists:
+                    stats_path.unlink(missing_ok=True)
+
                 release = next(self._iter, None)
 
         # Ensure graceful termination in offline mode.
@@ -272,20 +260,18 @@ class Multiprocessor:
             pass
         elif task.kwargs["task"] == "distill":
             release = self._update_metadata(result)
+            assert task.kwargs["release"] == release
 
             # If distill was scheduled as part of summarize, schedule summarization
             if self._task == "summarize-extract":
                 self._continuations.append(release)
-        elif task.kwargs["task"] == "summarize-all":
-            release = self._update_metadata(result[0])
+        elif task.kwargs["task"].startswith("summarize"):
+            if result[0] is not None:
+                release = self._update_metadata(result[0])
+                assert task.kwargs["release"] == release
+
             # The coordinator can safely update its own staging area
-            result[1].write(self._db_tmp_dir, should_finalize=True)
-        elif task.kwargs["task"] == "summarize-extract":
-            assert result[0] is None
-            assert self._stats is not None
-            self._stats.append(result[1])
-            # The coordinator can safely update its own staging area
-            self._stats.write(self._storage.staging_root)
+            result[1].write(self._storage.tmp_stem_dir, should_finalize=True)
         else:
             raise AssertionError(f"invalid task {self._task}")
 
@@ -293,8 +279,8 @@ class Multiprocessor:
         if max_rss is not None:
             value, unit = scale_bytes(max_rss)
             _logger.debug(
-                'maximum resident-set-size=%.0f, unit="%s", coordinator=%d',
-                value, unit, _PID
+                'maximum resident-set-size=%.3f, unit="%s", release="%s", coordinator=%d',
+                value, unit, task.kwargs["release"], _PID
             )
 
     def _update_metadata(self, entry: FullMetadataEntry) -> Daily:
@@ -403,8 +389,8 @@ def run_on_worker(
         if max_rss is not None:
             value, unit = scale_bytes(max_rss)
             _logger.debug(
-                'maximum resident-set-size=%.0f, unit="%s", worker=%d',
-                value, unit, _PID
+                'maximum resident-set-size=%.3f, unit="%s", release="%s", worker=%d',
+                value, unit, release, _PID
             )
 
 
@@ -448,7 +434,7 @@ def _run_on_worker(
         result = metadata[release] | dict(release=release), stats
     elif task == "summarize-extract":
         stats = Statistics(
-            f"{metadata.stem}.parquet",
+            f"{release}.parquet",
             stratify_by_category=config.stratify_by_category,
             stratify_all_text=config.stratify_all_text,
         )

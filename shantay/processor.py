@@ -15,8 +15,9 @@ from .digest import (
 )
 from .metadata import Metadata
 from .model import (
-    Config, CollectorProtocol, Daily, DataFrameType, Dataset, DateRange, DIGEST_FILE,
-    DownloadFailed, FilterKind, MetadataEntry, Release, ReleaseRange, Storage
+    Config, ConfigError, CollectorProtocol, Daily, DataFrameType, Dataset, DateRange,
+    DIGEST_FILE, DownloadFailed, FilterKind, MetadataEntry, Release, ReleaseRange,
+    Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -52,6 +53,11 @@ class Processor[R: Release]:
         self._metadata = metadata
         self._progress = progress
         self._running_time = 0.0
+
+    @property
+    def stem(self) -> str:
+        """The metadata and statistics stem."""
+        return self._metadata.stem
 
     @property
     def stats_file(self) -> str:
@@ -95,7 +101,7 @@ class Processor[R: Release]:
             result = self.distill()
         elif task == "summarize-builtin":
             stats = Statistics.builtin()
-            stats.write(self._storage.staging_root / self.stats_file)
+            stats.write(self._storage.staging_root)
             result = stats.frame()
         elif task == "summarize-all":
             result = self.summarize_database()
@@ -653,18 +659,28 @@ class Processor[R: Release]:
         self._progress.activity(
             "summarizing extracted data", "summarizing extract", "batch", with_rate=False
         )
-        self._progress.start(self._coverage.last - self._coverage.first + 1)
+        self._progress.start(self._coverage.duration)
 
-        stats = Statistics(
-            self.stats_file,
-            stratify_by_category=self._config.stratify_by_category,
-            stratify_all_text=self._config.stratify_all_text,
-        )
+        tmp_dir = self._storage.tmp_stem_dir
+        pre_existing_stats = prepare_statistics(self._storage, self._config)
 
         for index, release in enumerate(self._coverage):
+            stats_file = f"{release}.parquet"
+            stats_path = tmp_dir / stats_file
+
+            pre_exists = release in pre_existing_stats
+            if pre_exists or stats_path.exists():
+                _logger.debug(
+                    'summary statistics for extract already cover release="%s"',
+                    release
+                )
+                if pre_exists:
+                    stats_path.unlink(missing_ok=True)
+                continue
+
             # Ensure graceful termination in offline mode
             if self._config.offline and not self.is_archive_downloaded(release):
-                _logger.info(
+                _logger.error(
                     'stopping due to missing archive in offline mode '
                     'for task="summarize-extract", release="%s"',
                     release.id
@@ -676,17 +692,15 @@ class Processor[R: Release]:
                     self.distill_release(release, cleanup=False)
 
             assert self._metadata.filter is not None
+            stats = Statistics(
+                stats_file,
+                stratify_by_category=self._config.stratify_by_category,
+                stratify_all_text=self._config.stratify_all_text,
+            )
             self.summarize_release_extract(release=release, collector=stats)
+            stats.write(tmp_dir, should_finalize=True)
+            stats = None
 
-            # While collecting summary statistics, Shantay generates hundreds of
-            # data frames, many with just one row. However, concatenation in
-            # Pola.rs doesn't seem to have linear performance and gets stuck
-            # when there are too many frames. Hence, we regularly save
-            # statistics, which concatenates the frames. Yet, we need to avoid
-            # saving too often, which noticeably slows down Shantay. As a
-            # compromise, we only save after processing n=11 days worth of data.
-            if index % 11 == 0:
-                stats.write(self._storage.staging_root)
             self._progress.step(index + 1, extra=release.id)
 
         meta_json = f"{self._metadata.stem}.json"
@@ -696,13 +710,14 @@ class Processor[R: Release]:
         )
 
         _logger.info(
-            'writing rechunked summary statistics to file="%s"',
-            self._storage.staging_root / self.stats_file
+            'combining summary statistics for extract to file="%s"', self.stats_file
         )
+        stats = Statistics.read_all(tmp_dir, "*.parquet", self.stats_file)
         stats.write(self._storage.staging_root, should_finalize=True)
+        shutil.rmtree(tmp_dir)
 
         _logger.info(
-            'copying summary statistics to extract file="%s"',
+            'copying summary statistics for extract to file="%s"',
             self._storage.the_extract_root / self.stats_file
         )
         Statistics.copy(
@@ -736,11 +751,15 @@ class Processor[R: Release]:
         max_rss = get_max_rss()
         if max_rss is not None:
             value, unit = scale_bytes(max_rss)
-            _logger.debug('maximum resident-set-size=%.0f, unit="%s"', value, unit)
+            _logger.debug(
+                'maximum resident-set-size=%.3f, unit="%s", release="%s"',
+                value, unit, release
+            )
 
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""
-        db_tmp_dir, existing_range = prepare_for_summaries(self._storage)
+        tmp_dir = self._storage.tmp_stem_dir
+        pre_existing_stats = prepare_statistics(self._storage, self._config)
 
         # Due to variability of daily record numbers and worker process timing,
         # the multiprocessing version of summarize may add daily statistics out
@@ -748,9 +767,14 @@ class Processor[R: Release]:
         # order, this loop ensures that any holes are filled, making this a
         # robust, self-healing implementation strategy.
         for release in self._coverage:
-            assert release.date is not None
-            if existing_range is not None and release.date in existing_range:
+            stats_file = f"{release}.parquet"
+            stats_path = tmp_dir / stats_file
+
+            pre_exists = release in pre_existing_stats
+            if pre_exists or stats_path.exists():
                 _logger.debug('summary statistics already cover release="%s"', release)
+                if pre_exists:
+                    stats_path.unlink(missing_ok=True)
                 continue
 
             # Ensure graceful termination in offline mode
@@ -770,16 +794,20 @@ class Processor[R: Release]:
                 update_platforms(x.args[0])
                 raise
 
-            stats.write(db_tmp_dir, should_finalize=True)
+            stats.write(tmp_dir, should_finalize=True)
             _logger.debug(
                 'saved summary statistics to file="%s", release="%s"',
-                f"db.tmp/{stats.file}", release
+                stats_path, release
             )
+            stats = None
 
             max_rss = get_max_rss()
             if max_rss is not None:
                 value, unit = scale_bytes(max_rss)
-                _logger.debug('maximum resident-set-size=%.0f, unit="%s"', value, unit)
+                _logger.debug(
+                    'maximum resident-set-size=%.3f, unit="%s", release="%s"',
+                    value, unit, release
+                )
 
         meta_json = f"{self._metadata.stem}.json"
         Metadata.copy_json(
@@ -789,9 +817,9 @@ class Processor[R: Release]:
 
         # Rewrite saved statistics after rechunking and copy to persistent root
         _logger.info('combining summary statistics to file="db.parquet"')
-        stats = Statistics.read_all(db_tmp_dir, "db-*.parquet", "db.parquet")
+        stats = Statistics.read_all(tmp_dir, "*.parquet", "db.parquet")
         stats.write(self._storage.staging_root, should_finalize=True)
-        shutil.rmtree(db_tmp_dir)
+        shutil.rmtree(tmp_dir)
 
         _logger.info(
             'copying summary statistics to archive file="%s/db.parquet"',
@@ -852,12 +880,12 @@ class Processor[R: Release]:
                 # We process each batch by itself. When the summary statistics are
                 # finalized, those unit counts add up.
                 stats = Statistics(
-                    f"db-{index:05}.parquet",
+                    f"{release}-{index:05}.parquet",
                     stratify_by_category=self._config.stratify_by_category,
                     stratify_all_text=self._config.stratify_all_text,
                 )
                 stats.collect(release, frame, metadata_entry={"batch_count": 1})
-                stats.write(self._storage.staging_root, release=release)
+                stats.write(self._storage.staging_root / release.directory)
                 stats = None
 
                 # A daily release may comprise over 100 GB of uncompressed CSV data.
@@ -878,7 +906,7 @@ class Processor[R: Release]:
         )
         stats = Statistics.read_all(
             self._storage.staging_root / release.directory,
-            "db-*.parquet", f"db-{release}.parquet"
+            f"{release}-*.parquet", f"{release}.parquet"
         )
 
         self._metadata[release] = cast(MetadataEntry, full_counts)
@@ -907,28 +935,37 @@ class Processor[R: Release]:
         ).run()
 
 
-def prepare_for_summaries(storage: Storage) -> tuple[Path, Statistics]:
+def prepare_statistics(storage: Storage, config: Config) -> Statistics:
     """
     Recreate the directory for per-release summary statistics and copy existing
     statistics (if they exist) into it.
     """
-    db_tmp_dir = storage.staging_root / "db.tmp"
-    shutil.rmtree(db_tmp_dir, ignore_errors=True)
-    db_tmp_dir.mkdir()
+    storage.tmp_stem_dir.mkdir(exist_ok=True)
 
-    stats = Statistics.pick(
-        "db.parquet", storage.staging_root, storage.the_archive_root
-    )
-
-    range = None if stats.is_empty() else stats.date_range()
-    if range is not None:
-        _logger.info(
-            'existing statistics cover start_date="%s", end_date="%s"',
-            range.first, range.last
+    file = f"{storage.stem}.parquet"
+    stats = Statistics.pick(file, storage.staging_root, storage.best_root)
+    if stats is None:
+        return Statistics(
+            file,
+            stratify_by_category=config.stratify_by_category,
+            stratify_all_text=config.stratify_all_text,
         )
-        stats.frame().write_parquet(f"{db_tmp_dir}/db-{range.last}.parquet")
 
-    return db_tmp_dir, stats
+    if config.stratification != stats.stratification:
+        raise ConfigError(
+            f'Existing statistics have different options ({stats.stratification}) '
+            f'from configuration ({config.stratification}). Please adjust command '
+            'line options or move file with statistics data.'
+        )
+
+    range = stats.date_range()
+    assert range is not None
+    _logger.info(
+        'existing statistics "%s" cover start_date="%s", end_date="%s"',
+        file, range.first, range.last
+    )
+    stats.frame().write_parquet(storage.tmp_stem_dir / f"{range.last}.parquet")
+    return stats
 
 
 def is_distilled(root: Path, release: Daily) -> bool:
