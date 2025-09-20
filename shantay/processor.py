@@ -51,7 +51,7 @@ class Processor[R: Release]:
         self._coverage = coverage
         self._config = config
         self._metadata = metadata
-        self._progress = progress
+        self._progress = progress if config.progress else NO_PROGRESS
         self._running_time = 0.0
 
     @property
@@ -74,6 +74,7 @@ class Processor[R: Release]:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
         _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
+        _logger.info('    key="runtime.progress",     value=%d', self._config.progress)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
         _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")

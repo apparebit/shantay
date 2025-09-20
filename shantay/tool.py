@@ -20,7 +20,6 @@ from .model import (
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
-from .progress import Progress
 from .schema import MissingPlatformError, PlatformLookupTable, StatementCategory
 from .stats import Statistics
 from .util import scale_time
@@ -228,8 +227,15 @@ def get_configuration(
     if options.clamp_outliers and options.task != "visualize":
         raise ConfigError("please only use --clamp-outliers with `visualize` task")
 
+    # Instantiate the config object
+    config = Config.of(
+        progress=True,
+        platforms=platforms,
+        **vars(options)
+    )
+
     # Finish it all up
-    return storage, range, metadata, Config.of(platforms=platforms, **vars(options))
+    return storage, range, metadata, config
 
 
 def configure_printing() -> None:
@@ -255,7 +261,7 @@ def _run(options: Any) -> None:
     configure_printing()
 
     if options.task == "recover":
-        fsck(storage.the_extract_root, progress=Progress())
+        fsck(storage.the_extract_root)
         return
 
     # Internally, we distinguish between two plus versions of summarize
@@ -286,9 +292,8 @@ def _run(options: Any) -> None:
             dataset=StatementsOfReasons(),
             storage=storage,
             coverage=range,
-            metadata=metadata,
             config=config,
-            progress=Progress(),
+            metadata=metadata,
         )
         frame = processor.run(task)
 

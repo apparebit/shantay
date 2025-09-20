@@ -659,6 +659,7 @@ class Config:
     # Runtime
     offline: bool = False
     workers: int = 0
+    progress: bool = False
 
     # DB Extract
     platforms: None | tuple[str, ...] = None
@@ -678,7 +679,7 @@ class Config:
         return cls(
             offline=kwargs.get("offline", False),
             workers=kwargs.get("workers", 0),
-            platforms=None if ps is None else tuple(ps),
+            platforms=None if ps is None or len(ps) == 0 else tuple(ps),
             stratify_by_category=kwargs.get("stratify_by_category", False),
             stratify_all_text=kwargs.get("stratify_all_text", False),
             interactive_report=kwargs.get("interactive_report", False),

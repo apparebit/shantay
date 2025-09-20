@@ -73,6 +73,7 @@ class Multiprocessor:
         _logger.info('running multiprocessor with pid=%d, task="%s"', _PID, task)
         _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
         _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
+        _logger.info('    key="runtime.progress",     value=%d', self._config.progress)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
         _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")
