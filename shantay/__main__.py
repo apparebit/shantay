@@ -168,16 +168,6 @@ supported tasks:
     return parser
 
 
-def configure_logging(logfile: str, *, level: int = logging.NOTSET) -> None:
-    logging.Formatter.default_msec_format = "%s.%03d"
-    logging.basicConfig(
-        format='%(asctime)s︙%(process)d︙%(name)s︙%(levelname)s︙%(message)s',
-        filename=logfile,
-        encoding="utf8",
-        level=level,
-    )
-
-
 def main(argv: None | Sequence[str] = None) -> int:
     # Handle command line options
     from .color import Style
@@ -201,12 +191,9 @@ def main(argv: None | Sequence[str] = None) -> int:
         level = logging.INFO
 
     # Configure logging, since sync_web_platforms writes to the log
+    from .logging import configure_logging, log_rule
     configure_logging(options.logfile, level=level)
-    logger = logging.getLogger(__package__)
-    logger.info(
-        '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-        '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━'
-    )
+    log_rule()
 
     # To be fully effective, this function must be invoked before the model,
     # schema, or stats modules have been loaded. That is the case right here.
