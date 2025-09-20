@@ -92,12 +92,12 @@ def scale_bytes(value: float) -> tuple[float, str]:
 
     if value < 1_024:
         return sign * value, "B"
-    elif value < 1_024**2:
-        return sign * value / 1_000, "KB"
-    elif value < 1_024**3:
-        return sign * value / 1_000_000, "MB"
+    elif value < 1_048_576:
+        return sign * value / 1_024, "KB"
+    elif value < 1_073_741_824:
+        return sign * value / 1_048_576, "MB"
     else:
-        return sign * value / 1_000_000_000, "GB"
+        return sign * value / 1_073_741_824, "GB"
 
 
 def scale_time(value: float) -> tuple[float, str]:
