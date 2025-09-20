@@ -154,58 +154,38 @@ def get_configuration(
 
     # Handle metadata
     if storage.archive_root is None and storage.extract_root is None:
-        if options.task not in ("info", "summarize", "visualize"):
+        if options.task not in ("info", "visualize"):
             raise ConfigError(
                 f"please specify --archive for `{options.task}` task"
             )
-        metadata = Metadata.for_full_db()
-
-    elif storage.extract_root is None:
+        metadata = Metadata(storage.stem)
+    else:
+        metafile = f"{storage.stem}.json"
         try:
             metadata = Metadata.merge(
-                storage.staging_root / "db.json",
-                storage.the_archive_root / "db.json",
-                not_exist_ok=True,
+                storage.staging_root / metafile,
+                storage.best_root / metafile,
             )
-            metadata.set_stem("db")
-            if metadata.filter is not None:
-                raise ConfigError(f'metadata for full database has filter')
         except FileNotFoundError:
-            metadata = Metadata.for_full_db()
-        metadata.write_json(storage.staging_root / "db.json")
-
-    else:
-        try:
-            metapath = Metadata.find_file(storage.extract_root, skip_db=True)
-            metadata = Metadata.read_json(metapath)
-        except FileNotFoundError:
-            metadata = Metadata(storage.extract_root.stem)
-
-        if metadata.filter is None:
-            if filter is None:
+            if storage.extract_root is not None and filter is None:
                 raise ConfigError(
                     "please specify --category, --platform, or --filter "
                     "for --extract directory"
                 )
-            else:
-                metadata.set_filter(filter)
-        elif filter is None:
-            filter = metadata.filter
-        elif filter != metadata.filter and (
-            options.platform is None or options.task == "visualize"
+            metadata = Metadata(storage.stem, filter)
+
+        if (
+            storage.extract_root is not None
+            and filter is not None
+            and filter != metadata.filter
+            and (options.platform is None or options.task == "visualize")
         ):
             raise ConfigError(
                 f"--category, --platform, or --filter {filter} differs"
                 f"from metadata {metadata.filter}"
             )
 
-        # Merge with staged metadata (if it exists) and write out again.
-        metapath = storage.staging_root / f"{metadata.stem}.json"
-        try:
-            metadata = metadata.merge_with(Metadata.read_json(metapath))
-            metadata.write_json(metapath)
-        except FileNotFoundError:
-            pass
+        metadata.write_json(storage.staging_root / metafile)
 
     # Handle --first and --last, with the latter including one day for the
     # Americas being a day behind Europe for several hours every day and another
