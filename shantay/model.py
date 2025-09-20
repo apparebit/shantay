@@ -1,7 +1,7 @@
 from abc import abstractmethod, ABCMeta
 from collections import Counter
 from collections.abc import Iterator
-from dataclasses import dataclass
+import dataclasses
 import datetime as dt
 import enum
 import functools
@@ -167,7 +167,7 @@ class Release(Period):
         return self.id
 
 
-@dataclass(frozen=True, slots=True, eq=True, order=True)
+@dataclasses.dataclass(frozen=True, slots=True, eq=True, order=True)
 class Daily(Release):
     """A daily release."""
 
@@ -261,7 +261,7 @@ class Daily(Release):
         return type(self)(year, month, day)
 
 
-@dataclass(frozen=True, slots=True, eq=True, order=True)
+@dataclasses.dataclass(frozen=True, slots=True, eq=True, order=True)
 class Monthly(Release):
     """A monthly release."""
 
@@ -333,7 +333,7 @@ class Monthly(Release):
         return NotImplemented
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class ReleaseRange[R: Release](Period):
     """An inclusive range of releases."""
 
@@ -381,7 +381,7 @@ class ReleaseRange[R: Release](Period):
         return f"{self.first}-{self.last}"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class DateRange(Period):
     """An inclusive range of dates."""
 
@@ -530,7 +530,7 @@ class FilterKind(enum.StrEnum):
     EXPRESSION = "expression"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Filter:
     """A filter for producing an extract of the DSA transparency DB."""
 
@@ -652,7 +652,7 @@ class Filter:
                 return "Custom Query"
 
 
-@dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True)
 class Config:
     """Assorted configuration options."""
 
@@ -684,6 +684,14 @@ class Config:
             interactive_report=kwargs.get("interactive_report", False),
             clamp_outliers=kwargs.get("clamp_outliers", False),
         )
+
+    @property
+    def stratification(self) -> dict[str, bool]:
+        """The stratification options as a dictionary."""
+        return {
+            "stratify_by_category": self.stratify_by_category,
+            "stratify_all_text": self.stratify_all_text,
+        }
 
 
 class MetadataProtocol[R: Release](Protocol):
@@ -856,7 +864,7 @@ def _find_coverage(directory: Path, is_extract: bool) -> None | DateRange:
     return DateRange(first, last)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclasses.dataclass(frozen=True, slots=True)
 class Storage:
     """The current storage locations."""
 
@@ -898,11 +906,22 @@ class Storage:
 
     @property
     def best_root(self) -> Path:
+        """The most specific or "best" root."""
         if self.extract_root is not None:
             return self.extract_root
         if self.archive_root is not None:
             return self.archive_root
         return self.staging_root
+
+    @property
+    def stem(self) -> str:
+        """The stem."""
+        return "db" if self.extract_root is None else self.extract_root.stem
+
+    @property
+    def tmp_stem_dir(self) -> Path:
+        """The temporary directory named after the stem."""
+        return self.staging_root / f"{self.stem}.tmp"
 
     def coverage_of_archive(self) -> None | DateRange:
         """Determine the date coverage of the archive based on directory names."""
