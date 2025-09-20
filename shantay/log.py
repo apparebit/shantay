@@ -34,7 +34,7 @@ class LogMessage:
     """
 
     prefix: None | str
-    props: Mapping[str, None | bool | int | str]
+    props: Mapping[str, None | bool | int | float | str]
 
     @classmethod
     def parse(cls, s: str) -> Self:
@@ -102,6 +102,43 @@ class LogMessage:
                 return Release.of(file.group(0))
 
         return None
+
+    def latency(self) -> None | float:
+        """Get the latency if any in seconds."""
+        latency = self.props.get("latency", None)
+        if latency is None:
+            return None
+        if not isinstance(latency, float):
+            raise ValueError(f'latency "{latency}" is not a number')
+
+        unit = self.props["unit"]
+        match unit:
+            case "sec":
+                return latency
+            case "min":
+                return 60 * latency
+            case "hour":
+                return 60 * 60 * latency
+            case _:
+                return 24 * 60 * 60 * latency
+
+    def resident_set_size(self) -> None | float:
+        """Get the resident-set size if any in GB."""
+        size = self.props.get("resident-set-size", None)
+        if size is None:
+            return None
+        if not isinstance(size, float):
+            raise ValueError(f'resident-set-size "{size}" is not a number')
+        unit = self.props["unit"]
+        match unit:
+            case "B":
+                return size / 1024**3
+            case "KB":
+                return size / 1024**2
+            case "MB":
+                return size / 1024
+            case _:
+                return size
 
     def __str__(self) -> str:
         """Get the log message as a string."""
@@ -197,7 +234,7 @@ class LogEntry:
 
     def is_rule(self) -> bool:
         """Determine whether the log entry contains a horizontal rule as message."""
-        return self.message.prefix is not None and "▁▁▁▁▁" in self.message.prefix
+        return self.message.prefix is not None and "━━━" in self.message.prefix
 
     def is_task_start(self) -> bool:
         """Determine whether the log entry marks the beginning of a task."""
@@ -232,7 +269,7 @@ class LogEntry:
     def is_job_start3(self) -> bool:
         """Determine whether the log entry is the third entry for concurrently
         processing a release."""
-        return self.message.has("task", "release", "category", "worker", prefix="running")
+        return self.message.has("task", "release", "filter", "worker", prefix="running")
 
     def is_worker_init(self) -> bool:
         """Determine whether the log entry marks the initialization of a worker
@@ -244,9 +281,18 @@ class LogEntry:
         """Determine whether the long entry marks the end of concurrently
         processing a release."""
         return self.message.has(
-            "task", "release", "category", "worker",
+            "task", "release", "filter", "worker",
             prefix="returning result for"
         )
+
+    def is_summarized_file(self) -> bool:
+        """Determine whether the log entry marks a successfully summarized file."""
+        return self.message.has("file", "latency", "unit", prefix="summarized")
+
+    def is_max_rss(self) -> bool:
+        """Determine whether the log entry reports the maximum resident-set size
+        for a process."""
+        return self.message.has("resident-set-size", "unit", prefix="maximum")
 
     def __str__(self) -> str:
         """Get the log message as a string."""
