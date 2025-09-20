@@ -44,53 +44,6 @@ _DECISION_TYPES = (
 )
 
 
-def date_range_of(frame: pl.DataFrame) -> DateRange:
-    return DateRange(*frame.select(
-        pl.col("start_date").min(),
-        pl.col("end_date").max(),
-    ).row(0))
-
-
-def _is_categorical(column: str) -> bool:
-    field = TRANSFORMS[column]
-    return (
-        field in (TransformType.VALUE_COUNTS, TransformType.LIST_VALUE_COUNTS)
-        or isinstance(field, ValueCountsPlusTransform)
-    )
-
-
-def _is_duration(column: str) -> bool:
-    """Determine whether the named column is a duration."""
-    return isinstance(TRANSFORMS[column], DurationTransform)
-
-
-def _validate_row_counts(frame: pl.DataFrame) -> None:
-    """Perform consistency checks on statistics data frame."""
-    frame = frame.filter(pl.col("tag").is_null())
-    rows = get_quantity(frame, "rows")
-
-    for column in (
-        "decision_type",
-        "decision_monetary",
-        "decision_provision",
-        "decision_account",
-        "account_type",
-        "decision_ground",
-        "incompatible_content_illegal",
-        "category",
-        "content_language",
-        "source_type",
-        "automated_detection",
-        "automated_decision",
-        "platform_name",
-    ):
-        if column == "decision_type":
-            rows_too = get_quantity(frame, column)
-        else:
-            rows_too = get_quantity(frame, column, entity=None)
-        assert rows == rows_too, f"rows={rows:,}, {column}={rows_too:,}"
-
-
 def get_tags(frame: pl.DataFrame) -> list[None | str]:
     """
     Get all tags used in the statistics frame. This function returns the tags in
@@ -321,16 +274,13 @@ class Collector:
         values = pl.col(field).list.explode() if field_is_list else pl.col(field)
         self.add_rows(field, value_counts=values)
 
-        assert not _is_categorical(other_field)
+        assert other_field.startswith("end_date")
         self.add_rows(
             field,
-            entity=(
-                "with_end_date" if other_field.startswith("end_date")
-                else f"with_{other_field}"
-            ),
+            entity="with_end_date",
             value_counts=values.cast(pl.String),
             frame=self._source.lazy().filter(
-                pl.col(other_field).is_null().not_()
+                pl.col(other_field).is_not_null()
             ),
         )
 
@@ -639,14 +589,14 @@ class _Summarizer:
         quantity: Quantity = "count",
     ) -> None:
         """Collect the given column's statistic value."""
-        duration = _is_duration(column)
+        is_duration = isinstance(TRANSFORMS[column], DurationTransform)
         variable = column if entity is None or entity == "" else f"{column}.{entity}"
-        if duration or quantity != "count":
+        if is_duration or quantity != "count":
             variable = f"{variable}.{quantity}"
 
         value = get_quantity(self._source, column, entity=entity, statistic=quantity)
         if (
-            duration
+            is_duration
             and quantity != "count"
             and value is not None
             and not math.isnan(value)
@@ -954,18 +904,6 @@ class _Summarizer:
 # =================================================================================================
 
 
-def _extract_config(frame: pl.DataFrame) -> tuple[bool, bool]:
-    if frame.height == 0:
-        return False, False
-
-    categories, textrows = frame.select(
-        pl.col("category").is_not_null().sum(),
-        pl.col("entity").eq("rows_of_text").sum(),
-    ).row(0)
-
-    return categories != 0, textrows == 0
-
-
 class Statistics:
     """
     Wrapper around statistics describing the DSA transparency database.
@@ -993,21 +931,8 @@ class Statistics:
         stratify_all_text: bool = False,
     ) -> None:
         self._file = file
-
-        config = None
-        for frame in frames:
-            c = _extract_config(frame)
-            if config is None:
-                config = c
-            elif config != c:
-                raise ValueError("data frames with inconsistent stratifications")
-
-        if config is None:
-            config = stratify_by_category, stratify_all_text
-        elif config != (stratify_by_category, stratify_all_text):
-            raise ValueError("data frame stratification inconsistent with configuration")
-
-        self._stratify_by_category, self._stratify_all_text = config
+        self._stratify_by_category = stratify_by_category
+        self._stratify_all_text = stratify_all_text
 
         # If the instance wraps a full frame, the partial frames and collector
         # must be empty. Vice versa, if the instance wraps partial frames and/or
@@ -1024,10 +949,6 @@ class Statistics:
             case _:
                 self._partial_frames = list(frames)
 
-        # Cache monthly and total aggregations
-        self._monthly = None
-        self._totals = None
-
     @classmethod
     def builtin(cls) -> Self:
         """Get the pre-computed statistics for the entire DSA database."""
@@ -1037,48 +958,45 @@ class Statistics:
             return cls.read(path)
 
     @classmethod
-    def pick(cls, file: str, staging: Path, persistent: Path) -> Self:
+    def pick(cls, file: str, staging: Path, persistent: Path) -> None | Self:
         """
         Pick the more complete statistics from staging and the persistent root
         directory, i.e., archive or extract. This method assumes that if both
         files exist, they also start on the same date.
         """
         try:
-            s1 = cls.read(staging / file)
+            staged_stats = cls.read(staging / file)
+            if staged_stats.frame().is_empty():
+                staged_stats = None
         except FileNotFoundError:
-            s1 = None
+            staged_stats = None
 
         try:
-            s2 = cls.read(persistent / file)
+            persistent_stats = cls.read(persistent / file)
+            if persistent_stats.frame().is_empty():
+                persistent_stats = None
         except FileNotFoundError:
-            s2 = None
+            persistent_stats = None
 
-        if s1 is None:
-            return cls(file) if s2 is None else s2
-        elif s2 is None:
-            return s1
+        if staged_stats is None:
+            return None if persistent_stats is None else persistent_stats
+        elif persistent_stats is None:
+            return staged_stats
 
-        r1 = s1.date_range()
-        r2 = s2.date_range()
-
-        if r1 is None:
-            return cls(file) if r2 is None else s2
-        elif r2 is None:
-            return s1
-
-        if r1.first != r2.first:
-            raise ValueError(
-                f"inconsistent start dates {r1.first.isoformat()} "
-                f"and {r2.first.isoformat()} for statistics coverage"
-            )
-
-        return s1 if r2.last < r1.last else s2
+        staged_range = staged_stats.date_range()
+        persistent_range = persistent_stats.date_range()
+        assert staged_range is not None and persistent_range is not None
+        return (
+            staged_stats if persistent_range.last < staged_range.last
+            else persistent_stats
+        )
 
     @classmethod
     def read_all(cls, directory: Path, glob: str, file: str) -> Self:
         """
         Instantiate a new statistics frame from *all* files matching the given
-        glob. The resulting frame uses the given file name.
+        glob. The resulting frame uses the given file name. This method assumes
+        that all frames were created with the same stratification options.
         """
         return cls._do_read(f"{directory}/{glob}", file)
 
@@ -1091,23 +1009,43 @@ class Statistics:
         return cls._do_read(path, path.name)
 
     @classmethod
-    def _do_read(cls, path: str | Path, file: str) -> Self:
-        frame = pl.read_parquet(
-            path
-        ).with_columns(
+    def _check_platform_names(
+        cls, path: str | Path, frame: pl.DataFrame
+    ) -> pl.DataFrame:
+        frame = frame.with_columns(
             # Cast to string so that replace matches platform names
             pl.col("platform").cast(str).replace(CanonicalPlatformNames)
         )
-
         # The statistics schema incorporates the platform names into an
         # enumeration type. Hence, if the frame includes unknown platforms, the
         # cast below will fail, with a Pola.rs error message that does NOT
         # identify the offending name(s). So instead we proactively check for
         # unknown platform names and initiate (mostly) automatic recovery.
         check_stats_platforms(path, frame)
+        return frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+
+    @classmethod
+    def _extract_stratification(cls, frame: pl.DataFrame) -> dict[str, bool]:
+        if frame.is_empty():
+            return {}
+
+        non_null_categories, rows_of_text_entities = frame.select(
+            pl.col("category").is_not_null().sum(),
+            pl.col("entity").eq("rows_of_text").sum(),
+        ).row(0)
+
+        return {
+            "stratify_by_category": non_null_categories != 0,
+            "stratify_all_text": rows_of_text_entities == 0,
+        }
+
+    @classmethod
+    def _do_read(cls, path: str | Path, file: str) -> Self:
+        frame = pl.read_parquet(path)
         return cls(
             file,
-            frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
+            cls._check_platform_names(path, frame),
+            **cls._extract_stratification(frame)
         )
 
     @property
@@ -1124,6 +1062,14 @@ class Statistics:
     def stratify_all_text(self) -> bool:
         """The flag for stratifying all text."""
         return self._stratify_all_text
+
+    @property
+    def stratification(self) -> dict[str, bool]:
+        """The stratification flags."""
+        return {
+            "stratify_by_category": self.stratify_by_category,
+            "stratify_all_text": self.stratify_all_text,
+        }
 
     def __dataframe__(self) -> Any:
         return self.frame().__dataframe__()
@@ -1156,36 +1102,6 @@ class Statistics:
             partial_frames, how="vertical"
         )
         return frame
-
-    def _prepare_for_update(self) -> None:
-        self._monthly = None
-        self._totals = None
-
-        if self._full_frame is not None:
-            self._partial_frames.append(self._full_frame)
-            self._full_frame = None
-
-    def monthly(self) -> pl.DataFrame:
-        """Create view with monthly counts."""
-        if self._monthly is None:
-            self._monthly = self.frame().group_by(
-                pl.col("start_date").dt.year().alias("year"),
-                pl.col("start_date").dt.month().alias("month"),
-                pl.col(
-                    "tag", "platform", "category", "column", "entity", "variant", "text"
-                ),
-            ).agg(*aggregates())
-        return self._monthly
-
-    def totals(self) -> pl.DataFrame:
-        """Create view with total counts."""
-        if self._totals is None:
-            self._totals = self.frame().group_by(
-                pl.col(
-                    "tag", "platform", "category", "column", "entity", "variant", "text"
-                ),
-            ).agg(*aggregates())
-        return self._totals
 
     def is_empty(self) -> bool:
         """Determine whether this instance has no data."""
@@ -1220,7 +1136,11 @@ class Statistics:
         frame = self.frame()
         if frame.height == 0:
             return None
-        return date_range_of(frame)
+
+        return DateRange(*frame.select(
+            pl.col("start_date").min(),
+            pl.col("end_date").max(),
+        ).row(0))
 
     def collect(
         self,
@@ -1234,8 +1154,6 @@ class Statistics:
         This method adds the given `tag` to collected summary statistics. Use
         `append()` for frames with already computed statistics.
         """
-        self._prepare_for_update()
-
         if self._collector is None:
             self._collector = Collector(
                 stratify_by_category=self._stratify_by_category,
@@ -1248,7 +1166,6 @@ class Statistics:
         Append the data frame with summary statistics. Use `collect()` for
         frames with transparency database data.
         """
-        self._prepare_for_update()
         self._partial_frames.append(
             frame.cast(StatisticsSchema) # pyright: ignore[reportArgumentType]
         )
@@ -1263,7 +1180,6 @@ class Statistics:
         self,
         directory: Path,
         *,
-        release: None | Release = None,
         should_finalize: bool = False,
     ) -> Self:
         """
@@ -1271,16 +1187,12 @@ class Statistics:
         `True`, this method groups and aggregates the frame at daily
         granularity, sorts the entries by date, and rechunks the memory consumed
         by the data frame before writing it out. The updated frame also becomes
-        the internal version. If `release` is given, this method treats the
-        frame as a partial frame for that release and stores it in the nested
-        directory named after the release.
+        the internal version.
         """
         frame = self.frame()
         if should_finalize:
             self._full_frame = frame = finalize(frame)
 
-        if release is not None:
-            directory = directory / release.directory
         path = directory / self.file
         tmp = path.with_suffix(".tmp.parquet")
         frame.write_parquet(tmp)
