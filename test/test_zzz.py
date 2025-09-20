@@ -30,7 +30,8 @@ class TestZzz(unittest.TestCase):
             print("", flush=True)
 
         worker_entries = 0
-        test_entries = 0
+        test_pool_entries = 0
+        test_sum_entries = 0
         warning_entries = 0
         traces = []
         release = Release.of(2024, 3, 14)
@@ -41,7 +42,9 @@ class TestZzz(unittest.TestCase):
             if entry.pid != PID:
                 worker_entries += 1
             if entry.module == "test.test_pool":
-                test_entries += 1
+                test_pool_entries += 1
+            if entry.module == "test.test_summarize":
+                test_sum_entries += 1
             if entry.level == "WARNING":
                 warning_entries += 1
                 if entry.exc_info is not None:
@@ -61,11 +64,12 @@ class TestZzz(unittest.TestCase):
             if state == "release":
                 self.assertEqual(entry.message.release(), release)
 
-        self.assertEqual(worker_entries, 5)
-        self.assertEqual(test_entries, 3)
-        self.assertEqual(warning_entries, 6)
-        self.assertEqual(len(traces), 3)
-        for index in range(1, 3):
+        self.assertEqual(worker_entries, 50)
+        self.assertEqual(test_pool_entries, 3)
+        self.assertEqual(test_sum_entries, 8)
+        self.assertEqual(warning_entries, 10)
+        self.assertEqual(len(traces), 5)
+        for index in range(1, 5):
             self.assertEqual(traces[0], traces[index])
         for trace in traces:
             trace.startswith("Traceback (most recent call last):")

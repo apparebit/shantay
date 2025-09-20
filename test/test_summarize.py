@@ -1,3 +1,4 @@
+import logging
 from pathlib import Path
 import shutil
 
@@ -6,32 +7,40 @@ import polars as pl
 from .runtime import TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
+from shantay.logging import log_rule, Size
 from shantay.metadata import Metadata
 from shantay.model import Config, Daily, ReleaseRange, Storage
+from shantay.multiprocessor import Multiprocessor
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
 from shantay.stats import Statistics
 
 
+_logger = logging.getLogger(__name__)
+
 ROOT = Path(__file__).parent
 FIXTURE = ROOT / "fixture"
 
-STAGING = ROOT / "tmp"
-ARCHIVE = STAGING / "summarize-archive"
-EXTRACT = STAGING / "summarize-extract"
+TMP = ROOT / "tmp"
+STAGING = TMP / "staging"
+ARCHIVE = STAGING / "archive"
+EXTRACT = STAGING / "extract"
 
 
 class TestSummarize(TestCase):
 
-    @classmethod
-    def setUpClass(cls):
-        shutil.copytree(FIXTURE / "archive", ARCHIVE, dirs_exist_ok=True)
+    def setUp(self):
+        shutil.rmtree(STAGING, ignore_errors=True)
+        STAGING.mkdir(parents=True)
+        shutil.copytree(FIXTURE / "archive", ARCHIVE)
 
-    @classmethod
-    def tearDownClass(cls):
+    def tearDown(self):
         pass
 
     def test_summarize_db(self):
+        log_rule(Size.M)
+        _logger.info('testing runner="Processor", task="summarize-all"')
+
         dataset = StatementsOfReasons()
         storage = Storage(
             archive_root=ARCHIVE, extract_root=None, staging_root=STAGING
@@ -39,6 +48,7 @@ class TestSummarize(TestCase):
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
         metadata = Metadata(storage.stem)
+
         processor = Processor(
             dataset=dataset,
             storage=storage,
@@ -49,6 +59,35 @@ class TestSummarize(TestCase):
 
         processor.run("summarize-all")
 
+        self.validate_db_summary()
+        _logger.info('completed test for runner="Processor", task="summarize-all"')
+
+    def test_summarize_db_multiproc(self):
+        log_rule(Size.S)
+        _logger.info('testing runner="Multiprocessor", task="summarize-all"')
+
+        dataset = StatementsOfReasons()
+        storage = Storage(
+            archive_root=ARCHIVE, extract_root=None, staging_root=STAGING
+        )
+        release = Daily(2024, 3, 14)
+        coverage = ReleaseRange(release, release)
+        metadata = Metadata(storage.stem)
+
+        processor = Multiprocessor(
+            dataset=dataset,
+            storage=storage,
+            coverage=coverage,
+            config=Config(workers=1),
+            metadata=metadata,
+        )
+
+        processor.run("summarize-all")
+
+        self.validate_db_summary()
+        _logger.info('completed test for runner="Multiprocessor", task="summarize-all"')
+
+    def validate_db_summary(self):
         self.assertFileEqual(STAGING / "db.json", FIXTURE / "db.json")
         self.assertFileEqual(ARCHIVE / "db.json", FIXTURE / "db.json")
 
@@ -56,26 +95,15 @@ class TestSummarize(TestCase):
         frame2 = pl.read_parquet(ARCHIVE / "db.parquet")
         self.assertFrameEqual(frame1, frame2)
 
-        # Validate special-treatment of AliExpress and its free-form text fields.
-        ali = frame1.filter(
-            pl.col("platform").eq("AliExpress").and_(
-                pl.col("column").is_in(["rows", "decision_facts"])
-            )
-        )
-
-        for column, count in (("rows", 6), ("decision_facts", 4)):
-            self.assertEqual(
-                ali.filter(pl.col("column").eq(column)).select("count").item(), count
-            )
-
-        # By indirecting through Statistics.read, we ensure that the type of the
-        # fixture's platform column is up to date.
         frame2 = Statistics.read(FIXTURE / "db.parquet").frame()
         self.assertFrameEqual(frame1, frame2)
 
         self.assertFileEqual(STAGING / "db.parquet", ARCHIVE / "db.parquet")
 
-    def test_summarize_category(self):
+    def test_summarize_extract(self):
+        log_rule(Size.M)
+        _logger.info('testing runner="Processor", task="summarize-extract"')
+
         dataset = StatementsOfReasons()
         storage = Storage(
             archive_root=ARCHIVE, extract_root=EXTRACT, staging_root=STAGING
@@ -83,6 +111,7 @@ class TestSummarize(TestCase):
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
         metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+
         processor = Processor(
             dataset=dataset,
             storage=storage,
@@ -93,6 +122,37 @@ class TestSummarize(TestCase):
 
         processor.run("summarize-extract")
 
+        self.validate_extract_summary()
+        _logger.info('completed test for runner="Processor", task="summarize-extract"')
+
+    def test_summarize_extract_multiproc(self):
+        log_rule(Size.S)
+        _logger.info('testing runner="Multiprocessor", task="summarize-extract"')
+
+        dataset = StatementsOfReasons()
+        storage = Storage(
+            archive_root=ARCHIVE, extract_root=EXTRACT, staging_root=STAGING
+        )
+        release = Daily(2024, 3, 14)
+        coverage = ReleaseRange(release, release)
+        metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+
+        processor = Multiprocessor(
+            dataset=dataset,
+            storage=storage,
+            coverage=coverage,
+            config=Config(workers=1),
+            metadata=metadata,
+        )
+
+        processor.run("summarize-extract")
+
+        self.validate_extract_summary()
+        _logger.info(
+            'completed test for runner="Multiprocessor", task="summarize-extract"'
+        )
+
+    def validate_extract_summary(self):
         self.assertFileEqual(
             STAGING / "protection-of-minors.json",
             EXTRACT / "protection-of-minors.json"

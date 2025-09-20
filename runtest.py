@@ -39,17 +39,17 @@ if __name__ == "__main__":
     # Prepare staging, version number, logging, and test classes.
     ticker = get_ticker(stream)
 
-    STAGING = Path(__file__).parent / "test" / "tmp"
-    shutil.rmtree(STAGING, ignore_errors=True)
-    STAGING.mkdir(parents=True)
+    TMP = Path(__file__).parent / "test" / "tmp"
+    shutil.rmtree(TMP, ignore_errors=True)
+    TMP.mkdir(parents=True)
     ticker()
 
     import shantay
     shantay.__version__ = "665.0"
     ticker()
 
-    from shantay.__main__ import configure_logging
-    configure_logging(str(STAGING / "log.log"))
+    from shantay.logging import configure_logging
+    configure_logging(str(TMP / "log.log"))
     ticker()
 
     load_tests()
