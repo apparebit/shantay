@@ -43,10 +43,10 @@ class Metadata[R: Release]:
         self._filter = filter
         self._releases = releases or {}
 
-    @classmethod
-    def for_full_db(cls) -> Self:
-        """Create a fresh metadata instance for the full database."""
-        return cls("db")
+        if stem == "db" and filter is not None:
+            raise ValueError("metadata for full database has filter")
+        if stem != "db" and filter is None:
+            raise ValueError("metadata for database extract has no filter")
 
     @classmethod
     def for_category(cls, category: str) -> Self:
@@ -121,17 +121,6 @@ class Metadata[R: Release]:
             dt.date.fromisoformat(range[1]),
         )
 
-    def set_stem(self, stem: str) -> None:
-        """Update the stem."""
-        self._stem = stem
-
-    def set_filter(self, filter: Filter) -> None:
-        """Set the not yet configured filter. Once set it cannot be modified."""
-        if self._filter is None:
-            self._filter = filter
-        else:
-            raise MetadataConflict("filter has already been configured")
-
     def batch_count(self, release: str | R) -> int:
         """Get the batch count for the given release."""
         return self._releases[str(release)]["batch_count"]
@@ -167,26 +156,21 @@ class Metadata[R: Release]:
         return type(self)("db", None, {k: strip(v) for k, v in self._releases.items()})
 
     @classmethod
-    def merge(cls, *sources: None | Path, not_exist_ok: bool = False) -> Self:
+    def merge(cls, *sources: Path) -> Self:
         """
-        Merge the metadata from the given metadata files. All files must have
-        the same stem and filter. If `not_exist_ok` is set, then this method
-        does not raise a `FileNotFoundError` when one of the source files cannot
-        be found. However, if all source files cannot be found, this method
-        always raises a `FileNotFoundError`.
+        Merge the metadata from given source paths. All files must have the same
+        stem and filter. This method ignores if some source paths do not exist.
+        However, if all source paths do not exist, this method raises a
+        `FileNotFoundError`.
         """
         assert 0 < len(sources), "no source paths given"
 
         merged = None
         for source in sources:
-            if source is None:
-                continue
             try:
                 source_data = cls.read_json(source)
             except FileNotFoundError:
-                if not_exist_ok:
-                    continue
-                raise
+                continue
             if merged is None:
                 merged = source_data
             else:
@@ -195,7 +179,7 @@ class Metadata[R: Release]:
                 merged._merge_releases(source_data._releases)
 
         if merged is None:
-            raise FileNotFoundError(*(p for p in sources if p is not None))
+            raise FileNotFoundError(*sources)
         else:
             return merged
 
@@ -546,7 +530,7 @@ class _Fsck:
         from .framing import distill_category_from_parquet
         category = distill_category_from_parquet(glob)
         if category:
-            self._metadata.set_filter(Filter.with_category(category))
+            self._metadata._filter = Filter.with_category(category)
 
     def update_batch_count(
         self,
