@@ -38,7 +38,7 @@ class TestSummarize(TestCase):
         )
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
-        metadata = Metadata.for_full_db()
+        metadata = Metadata(storage.stem)
         processor = Processor(
             dataset=dataset,
             storage=storage,
