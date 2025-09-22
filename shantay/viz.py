@@ -992,7 +992,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             self._render_overall_statements_by_platform(tag=main_tag),
             self._render_overall_statements_by_platform(
                 tag=main_tag,
-                threshold=10_000_000 if self.is_filtered else 50_000
+                threshold=50_000 if self.is_filtered else 10_000_000
             ),
             spacing=_SPACING,
         ).resolve_scale(
@@ -2067,7 +2067,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 alt.Y("count:Q")
                 .scale(type="log", domain=(
                     10_000,
-                    30_000_000_000 if self.is_filtered else 100_000_000
+                    100_000_000 if self.is_filtered else 30_000_000_000
                 ), clamp=True)
                 .title("log(Statements of Reasons)"),
                 alt.Text("label"),
