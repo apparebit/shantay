@@ -42,6 +42,8 @@ if __name__ == "__main__":
     TMP = Path(__file__).parent / "test" / "tmp"
     shutil.rmtree(TMP, ignore_errors=True)
     TMP.mkdir(parents=True)
+    for name in ("distill", "summarize"):
+        (TMP / f"{name}-staging").mkdir()
     ticker()
 
     import shantay

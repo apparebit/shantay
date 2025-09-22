@@ -12,8 +12,7 @@ ARCHIVE = FIXTURE / "archive"
 
 # We never copy the parquet files out of staging.
 # So we only need ARCHIVE and STAGING.
-STAGING = ROOT / "tmp"
-LOGFILE = STAGING / "log.log"
+LOGFILE = ROOT / "tmp" / "log.log"
 
 ONE = "1"
 TWO = "2"

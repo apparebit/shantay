@@ -22,15 +22,17 @@ ROOT = Path(__file__).parent
 FIXTURE = ROOT / "fixture"
 
 TMP = ROOT / "tmp"
-STAGING = TMP / "staging"
-ARCHIVE = STAGING / "archive"
-EXTRACT = STAGING / "extract"
+STAGING = TMP / "summarize-staging"
+ARCHIVE = TMP / "summarize-archive"
+EXTRACT = TMP / "summarize-extract"
 
 
 class TestSummarize(TestCase):
 
     def setUp(self):
         shutil.rmtree(STAGING, ignore_errors=True)
+        shutil.rmtree(EXTRACT, ignore_errors=True)
+        shutil.rmtree(ARCHIVE, ignore_errors=True)
         STAGING.mkdir(parents=True)
         shutil.copytree(FIXTURE / "archive", ARCHIVE)
 
@@ -47,7 +49,8 @@ class TestSummarize(TestCase):
         )
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
-        metadata = Metadata(storage.stem)
+        metadata = Metadata("db")
+        metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
         processor = Processor(
             dataset=dataset,
@@ -72,7 +75,8 @@ class TestSummarize(TestCase):
         )
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
-        metadata = Metadata(storage.stem)
+        metadata = Metadata("db")
+        metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
         processor = Multiprocessor(
             dataset=dataset,
@@ -111,6 +115,7 @@ class TestSummarize(TestCase):
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
         metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+        metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
         processor = Processor(
             dataset=dataset,
@@ -136,6 +141,7 @@ class TestSummarize(TestCase):
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
         metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+        metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
         processor = Multiprocessor(
             dataset=dataset,

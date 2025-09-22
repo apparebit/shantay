@@ -26,7 +26,7 @@ class TestZzz(unittest.TestCase):
             print()
             print(styled.h1("Shantay's Log"))
             for entry in log:
-                entry.print(sys.stdout)
+                print(entry)
             print("", flush=True)
 
         worker_entries = 0

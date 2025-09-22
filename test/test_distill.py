@@ -23,8 +23,8 @@ ARCHIVE = FIXTURE / "archive"
 
 # We never copy the parquet files out of staging.
 # So we only need ARCHIVE and STAGING.
-STAGING = ROOT / "tmp"
-LOGFILE = STAGING / "log.log"
+STAGING = ROOT / "tmp" / "distill-staging"
+LOGFILE = ROOT / "tmp" / "log.log"
 
 ZIP_FILES = [
     "sor-global-2024-03-14-full-00000.csv.zip",
@@ -36,10 +36,22 @@ CSV_FILES = [
     "sor-global-2024-03-14-full-00000-00001.csv",
     "sor-global-2024-03-14-full-00001-00000.csv",
     "sor-global-2024-03-14-full-00001-00001.csv",
+    "sor-global-2025-07-01-full-00000-00000.csv",
 ]
 
 
 class TestDistill(TestCase):
+
+    def test_read_csv(self):
+        dataset = StatementsOfReasons()
+
+        frame = dataset._read_csv_row_by_row(FIXTURE / "csv" / CSV_FILES[0])
+        self.assertEqual(frame.height, 50)
+        self.assertNotIn("content_id_ean", frame.columns)
+
+        frame = dataset._read_csv_row_by_row(FIXTURE / "csv" / CSV_FILES[4])
+        self.assertEqual(frame.height, 50)
+        self.assertIn("content_id_ean", frame.columns)
 
     def test_extraction(self):
         self.maxDiff = None  # When something goes wrong, we want to see *all* about it
@@ -150,7 +162,7 @@ class TestDistill(TestCase):
                 filter=metadata.filter,
             )
 
-            self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES)
+            self.assertListEqual(sorted(p.name for p in workdir.glob("*")), CSV_FILES[:-1])
             self.assertFileEqual(workdir / CSV_FILES[2], FIXTURE / "csv" / CSV_FILES[2])
             self.assertFileEqual(workdir / CSV_FILES[3], FIXTURE / "csv" / CSV_FILES[3])
 
@@ -169,7 +181,7 @@ class TestDistill(TestCase):
 
         with self.subTest("analyze release data"):
             collector = Collector()
-            metadata = metadata.with_releases()
+            metadata = metadata.with_releases_only()
             metadata[release] = {
                 "batch_count": 2,
                 "total_rows": 665,
@@ -239,21 +251,24 @@ class TestDistill(TestCase):
             )
             self.assertTrue(lines[offset + 1].startswith("Traceback"))
             self.assertTrue(lines[offset + 2].startswith("  File"))
-            self.assertTrue(lines[offset + 3].startswith("    ).collect()"))
-            self.assertTrue(lines[offset + 4].startswith("      ^^^^^^^"))
+            self.assertTrue(lines[offset + 3].startswith("    frame = self.finish_frame("))
+            self.assertTrue(lines[offset + 4].startswith("            ^^^^^^^^^^^^^^^^^^"))
             self.assertTrue(lines[offset + 5].startswith("  File"))
-            self.assertTrue(lines[offset + 6].startswith("    return function(*args, **kwargs)"))
-            self.assertTrue(lines[offset + 7].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 6].startswith("    ).collect()"))
+            self.assertTrue(lines[offset + 7].startswith("      ^^^^^^^"))
             self.assertTrue(lines[offset + 8].startswith("  File"))
             self.assertTrue(lines[offset + 9].startswith("    return function(*args, **kwargs)"))
             self.assertTrue(lines[offset + 10].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
             self.assertTrue(lines[offset + 11].startswith("  File"))
-            self.assertTrue(lines[offset + 12].startswith("    return wrap_df(ldf.collect(engine, callback))"))
-            self.assertTrue(lines[offset + 13].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 12].startswith("    return function(*args, **kwargs)"))
+            self.assertTrue(lines[offset + 13].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 14].startswith("  File"))
+            self.assertTrue(lines[offset + 15].startswith("    return wrap_df(ldf.collect(engine, callback))"))
+            self.assertTrue(lines[offset + 16].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
 
             # Since the particulars of the traceback have changed over time,
             # make offsets relative to the next log line.
-            offset = offset + 14
+            offset = offset + 17
 
             self.assertTrue(
                 lines[offset].startswith(
@@ -297,6 +312,10 @@ class TestDistill(TestCase):
 # Shantay's current analysis data format is a very long table...
 EXPECTED_ANALYSIS = {
     "category": [
+        None,
+        None,
+        None,
+        None,
         None,
         None,
         None,
@@ -679,6 +698,7 @@ EXPECTED_ANALYSIS = {
         "content_type",
         "content_type_other",
         "content_language",
+        "content_id_ean",
         "moderation_delay",
         "moderation_delay",
         "territorial_scope",
@@ -781,6 +801,7 @@ EXPECTED_ANALYSIS = {
         "content_type_other",
         "content_type_other",
         "content_language",
+        "content_id_ean",
         "moderation_delay",
         "moderation_delay",
         "territorial_scope",
@@ -851,6 +872,7 @@ EXPECTED_ANALYSIS = {
         "content_type",
         "content_type_other",
         "content_language",
+        "content_id_ean",
         "moderation_delay",
         "moderation_delay",
         "territorial_scope",
@@ -923,6 +945,7 @@ EXPECTED_ANALYSIS = {
         "content_type",
         "content_type_other",
         "content_language",
+        "content_id_ean",
         "moderation_delay",
         "moderation_delay",
         "territorial_scope",
@@ -1000,6 +1023,7 @@ EXPECTED_ANALYSIS = {
         1,
         1,
         1,
+        0,
         1,
         0,
         29,
@@ -1102,22 +1126,23 @@ EXPECTED_ANALYSIS = {
         1,
         1,
         2,
-        2,
         0,
         2,
         0,
         2,
+        0,
+        2,
         2,
         2,
         0,
-        2,
-        1,
-        1,
         2,
         1,
         1,
         2,
         1,
+        1,
+        2,
+        1,
         0,
         1,
         0,
@@ -1134,37 +1159,32 @@ EXPECTED_ANALYSIS = {
         0,
         0,
         0,
-        1,
-        1,
-        0,
-        0,
-        1,
-        1,
-        0,
-        0,
-        1,
-        0,
-        0,
-        1,
-        0,
-        0,
-        1,
         1,
         1,
         0,
         0,
         1,
         1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        1,
+        0,
+        0,
+        1,
+        1,
+        1,
+        0,
+        0,
+        1,
+        1,
         1,
         1,
         0,
         0,
         0,
-        1,
-        1,
-        0,
-        1,
-        1,
         1,
         1,
         0,
@@ -1172,6 +1192,12 @@ EXPECTED_ANALYSIS = {
         1,
         1,
         1,
+        0,
+        1,
+        1,
+        1,
+        1,
+        0,
         1,
         0,
         1,
@@ -1244,6 +1270,7 @@ EXPECTED_ANALYSIS = {
         1,
         14,
         14,
+        0,
         14,
         0,
         14,
@@ -1260,6 +1287,10 @@ EXPECTED_ANALYSIS = {
         4,
     ],
     "end_date": [
+        dt.date(2024, 3, 14),
+        dt.date(2024, 3, 14),
+        dt.date(2024, 3, 14),
+        dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
@@ -1642,6 +1673,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        "rows_of_text",
         None,
         "null_bc_negative",
         "elements",
@@ -1744,6 +1776,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        "rows_of_text",
         None,
         "null_bc_negative",
         "elements",
@@ -1814,6 +1847,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        "rows_of_text",
         None,
         "null_bc_negative",
         "elements",
@@ -1886,6 +1920,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        "rows_of_text",
         None,
         "null_bc_negative",
         "elements",
@@ -1958,6 +1993,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         2,
+        None,
         None,
         None,
         None,
@@ -2065,6 +2101,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         5702400,
         None,
         None,
@@ -2131,6 +2168,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         1,
+        None,
         None,
         None,
         None,
@@ -2202,6 +2240,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         1,
+        None,
         None,
         None,
         None,
@@ -2318,7 +2357,9 @@ EXPECTED_ANALYSIS = {
         0,
         0,
         0,
+        0,
         86582,
+        0,
         0,
         0,
         0,
@@ -2462,7 +2503,9 @@ EXPECTED_ANALYSIS = {
         0,
         0,
         0,
+        0,
         95,
+        0,
         0,
         0,
         0,
@@ -2544,6 +2587,7 @@ EXPECTED_ANALYSIS = {
         0,
     ],
     "min": [
+        None,
         None,
         None,
         None,
@@ -2707,6 +2751,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         0,
         None,
         None,
@@ -2777,6 +2822,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         0,
         None,
         None,
@@ -2784,6 +2830,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         95,
+        None,
         None,
         None,
         None,
@@ -2967,6 +3014,7 @@ EXPECTED_ANALYSIS = {
         "Google Shopping",
         "Google Shopping",
         "Google Shopping",
+        "Google Shopping",
         "Snapchat",
         "Snapchat",
         "Snapchat",
@@ -3111,6 +3159,9 @@ EXPECTED_ANALYSIS = {
         "Snapchat",
         "Snapchat",
         "Snapchat",
+        "Snapchat",
+        "Snapchat",
+        "TikTok",
         "TikTok",
         "TikTok",
         "TikTok",
@@ -3186,6 +3237,10 @@ EXPECTED_ANALYSIS = {
         "TikTok",
     ],
     "start_date": [
+        dt.date(2024, 3, 14),
+        dt.date(2024, 3, 14),
+        dt.date(2024, 3, 14),
+        dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
         dt.date(2024, 3, 14),
@@ -3685,6 +3740,8 @@ EXPECTED_ANALYSIS = {
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+        "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
+        "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
         "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
         "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
@@ -3753,6 +3810,8 @@ EXPECTED_ANALYSIS = {
         "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
         "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
         "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
+        "KEYWORD_CHILD_SEXUAL_ABUSE_MATERIAL",
+        "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
         "STATEMENT_CATEGORY_PROTECTION_OF_MINORS",
@@ -3965,6 +4024,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         "https://snap.com/community-guidelines",
         None,
         None,
@@ -4039,6 +4099,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         "https://snap.com/community-guidelines",
         None,
         None,
@@ -4094,7 +4155,9 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         "Video not eligible for recommendation in the For You feed",
+        None,
         None,
         None,
         None,
@@ -4215,6 +4278,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         "AT",
         "BE",
         "BG",
@@ -4317,6 +4381,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         None,
+        None,
         "EEA",
         None,
         None,
@@ -4380,6 +4445,7 @@ EXPECTED_ANALYSIS = {
         None,
         None,
         "CONTENT_TYPE_IMAGE",
+        None,
         None,
         None,
         None,
@@ -4452,6 +4518,7 @@ EXPECTED_ANALYSIS = {
         None,
         "CONTENT_TYPE_VIDEO",
         "CONTENT_TYPE_TEXT",
+        None,
         None,
         None,
         None,
