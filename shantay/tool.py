@@ -15,8 +15,8 @@ from .color import Style
 from .dsa_sor import StatementsOfReasons
 from .metadata import fsck, Metadata
 from .model import (
-    Config, ConfigError, DateRange, DownloadFailed, Filter, MetadataConflict,
-    ReleaseRange, StagingIsBusy, Storage
+    Config, ConfigError, CONFIG_OPTIONS, DateRange, DownloadFailed, Filter,
+    MetadataConflict, ReleaseRange, StagingIsBusy, Storage
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
@@ -238,7 +238,7 @@ def get_configuration(
     config = Config.of(
         progress=True,
         platforms=platforms,
-        **vars(options)
+        **{n: getattr(options, n) for n in CONFIG_OPTIONS}
     )
 
     # Finish it all up

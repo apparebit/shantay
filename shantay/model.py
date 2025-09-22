@@ -657,6 +657,16 @@ class Filter:
                 return "Custom Query"
 
 
+CONFIG_OPTIONS = [
+    "stratify_by_category",
+    "stratify_all_text",
+    "offline",
+    "workers",
+    "interactive_report",
+    "clamp_outliers",
+]
+
+
 @dataclasses.dataclass(frozen=True)
 class Config:
     """Assorted configuration options."""
@@ -678,18 +688,25 @@ class Config:
     clamp_outliers: bool = False
 
     @classmethod
-    def of(cls, **kwargs: Any) -> Self:
-        ps = kwargs.get("platforms", None)
+    def defaults(cls) -> dict[str, Any]:
+        return {
+            "offline": False,
+            "workers": 0,
+            "progress": False,
+            "platforms": None,
+            "stratify_by_category": False,
+            "stratify_all_text": False,
+            "interactive_report": False,
+            "clamp_outliers": False,
+        }
 
-        return cls(
-            offline=kwargs.get("offline", False),
-            workers=kwargs.get("workers", 0),
-            platforms=None if ps is None or len(ps) == 0 else tuple(ps),
-            stratify_by_category=kwargs.get("stratify_by_category", False),
-            stratify_all_text=kwargs.get("stratify_all_text", False),
-            interactive_report=kwargs.get("interactive_report", False),
-            clamp_outliers=kwargs.get("clamp_outliers", False),
+    @classmethod
+    def of(cls, **kwargs: Any) -> Self:
+        kwargs["platforms"] = (
+            None if (ps := kwargs.get("platforms", None)) is None or len(ps) == 0
+            else tuple(ps)
         )
+        return cls(**(cls.defaults() | kwargs))
 
     @property
     def stratification(self) -> dict[str, bool]:
