@@ -687,6 +687,7 @@ FIELDS = MappingProxyType({
     "content_type_other": str,
     "content_language": tuple(v.name for v in ContentLanguage),
     "content_date": dt.datetime,
+    "content_id_ean": str,
 
     "territorial_scope": list[tuple(v.name for v in TerritorialScope)],
     "application_date": dt.datetime,
@@ -741,9 +742,10 @@ def polarize(
     raise ValueError(f'cannot convert "{ptype}" with type {type(ptype)}')
 
 
-def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
+def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema, pl.Schema]:
     partial = {}
-    base = {}
+    base1 = {}
+    base2 = {}
     full = {}
 
     for name, ptype in FIELDS.items():
@@ -757,14 +759,14 @@ def _generate_schemata() -> tuple[pl.Schema, pl.Schema, pl.Schema]:
         if is_enum and name != "content_language":
             partial[name] = dtype
 
-        if is_enum:
-            base[name] = dtype
-        else:
-            base[name] = pl.String
+        if name != "content_id_ean":
+            base1[name] = dtype if is_enum else pl.String
 
-    return pl.Schema(partial), pl.Schema(base), pl.Schema(full)
+        base2[name] = dtype if is_enum else pl.String
 
-PARTIAL_SCHEMA, BASE_SCHEMA, SCHEMA = _generate_schemata()
+    return pl.Schema(partial), pl.Schema(base1), pl.Schema(base2), pl.Schema(full)
+
+PARTIAL_SCHEMA, BASE_SCHEMA_V1, BASE_SCHEMA_V2, SCHEMA = _generate_schemata()
 del _generate_schemata
 
 
@@ -846,6 +848,7 @@ TRANSFORMS = {
     "content_type": TransformType.LIST_VALUE_COUNTS,
     "content_type_other": TransformType.TEXT_VALUE_COUNTS,
     "content_language": TransformType.VALUE_COUNTS,
+    "content_id_ean": TransformType.TEXT_ROW_COUNT,
     "moderation_delay": DurationTransform("content_date", "application_date"),
     "territorial_scope": TransformType.LIST_VALUE_COUNTS,
     "disclosure_delay": DurationTransform("application_date", "created_at"),

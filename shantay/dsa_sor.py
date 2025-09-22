@@ -11,9 +11,9 @@ from .model import (
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
-    BASE_SCHEMA, CanonicalPlatformNames, KeywordChildSexualAbuseMaterial,
-    PARTIAL_SCHEMA, SCHEMA, StatementCategoryProtectionOfMinors, TerritorialAlias,
-    validate
+    BASE_SCHEMA_V1, BASE_SCHEMA_V2, CanonicalPlatformNames,
+    KeywordChildSexualAbuseMaterial, PARTIAL_SCHEMA, SCHEMA,
+    StatementCategoryProtectionOfMinors, TerritorialAlias, validate
 )
 from .util import annotate_error
 
@@ -233,7 +233,7 @@ class StatementsOfReasons(Dataset):
             frame = self.finish_frame(
                 release,
                 self._scan_csv_with_polars(csv_files, filter)
-            ).collect()
+            )
             _logger.debug(
                 'ingested rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
                 frame.height, name
@@ -262,7 +262,7 @@ class StatementsOfReasons(Dataset):
                 frame = self.finish_frame(
                     release,
                     self._scan_csv_with_polars(file_path, filter)
-                ).collect()
+                )
                 frames.append(frame)
 
                 _logger.debug(
@@ -278,7 +278,7 @@ class StatementsOfReasons(Dataset):
 
             try:
                 frame = self._read_csv_row_by_row(file_path, filter)
-                frame = self.finish_frame(release, frame.lazy()).collect()
+                frame = self.finish_frame(release, frame.lazy())
                 frames.append(frame)
 
                 _logger.debug(
@@ -333,6 +333,7 @@ class StatementsOfReasons(Dataset):
             # Alas, it doesn't seem to work.
             reader = csv.reader(file)
             header = next(reader)
+            schema = BASE_SCHEMA_V2 if "content_id_ean" in header else BASE_SCHEMA_V1
 
             if filter is not None and filter.kind is FilterKind.CATEGORY:
                 try:
@@ -373,70 +374,71 @@ class StatementsOfReasons(Dataset):
                     row = [None if field in ("", "[]") else field for field in row]
                     rows.append(row)
 
-        frame = pl.DataFrame(list(zip(*rows)), schema=BASE_SCHEMA)
+        frame = pl.DataFrame(list(zip(*rows)), schema=schema)
         if filter is not None and filter.kind is FilterKind.EXPRESSION:
             frame = frame.filter(filter.to_query())
         return frame
 
-    def finish_frame(self, release: Daily, frame: pl.LazyFrame) -> pl.LazyFrame:
+    def finish_frame(self, release: Daily, frame: pl.LazyFrame) -> pl.DataFrame:
         """
         Finish the frame by patching in the names of country groups, parsing
         list-valued columns, as well as casting list elements and date columns
-        to their types. This method does not collect lazy frames.
+        to their types.
         """
-        return (
-            frame
+        result = frame.with_columns(
             # Patch in the names of country groups as well as canonical platform names
-            .with_columns(
-                pl.when(pl.col("territorial_scope") == TerritorialAlias.EEA.value)
-                    .then(pl.lit("[\"EEA\"]"))
-                    .when(pl.col("territorial_scope") == TerritorialAlias.EEA_no_IS.value)
-                    .then(pl.lit("[\"EEA_no_IS\"]"))
-                    .when(pl.col("territorial_scope") == TerritorialAlias.EU.value)
-                    .then(pl.lit("[\"EU\"]"))
-                    .otherwise(pl.col("territorial_scope"))
-                    .alias("territorial_scope"),
-                pl.col("platform_name").replace(CanonicalPlatformNames),
-            )
+            pl.when(pl.col("territorial_scope") == TerritorialAlias.EEA.value)
+                .then(pl.lit("[\"EEA\"]"))
+                .when(pl.col("territorial_scope") == TerritorialAlias.EEA_no_IS.value)
+                .then(pl.lit("[\"EEA_no_IS\"]"))
+                .when(pl.col("territorial_scope") == TerritorialAlias.EU.value)
+                .then(pl.lit("[\"EU\"]"))
+                .otherwise(pl.col("territorial_scope"))
+                .alias("territorial_scope"),
+            pl.col("platform_name").replace(CanonicalPlatformNames),
+        ).with_columns(
             # Parse list-valued columns
-            .with_columns(
-                _parse_list(
-                    "decision_visibility",
-                    "category_addition",
-                    "category_specification",
-                    "content_type",
-                    "territorial_scope",
-                )
+            _parse_list(
+                "decision_visibility",
+                "category_addition",
+                "category_specification",
+                "content_type",
+                "territorial_scope",
             )
-            .with_columns(
-                # Replace empty lists with None. This method used to assume that
-                # the value never is the empty list. That assumption becomes
-                # superfluous with introduction of this clause.
-                _empty_list_to_null("decision_visibility"),
-                _empty_list_to_null("category_specification"),
-                _empty_list_to_null("content_type"),
-                _empty_list_to_null("territorial_scope"),
+        ).with_columns(
+            # Replace empty lists with None. This method used to assume that
+            # the value never is the empty list. That assumption becomes
+            # superfluous with introduction of this clause.
+            _empty_list_to_null("decision_visibility"),
+            _empty_list_to_null("category_specification"),
+            _empty_list_to_null("content_type"),
+            _empty_list_to_null("territorial_scope"),
+        ).with_columns(
+        # Cast list elements and date columns to their types. Add released_on.
+            pl.col("decision_visibility").cast(SCHEMA["decision_visibility"]),
+            pl.col("category_addition").cast(SCHEMA["category_addition"]),
+            pl.col("category_specification").cast(SCHEMA["category_specification"]),
+            pl.col("content_type").cast(SCHEMA["content_type"]),
+            pl.col("content_language").cast(SCHEMA["content_language"]),
+            pl.col("territorial_scope").cast(SCHEMA["territorial_scope"]),
+            pl.col(
+                "end_date_visibility_restriction",
+                "end_date_monetary_restriction",
+                "end_date_service_restriction",
+                "end_date_account_restriction",
+                "content_date",
+                "application_date",
+                "created_at",
+            ).str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms"),
+            pl.lit(release.date, dtype=pl.Date).alias("released_on"),
+        ).collect()
+
+        if "content_id_ean" not in result.columns:
+            result = result.with_columns(
+                pl.lit(None, dtype=pl.String).alias("content_id_ean")
             )
-            # Cast list elements and date columns to their types. Add released_on.
-            .with_columns(
-                pl.col("decision_visibility").cast(SCHEMA["decision_visibility"]),
-                pl.col("category_addition").cast(SCHEMA["category_addition"]),
-                pl.col("category_specification").cast(SCHEMA["category_specification"]),
-                pl.col("content_type").cast(SCHEMA["content_type"]),
-                pl.col("content_language").cast(SCHEMA["content_language"]),
-                pl.col("territorial_scope").cast(SCHEMA["territorial_scope"]),
-                pl.col(
-                    "end_date_visibility_restriction",
-                    "end_date_monetary_restriction",
-                    "end_date_service_restriction",
-                    "end_date_account_restriction",
-                    "content_date",
-                    "application_date",
-                    "created_at",
-                ).str.to_datetime("%Y-%m-%d %H:%M:%S", time_unit="ms"),
-                pl.lit(release.date, dtype=pl.Date).alias("released_on"),
-            )
-        )
+
+        return result
 
     def _assemble_frame_counters(
         self, frame: pl.DataFrame, total_rows: int, total_rows_with_keywords: int
@@ -474,6 +476,11 @@ class StatementsOfReasons(Dataset):
         extract = pl.read_parquet(glob).with_columns(
             pl.col("platform_name").replace(CanonicalPlatformNames)
         )
+
+        if "content_id_ean" not in extract.columns:
+            extract = extract.with_columns(
+                pl.lit(None, dtype=pl.String).alias("content_id_ean")
+            )
 
         collector.collect(
             release,
