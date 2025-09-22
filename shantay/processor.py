@@ -60,11 +60,6 @@ class Processor[R: Release]:
         return self._metadata.stem
 
     @property
-    def stats_file(self) -> str:
-        """The name of the statistics file."""
-        return f"{self._metadata.stem}.parquet"
-
-    @property
     def latency(self) -> float:
         """The latency of the most recent invocation of run()."""
         return self._running_time
@@ -74,7 +69,7 @@ class Processor[R: Release]:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
         _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
-        _logger.info('    key="runtime.progress",     value=%d', self._config.progress)
+        _logger.info('    key="runtime.progress",     value="%s"', self._config.progress)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
         _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")
@@ -82,10 +77,10 @@ class Processor[R: Release]:
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency)
+        _logger.info('    key="coverage.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="stratify.category",    value="%s"', self._config.stratify_by_category)
-        _logger.info('    key="stratify.all.text",    value="%s"', self._config.stratify_all_text)
-        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
-        _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
+        _logger.info('    key="stratify.all_text",    value="%s"', self._config.stratify_all_text)
+        _logger.info('    key="statistics.stem",      value="%s"', self.stem)
 
         # Arguably, time.process_time() would be the more accurate time source
         # for measuring latency. However, that may not hold for the parallel
@@ -286,7 +281,7 @@ class Processor[R: Release]:
         # The staging root's metadata was merged with the extract's metadata
         # during startup. Hence writing it back to the extract directory won't
         # lead to data loss---as long as there are no concurrent writers!
-        meta_json = f"{self._metadata.stem}.json"
+        meta_json = f"{self.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.the_extract_root / meta_json
@@ -552,9 +547,7 @@ class Processor[R: Release]:
         meta_data_entry = cast(MetadataEntry, dict(full_counters))
         meta_data_entry["sha256"] = compute_digest(digest_file)
         self._metadata[release] = meta_data_entry
-        self._metadata.write_json(
-            self._storage.staging_root / f"{self._metadata.stem}.json"
-        )
+        self._metadata.write_json(self._storage.staging_root / f"{self.stem}.json")
         _logger.info(
             'distilled release="%s", batch-count=%d, filter="%s"',
             release.id, batch_count, self._metadata.filter
@@ -662,21 +655,21 @@ class Processor[R: Release]:
         )
         self._progress.start(self._coverage.duration)
 
-        tmp_dir = self._storage.tmp_stem_dir
-        pre_existing_stats = prepare_statistics(self._storage, self._config)
+        stats_dir = self._storage.staging_root / f"{self.stem}.stats"
+        pre_existing_stats = prepare_statistics(self.stem, self._storage, self._config)
 
         for index, release in enumerate(self._coverage):
             stats_file = f"{release}.parquet"
-            stats_path = tmp_dir / stats_file
+            stats_path = stats_dir / stats_file
+            stats_path_exists = stats_path.exists()
 
-            pre_exists = release in pre_existing_stats
-            if pre_exists or stats_path.exists():
+            if release in pre_existing_stats or stats_path_exists:
                 _logger.debug(
                     'summary statistics for extract already cover release="%s"',
                     release
                 )
-                if pre_exists:
-                    stats_path.unlink(missing_ok=True)
+                if not stats_path_exists:
+                    pre_existing_stats.write_release(release, stats_path)
                 continue
 
             # Ensure graceful termination in offline mode
@@ -699,31 +692,33 @@ class Processor[R: Release]:
                 stratify_all_text=self._config.stratify_all_text,
             )
             self.summarize_release_extract(release=release, collector=stats)
-            stats.write(tmp_dir, should_finalize=True)
+            stats.write(stats_dir, should_finalize=True)
             stats = None
 
             self._progress.step(index + 1, extra=release.id)
 
-        meta_json = f"{self._metadata.stem}.json"
+        meta_json = f"{self.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.the_extract_root / meta_json
         )
 
+        stats_file = f"{self.stem}.parquet"
         _logger.info(
-            'combining summary statistics for extract to file="%s"', self.stats_file
+            'combining summary statistics glob="%s", file="%s"',
+            f"{self.stem}.stats/*.parquet", stats_file
         )
-        stats = Statistics.read_all(tmp_dir, "*.parquet", self.stats_file)
+        stats = Statistics.read_all(stats_dir)
         stats.write(self._storage.staging_root, should_finalize=True)
-        shutil.rmtree(tmp_dir)
 
         _logger.info(
             'copying summary statistics for extract to file="%s"',
-            self._storage.the_extract_root / self.stats_file
+            self._storage.the_extract_root / stats_file
         )
-        Statistics.copy(
-            self.stats_file, self._storage.staging_root, self._storage.the_extract_root
+        Statistics.copy_all(
+            self.stem, self._storage.staging_root, self._storage.the_extract_root
         )
+
         return stats.frame()
 
     def summarize_release_extract(
@@ -759,8 +754,10 @@ class Processor[R: Release]:
 
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""
-        tmp_dir = self._storage.tmp_stem_dir
-        pre_existing_stats = prepare_statistics(self._storage, self._config)
+        stats_dir = self._storage.staging_root / f"{self.stem}.stats"
+        pre_existing_stats = prepare_statistics(
+            self.stem, self._storage, self._config
+        )
 
         # Due to variability of daily record numbers and worker process timing,
         # the multiprocessing version of summarize may add daily statistics out
@@ -769,13 +766,13 @@ class Processor[R: Release]:
         # robust, self-healing implementation strategy.
         for release in self._coverage:
             stats_file = f"{release}.parquet"
-            stats_path = tmp_dir / stats_file
+            stats_path = stats_dir / stats_file
+            stats_path_exists = stats_path.exists()
 
-            pre_exists = release in pre_existing_stats
-            if pre_exists or stats_path.exists():
+            if release in pre_existing_stats or stats_path_exists:
                 _logger.debug('summary statistics already cover release="%s"', release)
-                if pre_exists:
-                    stats_path.unlink(missing_ok=True)
+                if not stats_path_exists:
+                    pre_existing_stats.write_release(release, stats_dir)
                 continue
 
             # Ensure graceful termination in offline mode
@@ -795,9 +792,9 @@ class Processor[R: Release]:
                 update_platforms(x.args[0])
                 raise
 
-            stats.write(tmp_dir, should_finalize=True)
+            stats.write(stats_dir, should_finalize=True)
             _logger.debug(
-                'saved summary statistics to file="%s", release="%s"',
+                'saved per-release summary statistics to file="%s", release="%s"',
                 stats_path, release
             )
             stats = None
@@ -810,7 +807,7 @@ class Processor[R: Release]:
                     value, unit, release
                 )
 
-        meta_json = f"{self._metadata.stem}.json"
+        meta_json = f"{self.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.the_archive_root / meta_json
@@ -818,16 +815,15 @@ class Processor[R: Release]:
 
         # Rewrite saved statistics after rechunking and copy to persistent root
         _logger.info('combining summary statistics to file="db.parquet"')
-        stats = Statistics.read_all(tmp_dir, "*.parquet", "db.parquet")
+        stats = Statistics.read_all(stats_dir)
         stats.write(self._storage.staging_root, should_finalize=True)
-        shutil.rmtree(tmp_dir)
 
         _logger.info(
             'copying summary statistics to archive file="%s/db.parquet"',
             self._storage.archive_root
         )
-        Statistics.copy(
-            self.stats_file, self._storage.staging_root, self._storage.the_archive_root
+        Statistics.copy_all(
+            self.stem, self._storage.staging_root, self._storage.the_archive_root
         )
         return stats.frame()
 
@@ -902,18 +898,17 @@ class Processor[R: Release]:
                 )
 
         _logger.debug(
-            'combining file-count=%d, glob="db-*.parquet", release="%s"',
-            batch_count, release
+            'combining file-count=%d, glob="%s-*.parquet", release="%s"',
+            batch_count, release, release
         )
         stats = Statistics.read_all(
             self._storage.staging_root / release.directory,
-            f"{release}-*.parquet", f"{release}.parquet"
+            glob=f"{release}-*.parquet",
+            file=f"{release}.parquet",
         )
 
         self._metadata[release] = cast(MetadataEntry, full_counts)
-        self._metadata.write_json(
-            self._storage.staging_root / f"{self._metadata.stem}.json"
-        )
+        self._metadata.write_json(self._storage.staging_root / f"{self.stem}.json")
 
         # While not quite as big as the uncompressed data, the zipped release
         # can still weigh 8 GB. Hence we aggressively clean staged releases as
@@ -936,14 +931,15 @@ class Processor[R: Release]:
         ).run()
 
 
-def prepare_statistics(storage: Storage, config: Config) -> Statistics:
+def prepare_statistics(stem: str, storage: Storage, config: Config) -> Statistics:
     """
     Recreate the directory for per-release summary statistics and copy existing
     statistics (if they exist) into it.
     """
-    storage.tmp_stem_dir.mkdir(exist_ok=True)
+    stats_dir = storage.staging_root / f"{stem}.stats"
+    stats_dir.mkdir(exist_ok=True)
 
-    file = f"{storage.stem}.parquet"
+    file = f"{stem}.parquet"
     stats = Statistics.pick(file, storage.staging_root, storage.best_root)
     if stats is None:
         return Statistics(
@@ -965,7 +961,6 @@ def prepare_statistics(storage: Storage, config: Config) -> Statistics:
         'existing statistics "%s" cover start_date="%s", end_date="%s"',
         file, range.first, range.last
     )
-    stats.frame().write_parquet(storage.tmp_stem_dir / f"{range.last}.parquet")
     return stats
 
 

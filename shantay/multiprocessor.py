@@ -59,8 +59,8 @@ class Multiprocessor:
         self._running_time = 0
 
     @property
-    def stats_file(self) -> str:
-        return f"{self._metadata.stem}.parquet"
+    def stem(self) -> str:
+        return self._metadata.stem
 
     @property
     def latency(self) -> float:
@@ -73,7 +73,7 @@ class Multiprocessor:
         _logger.info('running multiprocessor with pid=%d, task="%s"', _PID, task)
         _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
         _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
-        _logger.info('    key="runtime.progress",     value=%d', self._config.progress)
+        _logger.info('    key="runtime.progress",     value="%s"', self._config.progress)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")
         _logger.info('    key="storage.extract_root", value="%s"', self._storage.extract_root or "")
@@ -81,10 +81,10 @@ class Multiprocessor:
         _logger.info('    key="coverage.first",       value="%s"', self._coverage.first.id)
         _logger.info('    key="coverage.last",        value="%s"', self._coverage.last.id)
         _logger.info('    key="coverage.frequency",   value="%s"', self._coverage.frequency)
+        _logger.info('    key="coverage.filter",      value="%s"', self._metadata.filter or "")
         _logger.info('    key="stratify.category",    value="%s"', self._config.stratify_by_category)
-        _logger.info('    key="stratify.all.text",    value="%s"', self._config.stratify_all_text)
-        _logger.info('    key="metadata.filter",      value="%s"', self._metadata.filter or "")
-        _logger.info('    key="statistics.file",      value="%s"', self.stats_file)
+        _logger.info('    key="stratify.all_text",    value="%s"', self._config.stratify_all_text)
+        _logger.info('    key="statistics.stem",      value="%s"', self.stem)
 
         # See Processor.run() for an explanation for time.time()
         start_time = time.time()
@@ -92,7 +92,9 @@ class Multiprocessor:
         if task not in ("download", "distill", "summarize-all", "summarize-extract"):
             raise ValueError(f"invalid task {task}")
         if task.startswith("summarize"):
-            self._pre_existing_stats = prepare_statistics(self._storage, self._config)
+            self._pre_existing_stats = prepare_statistics(
+                self.stem, self._storage, self._config
+            )
         self._iter = iter(self._coverage)
 
         try:
@@ -117,23 +119,23 @@ class Multiprocessor:
             return None
 
         # Put data and metadata into long-term storage
-        meta_json = f"{self._metadata.stem}.json"
+        meta_json = f"{self.stem}.json"
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.best_root / meta_json
         )
 
         stats = Statistics.read_all(
-            self._storage.tmp_stem_dir, "*.parquet", self.stats_file
+            self._storage.staging_root / f"{self.stem}.stats"
         )
         stats.write(self._storage.staging_root, should_finalize=True)
 
         _logger.info(
-            'copying summary statistics to persistent file="%s"',
-            self._storage.best_root / self.stats_file
+            'copying summary statistics to persistent root="%s"',
+            self._storage.best_root
         )
-        Statistics.copy(
-            self.stats_file, self._storage.staging_root, self._storage.best_root
+        Statistics.copy_all(
+            self.stem, self._storage.staging_root, self._storage.best_root
         )
 
         return stats.frame()
@@ -163,9 +165,9 @@ class Multiprocessor:
 
             # Create a minimal metadata instance for the worker
             if effective_task == "summarize-extract":
-                metadata = self._metadata.with_releases(release)
+                metadata = self._metadata.with_releases_only(release)
             else:
-                metadata = self._metadata.with_releases()
+                metadata = self._metadata.with_releases_only()
 
             _logger.info(
                 'submitting task="%s", release="%s", pool="%s"',
@@ -211,15 +213,15 @@ class Multiprocessor:
         elif self._task is not None and self._task.startswith("summarize"):
             assert self._pre_existing_stats is not None
             while release is not None:
-                stats_path = self._storage.tmp_stem_dir / f"{release}.parquet"
-                pre_exists = release in self._pre_existing_stats
-                if not pre_exists and not stats_path.exists():
+                stats_path = (
+                    self._storage.staging_root
+                    / f"{self.stem}.stats"
+                    / f"{release}.parquet"
+                )
+                if release not in self._pre_existing_stats and not stats_path.exists():
                     break
 
                 _logger.debug('summary statistics already cover release="%s"', release)
-                if pre_exists:
-                    stats_path.unlink(missing_ok=True)
-
                 release = next(self._iter, None)
 
         # Ensure graceful termination in offline mode.
@@ -272,7 +274,10 @@ class Multiprocessor:
                 assert task.kwargs["release"] == release
 
             # The coordinator can safely update its own staging area
-            result[1].write(self._storage.tmp_stem_dir, should_finalize=True)
+            result[1].write(
+                self._storage.staging_root / f"{self.stem}.stats",
+                should_finalize=True,
+            )
         else:
             raise AssertionError(f"invalid task {self._task}")
 
@@ -291,7 +296,7 @@ class Multiprocessor:
 
         # This method runs in the coordinator and uses the coordinator's
         # staging, making this write safe.
-        meta_json = f"{self._metadata.stem}.json"
+        meta_json = f"{self.stem}.json"
         meta_staging = self._storage.staging_root / meta_json
         self._metadata.write_json(meta_staging)
 

@@ -914,16 +914,6 @@ class Storage:
             return self.archive_root
         return self.staging_root
 
-    @property
-    def stem(self) -> str:
-        """The stem."""
-        return "db" if self.extract_root is None else self.extract_root.stem
-
-    @property
-    def tmp_stem_dir(self) -> Path:
-        """The temporary directory named after the stem."""
-        return self.staging_root / f"{self.stem}.tmp"
-
     def coverage_of_archive(self) -> None | DateRange:
         """Determine the date coverage of the archive based on directory names."""
         if self.archive_root is None:
