@@ -12,6 +12,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 import datetime as dt
+import filecmp
 from importlib.resources import files, as_file
 import math
 from pathlib import Path
@@ -953,7 +954,7 @@ class Statistics:
     def builtin(cls) -> Self:
         """Get the pre-computed statistics for the entire DSA database."""
         # Per spec, __package__ is the same as __spec__.parent
-        source = files(__spec__.parent).joinpath("db.parquet")
+        source = files(__spec__.parent).joinpath("builtin.parquet")
         with as_file(source) as path:
             return cls.read(path)
 
@@ -992,12 +993,21 @@ class Statistics:
         )
 
     @classmethod
-    def read_all(cls, directory: Path, glob: str, file: str) -> Self:
+    def read_all(
+        cls,
+        directory: Path,
+        *,
+        glob: str = "*.parquet",
+        file: None | str = None,
+    ) -> Self:
         """
-        Instantiate a new statistics frame from *all* files matching the given
-        glob. The resulting frame uses the given file name. This method assumes
-        that all frames were created with the same stratification options.
+        Instantiate a new statistics frame from the parquet files in the given
+        directory. By  default, the file name for the new statistics is derived
+        from the directory stem. This method assumes that all frames have been
+        created with the same stratification options.
         """
+        if file is None:
+            file = f"{directory.stem}.parquet"
         return cls._do_read(f"{directory}/{glob}", file)
 
     @classmethod
@@ -1200,13 +1210,39 @@ class Statistics:
 
         return self
 
+    def write_release(self, release: Release, directory: Path) -> None:
+        assert release.date is not None
+
+        self.frame().filter(
+            pl.col("start_date").le(release.date).and_(
+                pl.col("end_date").ge(release.date)
+            )
+        ).write_parquet(directory / f"{release}.parquet")
+
     @classmethod
-    def copy(cls, file: str, source: Path, target: Path) -> None:
-        """
-        Copy the statistics file in the source directory to the target directory
-        via an intermediate temporary file on the same file system as the target
-        directory.
-        """
-        tmp = (target / file).with_suffix(".tmp.parquet")
-        shutil.copy(source / file, tmp)
-        tmp.replace(target / file)
+    def copy_all(cls, stem: str, source: Path, target: Path) -> None:
+        """Copy the directory of pre-release statistics and the combined file."""
+        stats_dir = f"{stem}.stats"
+        stats_file = f"{stem}.parquet"
+
+        cls._compare_or_copy(source / stats_file, target / stats_file)
+
+        target_dir = target / stats_dir
+        target_dir.mkdir(exist_ok=True)
+
+        for file in (source / stats_dir).glob("*.parquet"):
+            cls._compare_or_copy(file, target_dir / file.name)
+
+    @classmethod
+    def _compare_or_copy(cls, source: Path, target: Path) -> None:
+        """Copy the source file to the target file."""
+        if target.exists():
+            if not filecmp.cmp(source, target, shallow=False):
+                raise ValueError(
+                    f'"{source}" and "{target}" differ; please move '
+                    'the latter out of the way'
+                )
+        else:
+            tmp = target.with_suffix(".tmp.parquet")
+            shutil.copy(source, tmp)
+            tmp.replace(target)
