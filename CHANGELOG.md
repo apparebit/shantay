@@ -66,9 +66,15 @@ combines the per-release frames into a complete data frame as well. For now, it
 also preserves the per-release frames, which simplify incremental computation
 including recovery from failures.
 
-(The same measurements show that per-batch latency slowly increases as well,
-from about 10s to 15s over 22 months. That strongly suggests to restart worker
-processes every n processed releases.)
+The same measurements show that per-batch latency slowly increases as well, from
+about 10s to 15s over 22 months. That strongly suggests to restart worker
+processes every n processed releases.
+
+Shantay now logs the necessary statistics. `shantay.log` extracts performance
+statistics into a dedicated [CSV
+file](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.csv)
+and also visualizes them in [SVG
+format](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.svg).
 
 ### Minor Improvements and Bug Fixes
 
