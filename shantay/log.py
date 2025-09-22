@@ -6,7 +6,7 @@ textual representation in Shantay's log and regenerate the same text again
 """
 
 from collections.abc import Iterator, Mapping
-from dataclasses import dataclass
+import dataclasses
 import datetime as dt
 from io import StringIO
 from pathlib import Path
@@ -19,6 +19,7 @@ from .model import Release
 
 COMMA_SPACE = re.compile(r",\s+")
 DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+BATCH = re.compile(r"(?<=-full-)[0-9]{5}")
 RULE = re.compile(r"^▁+$")
 
 
@@ -26,7 +27,7 @@ class NoArgument:
     pass
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class LogMessage:
     """
     The actual log message, comprising a prefix and key, value pairs, both of
@@ -97,9 +98,20 @@ class LogMessage:
         if "release" in self:
             return Release.of(cast(str, self.props["release"]))
         if "file" in self:
-            file = DATE.search(cast(str, self.props["file"]))
-            if file is not None:
-                return Release.of(file.group(0))
+            date = DATE.search(cast(str, self.props["file"]))
+            if date is not None:
+                return Release.of(date.group(0))
+
+        return None
+
+    def batch(self) -> None | int:
+        """Get the batch number if any."""
+        if "file-count" in self:
+            return cast(int, self.props["file-count"])
+        if "file" in self:
+            batch = BATCH.search((cast(str, self.props["file"])))
+            if batch is not None:
+                return int(batch.group(0))
 
         return None
 
@@ -172,7 +184,7 @@ class LogMessage:
             stream.write(value)
 
 
-@dataclass(slots=True)
+@dataclasses.dataclass(slots=True)
 class LogEntry:
     """
     A structured log entry, comprising the timestamp, the process ID, the
@@ -234,7 +246,10 @@ class LogEntry:
 
     def is_rule(self) -> bool:
         """Determine whether the log entry contains a horizontal rule as message."""
-        return self.message.prefix is not None and "━━━" in self.message.prefix
+        return (
+            self.message.prefix is not None
+            and self.message.prefix[:3] in ("───", "━━━", "═══")
+        )
 
     def is_task_start(self) -> bool:
         """Determine whether the log entry marks the beginning of a task."""
@@ -315,29 +330,108 @@ class LogEntry:
             stream.write("\n")
             stream.write(self.exc_info)
 
-    def print(self, stream: TextIO = sys.stdout, end: None | str = "\n") -> None:
-        """Print the log entry."""
-        self.write(stream)
-        if end is not None:
-            stream.write(end)
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class TimeSeriesEntry:
+    ts: dt.datetime
+    process_kind: Literal["coordinator", "worker"]
+    process_id: int
+    release: None | Release
+    batch: None | int
+    metric: Literal["latency", "max-rss"]
+    value: int | float
+
+    @property
+    def label(self) -> str:
+        return f"{self.process_kind}-{self.process_id}"
+
+    def __str__(self) -> str:
+        s = StringIO()
+        self.write(s)
+        return s.getvalue()
+
+    def write(self, stream: TextIO) -> None:
+        stream.write(self.ts.isoformat())
+        stream.write(",")
+        stream.write(self.process_kind)
+        stream.write(",")
+        stream.write(str(self.process_id))
+        stream.write("" if self.release is None else self.release.id)
+        stream.write(",")
+        stream.write("" if self.batch is None else str(self.batch))
+        stream.write(",")
+        stream.write(self.metric)
+        stream.write(",")
+        stream.write(f"{self.value:.3f}")
+
+    @classmethod
+    def extract(cls, log: Iterator[LogEntry]) -> Iterator[None | Self]:
+        coordinator = None
+        for index, entry in enumerate(log):
+            if entry.is_rule() and entry.module == "shantay":
+                print(
+                    f"log record {index:,} marks new run; starting afresh",
+                    file=sys.stderr
+                )
+
+                coordinator = entry.pid
+                yield None
+                continue
+
+            if entry.is_summarized_file():
+                batch = entry.message.batch()
+                metric = "latency"
+                value = entry.message.latency()
+            elif entry.is_max_rss():
+                batch = None
+                metric = "max-rss"
+                value = entry.message.resident_set_size()
+            else:
+                continue
+
+            process_kind = "coordinator" if entry.pid == coordinator else "worker"
+            release = entry.message.release()
+            assert value is not None
+
+            yield cls(
+                entry.timestamp,
+                process_kind,
+                entry.pid,
+                release,
+                batch,
+                metric,
+                value,
+            )
+
+    @classmethod
+    def extract_into_file(cls, log: Iterator[LogEntry], path: Path) -> None:
+        with open(path, mode="w", encoding="utf8") as file:
+            for entry in cls.extract(log):
+                if entry is None:
+                    file.seek(0)
+                    file.truncate()
+                else:
+                    entry.write(file)
+                    file.write("\n")
 
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "path",
+        "in",
         type=Path,
+        default=Path("shantay.log"),
+        dest="input",
         help="The log file to parse",
+    )
+    parser.add_argument(
+        "out",
+        type=Path,
+        default=Path("shantay-perf.csv"),
+        help="the csv file to generator",
     )
     options = parser.parse_args(sys.argv[1:])
 
-    for entry in LogEntry.parse_file(options.path):
-        if (
-            entry.is_rule()
-            or entry.is_task_start()
-            or entry.is_key_value()
-            or entry.is_job_start1()
-        ):
-            entry.write(sys.stdout)
-            sys.stdout.write("\n")
+    file_parser = LogEntry.parse_file(options.input)
+    TimeSeriesEntry.extract_into_file(file_parser, options.out)
