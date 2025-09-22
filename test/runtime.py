@@ -25,6 +25,7 @@ import inspect
 import json
 import os
 from pathlib import Path
+import shutil
 from types import TracebackType
 from typing import Any, Callable, TextIO, TypeAlias, TYPE_CHECKING
 import unittest
@@ -162,7 +163,7 @@ class testunit:
         )
 
 
-TIGHT_WIDTH = 70
+_TIGHT_WIDTH = 70
 
 
 class StyledStream:
@@ -176,7 +177,7 @@ class StyledStream:
 
     @property
     def tight_width(self) -> int:
-        return min(self.width, TIGHT_WIDTH)
+        return min(self.width, _TIGHT_WIDTH)
 
     def _hn(self, dash: str, length: int, text: str) -> str:
         length = self.tight_width - 4 - length - 1
@@ -224,13 +225,13 @@ ProgressTracker: TypeAlias = Callable[[testunit, None | OptExcInfo], None]
 ResultPrinter: TypeAlias = Callable[[int, list[BrokenTest], list[BrokenTest]], None]
 
 
-def get_ticker(stream: TextIO) -> Callable[[], None]:
+def _make_ticker(stream: TextIO) -> Callable[[], None]:
     def ticker() -> None:
         stream.write("◦")
     return ticker
 
 
-def track_progress(stream: TextIO) -> ProgressTracker:
+def _track_progress(stream: TextIO) -> ProgressTracker:
     columns = 0
 
     def track_progress(test: testunit, err: None | OptExcInfo) -> None:
@@ -244,7 +245,7 @@ def track_progress(stream: TextIO) -> ProgressTracker:
             stream.write("e" if test.is_subtest else "E")
 
         columns += 1
-        if columns >= TIGHT_WIDTH:
+        if columns >= _TIGHT_WIDTH:
             stream.write("\n")
             columns = 0
 
@@ -253,7 +254,7 @@ def track_progress(stream: TextIO) -> ProgressTracker:
     return track_progress
 
 
-def print_summary(stream: TextIO) -> ResultPrinter:
+def _print_summary(stream: TextIO) -> ResultPrinter:
     styled = StyledStream(stream)
 
     def print1(label: str, test: testunit, trace: str) -> None:
@@ -306,8 +307,8 @@ class ResultAdapter(unittest.TestResult if TYPE_CHECKING else object):
             if result is None
             else result
         )
-        self._tracker = track_progress(stream) if tracker is None else tracker
-        self._printer = print_summary(stream) if printer is None else printer
+        self._tracker = _track_progress(stream) if tracker is None else tracker
+        self._printer = _print_summary(stream) if printer is None else printer
 
     def __getattr__(self, name: str) -> Any:
         if name.startswith("_") or not hasattr(self._result, name):
@@ -369,7 +370,20 @@ class ResultAdapter(unittest.TestResult if TYPE_CHECKING else object):
         )
 
 
-def load_tests() -> None:
+def _reset_temp_storage() -> Path:
+    tmp = Path(__file__).parent / "tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    tmp.mkdir(parents=True)
+    return tmp
+
+
+def _prepare_temp_storage(tmp: Path, tests: list[str]) -> None:
+    for prefix in tests:
+        print(f">>>>> {prefix}")
+        (tmp / f"{prefix}-staging").mkdir()
+
+
+def _load_tests() -> list[str]:
     """
     Load all tests into the test module. While it is easier to just manually
     keep track of test modules, manual book keeping is tedious and error prone.
@@ -377,6 +391,7 @@ def load_tests() -> None:
     """
     modtest = importlib.import_module("test")
 
+    staging_prefixes = []
     for direntry in sorted(Path(__file__).parent.glob("test_*.py")):
         # For each submodule named test.test_something, ...
         if not direntry.is_file():
@@ -396,5 +411,33 @@ def load_tests() -> None:
             if not isinstance(value, type) or not issubclass(value, unittest.TestCase):
                 continue
 
+            # ... check for REQUIRES_STAGING and then ...
+            prefix = getattr(value, "WITH_STAGING", None)
+            if prefix is not None:
+                staging_prefixes.append(prefix)
+
             # ... make the value available in this module, too.
             setattr(modtest, name, value)
+
+    return staging_prefixes
+
+
+def setup(stream: TextIO) -> None:
+    tick = _make_ticker(stream)
+
+    tmp = _reset_temp_storage()
+    tick()
+
+    import shantay
+    shantay.__version__ = "665.0"
+    tick()
+
+    from shantay.logging import configure_logging
+    configure_logging(str(tmp / "log.log"))
+    tick()
+
+    storage_prefixes = _load_tests()
+    tick()
+
+    _prepare_temp_storage(tmp, storage_prefixes)
+    tick()

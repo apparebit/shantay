@@ -42,6 +42,8 @@ CSV_FILES = [
 
 class TestDistill(TestCase):
 
+    WITH_STAGING = "distill"
+
     def test_read_csv(self):
         dataset = StatementsOfReasons()
 

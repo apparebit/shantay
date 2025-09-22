@@ -29,6 +29,8 @@ EXTRACT = TMP / "summarize-extract"
 
 class TestSummarize(TestCase):
 
+    WITH_STAGING = "summarize"
+
     def setUp(self):
         shutil.rmtree(STAGING, ignore_errors=True)
         shutil.rmtree(EXTRACT, ignore_errors=True)
