@@ -35,7 +35,7 @@ class LogMessage:
     """
 
     prefix: None | str
-    props: Mapping[str, None | bool | int | float | str]
+    props: Mapping[str, None | bool | int | float | str ]
 
     @classmethod
     def parse(cls, s: str) -> Self:
@@ -72,6 +72,7 @@ class LogMessage:
                 elif value.lower() == "true":
                     value = True
             else:
+                value = value.replace("_", "")
                 try:
                     value = int(value)
                 except ValueError:
@@ -104,7 +105,7 @@ class LogMessage:
 
         return None
 
-    def batch(self) -> None | int:
+    def batches(self) -> None | int:
         """Get the batch number if any."""
         if "file-count" in self:
             return cast(int, self.props["file-count"])
@@ -139,9 +140,9 @@ class LogMessage:
         size = self.props.get("resident-set-size", None)
         if size is None:
             return None
-        if not isinstance(size, float):
+        if not isinstance(size, (int, float)):
             raise ValueError(f'resident-set-size "{size}" is not a number')
-        unit = self.props["unit"]
+        unit = self.props.get("unit", "B")
         match unit:
             case "B":
                 return size / 1024**3
@@ -248,7 +249,7 @@ class LogEntry:
         """Determine whether the log entry contains a horizontal rule as message."""
         return (
             self.message.prefix is not None
-            and self.message.prefix[:3] in ("───", "━━━", "═══")
+            and self.message.prefix[:3] in ("───", "━━━", "═══", "▁▁▁", "___")
         )
 
     def is_task_start(self) -> bool:
@@ -304,10 +305,16 @@ class LogEntry:
         """Determine whether the log entry marks a successfully summarized file."""
         return self.message.has("file", "latency", "unit", prefix="summarized")
 
+    def is_combined_batches(self) -> bool:
+        """Determine whether the log entry marks the combining of per-batch stats."""
+        if self.message.has("file-count", "glob", "release", prefix="combining"):
+            return True
+        return self.message.has("entity", "count", prefix="combining")
+
     def is_max_rss(self) -> bool:
         """Determine whether the log entry reports the maximum resident-set size
         for a process."""
-        return self.message.has("resident-set-size", "unit", prefix="maximum")
+        return self.message.has("resident-set-size", prefix="maximum")
 
     def __str__(self) -> str:
         """Get the log message as a string."""
@@ -333,29 +340,44 @@ class LogEntry:
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class TimeSeriesEntry:
-    ts: dt.datetime
-    process_kind: Literal["coordinator", "worker"]
+
+    timestamp: dt.datetime
     process_id: int
+    worker_id: None | int
     release: None | Release
     batch: None | int
-    metric: Literal["latency", "max-rss"]
+    metric: Literal["latency", "max-rss", "batches"]
     value: int | float
 
     @property
     def label(self) -> str:
-        return f"{self.process_kind}-{self.process_id}"
+        if self.worker_id is None:
+            return "coordinator"
+        else:
+            return f"worker-{self.worker_id}"
 
     def __str__(self) -> str:
         s = StringIO()
         self.write(s)
         return s.getvalue()
 
-    def write(self, stream: TextIO) -> None:
-        stream.write(self.ts.isoformat())
-        stream.write(",")
-        stream.write(self.process_kind)
+    @classmethod
+    def write_header(cls, stream: TextIO, *, with_label: bool = False) -> None:
+        stream.write("timestamp,process_id,worker_id,")
+        if with_label:
+            stream.write("label,")
+        stream.write("release,batch,metric,value")
+
+    def write(self, stream: TextIO, *, with_label: bool = False) -> None:
+        stream.write(self.timestamp.isoformat())
         stream.write(",")
         stream.write(str(self.process_id))
+        stream.write(",")
+        stream.write("" if self.worker_id is None else str(self.worker_id))
+        stream.write(",")
+        if with_label:
+            stream.write(self.label)
+            stream.write(",")
         stream.write("" if self.release is None else self.release.id)
         stream.write(",")
         stream.write("" if self.batch is None else str(self.batch))
@@ -367,36 +389,60 @@ class TimeSeriesEntry:
     @classmethod
     def extract(cls, log: Iterator[LogEntry]) -> Iterator[None | Self]:
         coordinator = None
+        worker_count = 0
+        workers = {}
+        latest_release = {}
+
         for index, entry in enumerate(log):
             if entry.is_rule() and entry.module == "shantay":
                 print(
-                    f"log record {index:,} marks new run; starting afresh",
+                    f"log record #{index:,} marks new run; starting afresh",
                     file=sys.stderr
                 )
 
                 coordinator = entry.pid
+                worker_count = 0
+                workers.clear()
+                latest_release.clear()
                 yield None
                 continue
 
             if entry.is_summarized_file():
-                batch = entry.message.batch()
+                batch = entry.message.batches()
                 metric = "latency"
                 value = entry.message.latency()
             elif entry.is_max_rss():
                 batch = None
                 metric = "max-rss"
                 value = entry.message.resident_set_size()
+            elif entry.is_combined_batches():
+                batch = entry.message.batches()
+                metric = "batches"
+                value = batch
             else:
                 continue
 
-            process_kind = "coordinator" if entry.pid == coordinator else "worker"
+            if entry.pid == coordinator:
+                worker_id = None
+            else:
+                if entry.pid not in workers:
+                    worker_count += 1
+                    workers[entry.pid] = worker_count
+                worker_id = workers[entry.pid]
+
+            # Patch in latest release if missing from log entry
             release = entry.message.release()
+            if release is None:
+                release = latest_release.get(entry.pid)
+            else:
+                latest_release[entry.pid] = release
+
             assert value is not None
 
             yield cls(
                 entry.timestamp,
-                process_kind,
                 entry.pid,
+                worker_id,
                 release,
                 batch,
                 metric,
@@ -406,32 +452,104 @@ class TimeSeriesEntry:
     @classmethod
     def extract_into_file(cls, log: Iterator[LogEntry], path: Path) -> None:
         with open(path, mode="w", encoding="utf8") as file:
-            for entry in cls.extract(log):
-                if entry is None:
+            for datum in cls.extract(log):
+                if datum is None:
                     file.seek(0)
                     file.truncate()
-                else:
-                    entry.write(file)
+                    cls.write_header(file, with_label=True)
                     file.write("\n")
+                else:
+                    datum.write(file, with_label=True)
+                    file.write("\n")
+
+    @classmethod
+    def visualize(cls, csv: Path, svg: Path) -> None:
+        import polars as pl
+        import altair as alt
+        from .color import Palette
+
+        frame = pl.read_csv(csv)
+
+        worker_data = frame.filter(pl.col("label").ne("coordinator"))
+        worker_count = worker_data.select(pl.col("label").n_unique()).item()
+
+        labels = [f"worker-{n}" for n in range(1, worker_count + 1)]
+        colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:worker_count]]
+
+        base = alt.Chart(
+            worker_data
+        ).encode(
+            alt.X("release:T").title("Release")
+        )
+
+        latency = base.transform_filter(
+            alt.datum.metric == "latency"
+        ).mark_circle(
+            size=2,
+        ).encode(
+            alt.Y("value:Q").title("Dots: Latency (seconds)"),
+            alt.Color("label:N").scale(domain=labels, range=colors),
+        )
+
+        rss = base.transform_filter(
+            alt.datum.metric == "max-rss"
+        ).mark_line(
+        ).encode(
+            alt.Y("value:Q").title("Lines: Maximum Resident-Size Size (GB)"),
+            alt.Color("label:N").scale(domain=labels, range=colors),
+        )
+
+        chart = latency + rss
+
+        chart.properties(
+            width = 1_000,
+        ).resolve_scale(
+            y = "independent",
+        ).save(svg)
 
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "in",
+        "--log",
         type=Path,
         default=Path("shantay.log"),
-        dest="input",
-        help="The log file to parse",
+        help="the log file to parse (default: 'shantay.log')",
     )
     parser.add_argument(
-        "out",
+        "--csv",
         type=Path,
         default=Path("shantay-perf.csv"),
-        help="the csv file to generator",
+        help="the CSV file to generate (default: 'shantay-perf.csv')",
+    )
+    parser.add_argument(
+        "--svg",
+        type=Path,
+        help="the SVG file to generate (default: CSV file with '.svg' suffix)"
+    )
+    parser.add_argument(
+        "task",
+        choices=["csv", "svg", "csv+svg"],
+        default="csv+svg",
+        nargs="?",
+        help="the task to perform (default: csv+svg)",
     )
     options = parser.parse_args(sys.argv[1:])
 
-    file_parser = LogEntry.parse_file(options.input)
-    TimeSeriesEntry.extract_into_file(file_parser, options.out)
+    if "csv" in options.task:
+        print(
+            f'extracting metrics from log "{options.log}" into "{options.csv}"',
+            file=sys.stderr,
+        )
+        file_parser = LogEntry.parse_file(options.log)
+        TimeSeriesEntry.extract_into_file(file_parser, options.csv)
+
+    if "svg" in options.task:
+        svg = options.csv.with_suffix(".svg") if options.svg is None else options.svg
+        print(
+            f'visualizing metrics from "{options.csv}" into "{svg}"',
+            file=sys.stderr,
+        )
+        TimeSeriesEntry.visualize(options.csv, svg)

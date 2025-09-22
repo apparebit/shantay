@@ -10,6 +10,7 @@ import time
 from types import FrameType
 from typing import Any, cast
 
+from .logging import log_max_rss
 from .metadata import Metadata
 from .model import (
     Config, Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
@@ -21,7 +22,6 @@ from .pool import (
 from .processor import is_distilled, prepare_statistics, Processor
 from .schema import MissingPlatformError, update_platforms
 from .stats import Statistics
-from .util import get_max_rss, scale_bytes
 
 
 _PID = os.getpid()
@@ -123,6 +123,13 @@ class Multiprocessor:
         Metadata.copy_json(
             self._storage.staging_root / meta_json,
             self._storage.best_root / meta_json
+        )
+
+        _logger.info(
+            'combining per-release statistics file-count=%d, glob="%s", file="%s"',
+            self._coverage.duration,
+            f"{self.stem}.stats/*.parquet",
+            f"{self.stem}.parquet"
         )
 
         stats = Statistics.read_all(
@@ -281,13 +288,7 @@ class Multiprocessor:
         else:
             raise AssertionError(f"invalid task {self._task}")
 
-        max_rss = get_max_rss()
-        if max_rss is not None:
-            value, unit = scale_bytes(max_rss)
-            _logger.debug(
-                'maximum resident-set-size=%.3f, unit="%s", release="%s", coordinator=%d',
-                value, unit, task.kwargs["release"], _PID
-            )
+        log_max_rss(task.kwargs["release"].id)
 
     def _update_metadata(self, entry: FullMetadataEntry) -> Daily:
         release = entry["release"]
@@ -391,13 +392,7 @@ def run_on_worker(
         time.sleep(1)
         return "error", ErrorTraceFactory(x)
     finally:
-        max_rss = get_max_rss()
-        if max_rss is not None:
-            value, unit = scale_bytes(max_rss)
-            _logger.debug(
-                'maximum resident-set-size=%.3f, unit="%s", release="%s", worker=%d',
-                value, unit, release, _PID
-            )
+        log_max_rss(release.id)
 
 
 def _run_on_worker(

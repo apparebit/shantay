@@ -13,6 +13,7 @@ from . import __version__
 from .digest import (
     compute_digest, read_digest_file, validate_digests, write_digest_file
 )
+from .logging import log_max_rss
 from .metadata import Metadata
 from .model import (
     Config, ConfigError, CollectorProtocol, Daily, DataFrameType, Dataset, DateRange,
@@ -25,7 +26,7 @@ from .schema import (
     check_db_platforms, MissingPlatformError, update_platforms
 )
 from .stats import Statistics
-from .util import annotate_error, get_max_rss, scale_bytes, scale_time
+from .util import annotate_error, scale_time
 
 
 _logger = logging.getLogger(__spec__.parent)
@@ -659,17 +660,16 @@ class Processor[R: Release]:
         pre_existing_stats = prepare_statistics(self.stem, self._storage, self._config)
 
         for index, release in enumerate(self._coverage):
-            stats_file = f"{release}.parquet"
-            stats_path = stats_dir / stats_file
-            stats_path_exists = stats_path.exists()
+            release_stats_path = stats_dir / f"{release}.parquet"
+            release_stats_path_exists = release_stats_path.exists()
 
-            if release in pre_existing_stats or stats_path_exists:
+            if release in pre_existing_stats or release_stats_path_exists:
                 _logger.debug(
                     'summary statistics for extract already cover release="%s"',
                     release
                 )
-                if not stats_path_exists:
-                    pre_existing_stats.write_release(release, stats_path)
+                if not release_stats_path_exists:
+                    pre_existing_stats.write_release(release, release_stats_path)
                 continue
 
             # Ensure graceful termination in offline mode
@@ -687,7 +687,7 @@ class Processor[R: Release]:
 
             assert self._metadata.filter is not None
             stats = Statistics(
-                stats_file,
+                f"{release}.parquet",
                 stratify_by_category=self._config.stratify_by_category,
                 stratify_all_text=self._config.stratify_all_text,
             )
@@ -705,15 +705,15 @@ class Processor[R: Release]:
 
         stats_file = f"{self.stem}.parquet"
         _logger.info(
-            'combining summary statistics glob="%s", file="%s"',
-            f"{self.stem}.stats/*.parquet", stats_file
+            'combining entity="release statistics", count=%d, glob="%s", file="%s"',
+            self._coverage.duration, f"{self.stem}.stats/*.parquet", stats_file
         )
         stats = Statistics.read_all(stats_dir)
         stats.write(self._storage.staging_root, should_finalize=True)
 
         _logger.info(
-            'copying summary statistics for extract to file="%s"',
-            self._storage.the_extract_root / stats_file
+            'copying summary statistics to extract root="%s"',
+            self._storage.the_extract_root
         )
         Statistics.copy_all(
             self.stem, self._storage.staging_root, self._storage.the_extract_root
@@ -738,19 +738,13 @@ class Processor[R: Release]:
 
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
-        latency, time_unit = scale_time(time.time() - start_time)
+        latency = time.time() - start_time
         _logger.debug(
-            'summarized release="%s", filter="%s", latency=%.3f, unit="%s"',
-            release.id, filter or "", latency, time_unit
+            'summarized release="%s", filter="%s", latency=%.3f, unit="sec"',
+            release.id, filter or "", latency
         )
 
-        max_rss = get_max_rss()
-        if max_rss is not None:
-            value, unit = scale_bytes(max_rss)
-            _logger.debug(
-                'maximum resident-set-size=%.3f, unit="%s", release="%s"',
-                value, unit, release
-            )
+        log_max_rss(release.id)
 
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""
@@ -765,13 +759,12 @@ class Processor[R: Release]:
         # order, this loop ensures that any holes are filled, making this a
         # robust, self-healing implementation strategy.
         for release in self._coverage:
-            stats_file = f"{release}.parquet"
-            stats_path = stats_dir / stats_file
-            stats_path_exists = stats_path.exists()
+            release_stats_path = stats_dir / f"{release}.parquet"
+            release_stats_path_exists = release_stats_path.exists()
 
-            if release in pre_existing_stats or stats_path_exists:
+            if release in pre_existing_stats or release_stats_path_exists:
                 _logger.debug('summary statistics already cover release="%s"', release)
-                if not stats_path_exists:
+                if not release_stats_path_exists:
                     pre_existing_stats.write_release(release, stats_dir)
                 continue
 
@@ -795,17 +788,11 @@ class Processor[R: Release]:
             stats.write(stats_dir, should_finalize=True)
             _logger.debug(
                 'saved per-release summary statistics to file="%s", release="%s"',
-                stats_path, release
+                stats.file, release
             )
             stats = None
 
-            max_rss = get_max_rss()
-            if max_rss is not None:
-                value, unit = scale_bytes(max_rss)
-                _logger.debug(
-                    'maximum resident-set-size=%.3f, unit="%s", release="%s"',
-                    value, unit, release
-                )
+            log_max_rss(release.id)
 
         meta_json = f"{self.stem}.json"
         Metadata.copy_json(
@@ -814,7 +801,11 @@ class Processor[R: Release]:
         )
 
         # Rewrite saved statistics after rechunking and copy to persistent root
-        _logger.info('combining summary statistics to file="db.parquet"')
+        stats_file = f"{self.stem}.parquet"
+        _logger.info(
+            'combining entity="release statistics", count=%d, glob="%s", file="%s"',
+            self._coverage.duration, f"{self.stem}.stats/*.parquet", stats_file
+        )
         stats = Statistics.read_all(stats_dir)
         stats.write(self._storage.staging_root, should_finalize=True)
 
@@ -891,20 +882,22 @@ class Processor[R: Release]:
                 # temporary files again.
                 shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
-                latency, time_unit = scale_time(time.time() - start_time)
+                latency = time.time() - start_time
                 _logger.debug(
-                    'summarized file="%s", latency=%.3f, unit="%s"',
-                    name, latency, time_unit
+                    'summarized batch file="%s", latency=%.3f, unit="sec"',
+                    name, latency
                 )
 
+        stats_file = f"{release}.parquet"
         _logger.debug(
-            'combining file-count=%d, glob="%s-*.parquet", release="%s"',
-            batch_count, release, release
+            'combining entity="batch statistics", '
+            'count=%d, glob="%s-*.parquet", file="%s"',
+            batch_count, release, stats_file
         )
         stats = Statistics.read_all(
             self._storage.staging_root / release.directory,
             glob=f"{release}-*.parquet",
-            file=f"{release}.parquet",
+            file=stats_file
         )
 
         self._metadata[release] = cast(MetadataEntry, full_counts)

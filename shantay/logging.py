@@ -1,7 +1,6 @@
 import enum
 import logging
 from types import MappingProxyType
-from typing import Literal
 
 
 _logger = logging.getLogger(__package__)
@@ -36,3 +35,14 @@ class Size(enum.IntEnum):
 
 def log_rule(size: Size = Size.M) -> None:
     _logger.info(_RULES[size])
+
+
+def log_max_rss(release: str) -> None:
+    from .util import get_max_rss
+
+    size = get_max_rss()
+    if size is not None:
+        _logger.info(
+            'maximum resident-set-size=%s, unit="B", release="%s"',
+            f'{size:_}', release
+        )

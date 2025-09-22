@@ -56,13 +56,19 @@ requirements, with worker processes requiring 40-60 GB of RAM for processing
 half a year of transparency data.
 
 With this release, Shantay uses a different approach that avoids having to
-reallocate one very large memory segment. Now, worker processes require 10-20 GB
-for processing almost two years of transparency data. Under this approach,
-Shantay processes each batch belonging to a daily release independently, saving
-the result to disk, and then combines all batch statistics into one data frame
-for the release, again saving the result to disk. Once all releases have been
-processed, Shantay combines the per-release frames into one as well. For now, it
-preserves both the per-release frames and the combined frame.
+reallocate one very large memory segment. Now, worker processes quickly ramp up
+to around 10 GB and then slow increase to around 17 GB after processing 22
+months of transparency data. Under the new approach, Shantay processes each
+batch belonging to a daily release independently, saving the result to disk, and
+then combines all batch statistics into one data frame for each release, again
+saving the result to disk. Once all releases have been processed, Shantay
+combines the per-release frames into a complete data frame as well. For now, it
+also preserves the per-release frames, which simplify incremental computation
+including recovery from failures.
+
+(The same measurements show that per-batch latency slowly increases as well,
+from about 10s to 15s over 22 months. That strongly suggests to restart worker
+processes every n processed releases.)
 
 ### Minor Improvements and Bug Fixes
 

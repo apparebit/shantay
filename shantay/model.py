@@ -74,13 +74,16 @@ class Release(Period):
     def of(year: int, month: int, /) -> "Monthly": ...
     @overload
     @staticmethod
+    def of(release: "Release", /) -> "Release": ...
+    @overload
+    @staticmethod
     def of(release: str, /) -> "Release": ...
     @overload
     @staticmethod
     def of(date: dt.date, /) -> "Daily": ...
     @staticmethod
     def of(
-        year: int | str | dt.date,
+        year: "int | str | dt.date | Release",
         month: None | int = None,
         day: None | int = None,
         /
@@ -90,6 +93,8 @@ class Release(Period):
         year/month components, a dash-separated year-month-day or year-month
         string, or a date.
         """
+        if isinstance(year, Release):
+            return year
         if isinstance(year, dt.date):
             return Daily(year.year, year.month, year.day)
         if isinstance(year, int):
