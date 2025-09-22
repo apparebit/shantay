@@ -157,21 +157,28 @@ def get_configuration(
             raise ConfigError(
                 f"please specify --archive for `{options.task}` task"
             )
-        metadata = Metadata(storage.stem)
+        metadata = Metadata("builtin")
     else:
-        metafile = f"{storage.stem}.json"
         try:
-            metadata = Metadata.merge(
-                storage.staging_root / metafile,
-                storage.best_root / metafile,
-            )
+            metapath =  Metadata.find_file(storage.best_root)
+            metadata = Metadata.read_json(metapath)
         except FileNotFoundError:
             if storage.extract_root is not None and filter is None:
                 raise ConfigError(
                     "please specify --category, --platform, or --filter "
                     "for --extract directory"
                 )
-            metadata = Metadata(storage.stem, filter)
+            stem = "db" if storage.extract_root is None else storage.extract_root.stem
+            metadata = Metadata(stem, filter)
+
+        try:
+            metadata_too = Metadata.read_json(
+                storage.staging_root / f"{metadata.stem}.json"
+            )
+        except FileNotFoundError:
+            pass
+        else:
+            metadata = metadata.merge_with(metadata_too)
 
         if (
             storage.extract_root is not None
@@ -184,7 +191,7 @@ def get_configuration(
                 f"from metadata {metadata.filter}"
             )
 
-        metadata.write_json(storage.staging_root / metafile)
+        metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
     # Handle --first and --last, with the latter including one day for the
     # Americas being a day behind Europe for several hours every day and another
@@ -335,7 +342,7 @@ def run(options: Any) -> int:
             f"arguments!{Style.RESET}"
         )
         return 1
-    except (ConfigError, DownloadFailed, MetadataConflict) as x:
+    except (ConfigError, DownloadFailed, MetadataConflict, FileNotFoundError) as x:
         # They are package-specific exceptions and indicate preanticipated
         # errors. Hence, we do not need to print an exception trace.
         print(f"{Style.EOS}\n{Style.ERROR} {x} {Style.RESET}")

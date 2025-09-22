@@ -53,7 +53,7 @@ class Metadata[R: Release]:
         """Create a fresh metadata instance for the given category."""
         return cls(file_stem_for(category), Filter.with_category(category))
 
-    def with_releases(self, *releases: Release) -> Self:
+    def with_releases_only(self, *releases: Release) -> Self:
         """
         Create a new metadata instance that has the same stem and filter as this
         one, but only has entries for the given releases.
@@ -246,30 +246,26 @@ class Metadata[R: Release]:
             return _FILE_TYPE.match(handle.read(32)) is not None
 
     @classmethod
-    def find_file(cls, directory: Path, skip_db: bool = False) -> Path:
-        """
-        Find the metadata file in the given directory. This method checks all
-        JSON files in the given directory. It signals an error if none or more
-        than one JSON file are metadata files.
-        """
+    def find_file(cls, directory: Path) -> Path:
+        """Find the metadata file in the given directory."""
         files = []
         for file in directory.glob("*.json"):
-            if skip_db and file.name == "db.json":
+            if file.stem.endswith(".tmp") or file.stem.endswith(".bak"):
                 continue
             if cls.is_file(file):
                 files.append(file)
 
-        if len(files) == 0:
-            raise FileNotFoundError(
-                f'directory "{directory}" does not contain metadata file'
-            )
-        if len(files) != 1:
-            raise FileNotFoundError(
-                f'directory "{directory}" contains more than one metadata file:\n'
-                f'{", ".join(f.stem for f in files)}'
-            )
-
-        return files[0]
+        match len(files):
+            case 0:
+                raise FileNotFoundError(
+                    f'directory "{directory}" does not contain metadata file'
+                )
+            case 1:
+                return files[0]
+            case _:
+                raise MetadataConflict(
+                    f'directory "{directory}" contains more than one metadata file'
+                )
 
     @classmethod
     def read_json(cls, file: Path) -> Self:
@@ -388,7 +384,7 @@ class _Fsck:
 
         _logger.info('scanning root directory="%s"', self._root)
         years = self.scandir(self._root, "????", _FOUR_DIGITS)
-        self.check_children(self._root, years, 1800, 3000, int)
+        self.check_children(self._root, years, 2000, 2100, int)
 
         for year in years:
             if not self.check_is_directory(year):
@@ -507,10 +503,6 @@ class _Fsck:
             # Only write a new digest file if there were no errors and no file.
             write_digest_file(day / DIGEST_FILE, actual_digests)
 
-        if self._metadata._filter is None and 0 < batch_no:
-            # Try to extract category.
-            self.update_category(f"{day}/*.parquet")
-
         digest_of_digests = None
         if (day / DIGEST_FILE).exists():
             digest_of_digests = compute_digest(day / DIGEST_FILE)
@@ -521,16 +513,6 @@ class _Fsck:
         self.update_batch_count(year_no, month_no, day_no, batch_no, digest_of_digests)
 
         _logger.info('checked batch-count=%d, directory="%s"', batch_no, day)
-
-    def update_category(self, glob: str) -> None:
-        """
-        Scan data frames matching glob to extract only category name. If the
-        frames do not have a unique category name, do nothing.
-        """
-        from .framing import distill_category_from_parquet
-        category = distill_category_from_parquet(glob)
-        if category:
-            self._metadata._filter = Filter.with_category(category)
 
     def update_batch_count(
         self,
