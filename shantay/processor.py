@@ -917,6 +917,7 @@ class Processor[R: Release]:
         Visualizer(
             storage=self._storage,
             coverage=self._coverage,
+            config=self._config,
             metadata=self._metadata,
             with_interaction=self._config.interactive_report,
             with_clamped_outliers=self._config.clamp_outliers,

@@ -18,17 +18,18 @@ from .framing import (
     aggregates, is_row_within_period, NO_ARGUMENT_PROVIDED, NOT_NULL, predicate
 )
 from .metadata import Metadata
-from .model import ConfigError, file_stem_for, Filter, FilterKind, ReleaseRange, Storage
+from .model import (
+    Config, ConfigError, file_stem_for, Filter, FilterKind, ReleaseRange, Storage
+)
 from .schema import (
     AccountTypeMetric, AutomatedDecisionMetric, AutomatedDetectionMetric,
     ContentLanguageMetric, CategoryMetric, ContentTypeMetric, DecisionAccountMetric,
     DecisionGroundMetric, DecisionMonetaryMetric, DecisionProvisionMetric,
-    DecisionTypeMetric, DecisionVisibilityMetric, humanize,
+    DecisionTypeMetric, DecisionVisibilityMetric, ExcessiveTextColumns, humanize,
     IncompatibleContentIllegalMetric, InformationSourceMetric,
     KeywordChildSexualAbuseMaterial, make_metric, MetaPlatforms, MetricDeclaration,
-    ModerationDelayMetric, PlatformValueType, ProcessingDelayMetric, SCHEMA,
-    StatementCountMetric, TerritorialScopeMetric,
-    TextColumns
+    ModerationDelayMetric, NONE_IN_HTML, NULL, PlatformValueType, ProcessingDelayMetric,
+    SCHEMA, StatementCountMetric, TerritorialScopeMetric, TextColumns
 )
 from .stats import get_tags, Statistics
 from .util import minify, to_markdown_table, upper_limit
@@ -326,6 +327,7 @@ class Visualizer:
         self,
         storage: Storage,
         coverage: ReleaseRange,
+        config: Config,
         metadata: Metadata,
         with_clamped_outliers: bool = False,
         with_interaction: bool = False,
@@ -334,6 +336,7 @@ class Visualizer:
     ) -> None:
         self._storage = storage
         self._coverage = coverage
+        self._config = config
         self._metadata = metadata
         self._with_clamped_outliers = with_clamped_outliers
         self._with_interaction = with_interaction
@@ -363,7 +366,7 @@ class Visualizer:
 
     @property
     def is_filtered(self) -> bool:
-        return self._metadata.filter is None
+        return self._metadata.filter is not None
 
     @property
     def frequency(self) -> str:
@@ -412,6 +415,7 @@ class Visualizer:
 
         assert self._document is not None
         html = str(mistune.html(markdown))
+        html = html.replace(NULL, NONE_IN_HTML)
 
         def replace(match: re.Match) -> str:
             return (
@@ -467,7 +471,9 @@ class Visualizer:
             html = _FRAME_HEAD.sub("", html)
         html = html.replace("<td>", "  <td>").replace("<th>", "  <th>")
         html = _FRAME_EOL.sub(r"\1\n", html)
-        html = html.replace("<td>null</td>", "<td></td>")
+
+        html = html.replace("<td>null</td>", f"<td>{NONE_IN_HTML}</td>")
+        html = html.replace(NULL, NONE_IN_HTML)
 
         self._document.write(html)
         self._document.write("\n\n\n")
@@ -541,19 +547,12 @@ class Visualizer:
 
     def _ingest(self) -> None:
         # Load the right statistics
-        if self._metadata.stem == "db":
-            if self._storage.archive_root is None:
-                path = None
-            else:
-                path = self._storage.the_archive_root
-        else:
-            path = self._storage.the_extract_root
-
-        if path is None:
+        if self._metadata.stem == "builtin":
             path = "«builtin»"
             statistics = Statistics.builtin()
         else:
-            statistics = Statistics.read(path / f"{self._metadata.stem}.parquet")
+            path = self._storage.best_root / f"{self._metadata.stem}.parquet"
+            statistics = Statistics.read(path)
 
         _logger.info('using statistics file="%s"', path)
 
@@ -766,6 +765,7 @@ class Visualizer:
         secno = self._secno()
         self._html(f"<h2 id=intro>{secno}. Introduction</h2>")
 
+        # Provide summary of summary statistics
         self._frame(
             pl.DataFrame({
                 "Description": [
@@ -805,6 +805,23 @@ class Visualizer:
             with_head=False,
         )
 
+        # Document rows of arbitrary text in problematic columns
+        if not self._config.stratify_all_text:
+            frame = self._statistics.frame().lazy().filter(
+                pl.col("column").is_in(ExcessiveTextColumns).and_(
+                    pl.col("entity").eq("rows_of_text")
+                )
+            ).group_by(
+                pl.col("column"),
+            ).agg(
+                pl.col("count").sum(),
+            ).collect()
+
+            self._frame(
+                frame, caption=f"Rows with Arbitrary Text",
+            )
+
+        # Document how transparency data was filtered
         if self.filter is None:
             filter = "in unfiltered form"
         elif self.filter.kind is FilterKind.CATEGORY:
@@ -2204,7 +2221,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             ["column", "count"],
             descending=True,
         ).with_columns(
-            pl.col("text").fill_null("␀")
+            pl.col("text").fill_null(NULL)
         )
 
     def _render_outages(self) -> None:

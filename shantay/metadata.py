@@ -43,10 +43,12 @@ class Metadata[R: Release]:
         self._filter = filter
         self._releases = releases or {}
 
-        if stem == "db" and filter is not None:
-            raise ValueError("metadata for full database has filter")
-        if stem != "db" and filter is None:
-            raise ValueError("metadata for database extract has no filter")
+        if stem in ("builtin", "db"):
+            if filter is not None:
+                raise ValueError("metadata for full database has filter")
+        else:
+            if filter is None:
+                raise ValueError("metadata for database extract has no filter")
 
     @classmethod
     def for_category(cls, category: str) -> Self:

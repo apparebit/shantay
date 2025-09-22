@@ -29,8 +29,8 @@ from .model import Daily, DateRange, MetadataEntry, Release, ReleaseRange
 from .schema import (
     CanonicalPlatformNames, CategoryValueType, check_stats_platforms, ColumnValueType,
     DurationTransform, EntityValueType, humanize, KeywordChildSexualAbuseMaterial,
-    PlatformValueType, StatisticsSchema, TagValueType, TRANSFORM_COUNT, TRANSFORMS,
-    TransformType, ValueCountsPlusTransform, VariantValueType,
+    NULL, PlatformValueType, StatisticsSchema, TagValueType, TRANSFORM_COUNT,
+    TRANSFORMS, TransformType, ValueCountsPlusTransform, VariantValueType,
 )
 from .util import scale_time
 
@@ -797,7 +797,7 @@ class _Summarizer:
 
                 this._spacer()
                 this._spacer()
-                t = humanize(tag)
+                t = "" if tag is None else humanize(tag)
                 this._summary.append((_Tag(t), _Tag(t)))
                 this._spacer()
                 this._summarize_fields()
@@ -836,7 +836,7 @@ class _Summarizer:
                 elif val is _SPACER:
                     sval = "\u2800" if markdown else " "
                 elif val is None:
-                    sval = "␀"
+                    sval = NULL
                 elif (
                     var is not _SPACER
                     and not isinstance(var, _Tag)

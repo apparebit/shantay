@@ -40,6 +40,11 @@ from .color import Palette
 # Humanized statement categories and keywords
 
 
+NULL = "␀"
+NONE = "—None—"
+NONE_IN_HTML = f"<em>{NONE}</em>"
+
+
 _HUMANIZED_FRAGMENTS = {
     " And ": " and ",
     " Based ": "-Based ",
@@ -63,7 +68,7 @@ _HUMANIZED_TAGS = {
 def humanize(tag: None | str) -> str:
     """Generate a humane presentation for the given tag."""
     if tag is None:
-        return "—none—"
+        return NONE
     if tag.startswith("STATEMENT_CATEGORY_"):
         tag = tag[len("STATEMENT_CATEGORY_"):]
     elif tag.startswith("KEYWORD_"):
@@ -447,7 +452,7 @@ def make_metric(
 AccountTypeMetric = MetricDeclaration("account_type", "Account Types", {
     "ACCOUNT_TYPE_BUSINESS": ("Business", Palette.ORANGE),
     "ACCOUNT_TYPE_PRIVATE": ("Individual", Palette.BLUE),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
@@ -455,14 +460,14 @@ AutomatedDecisionMetric = MetricDeclaration("automated_decision", "Automated Dec
     "AUTOMATED_DECISION_FULLY": ("Fully Automated", Palette.CYAN),
     "AUTOMATED_DECISION_PARTIALLY": ("Partially Automated", Palette.BLUE),
     "AUTOMATED_DECISION_NOT_AUTOMATED": ("Not Automated", Palette.GREEN),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
 AutomatedDetectionMetric = MetricDeclaration("automated_detection", "Automated Detection", {
     "Yes": ("Automated", Palette.LIGHT_BLUE),
     "No": ("Not Automated", Palette.PURPLE),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
@@ -483,14 +488,14 @@ ContentTypeMetric = MetricDeclaration("content_type", "Content Types", {
     "CONTENT_TYPE_TEXT": ("Text", Palette.ORANGE),
     "CONTENT_TYPE_VIDEO": ("Video", Palette.PURPLE),
     "CONTENT_TYPE_OTHER": ("Other", Palette.LIGHT_BLUE),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
 DecisionAccountMetric = MetricDeclaration("decision_account", "Account Decisions", {
     "DECISION_ACCOUNT_SUSPENDED": ("Suspended", Palette.ORANGE),
     "DECISION_ACCOUNT_TERMINATED": ("Terminated", Palette.RED),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
@@ -504,7 +509,7 @@ DecisionMonetaryMetric = MetricDeclaration("decision_monetary", "Monetary Decisi
    "DECISION_MONETARY_SUSPENSION": ("Suspended", Palette.ORANGE),
    "DECISION_MONETARY_TERMINATION": ("Terminated", Palette.RED),
    "DECISION_MONETARY_OTHER": ("Other", Palette.PINK),
-   None: ("—none—", Palette.GRAY),
+   None: (NONE, Palette.GRAY),
 })
 
 
@@ -513,7 +518,7 @@ DecisionProvisionMetric = MetricDeclaration("decision_provision", "Service Provi
     "DECISION_PROVISION_TOTAL_SUSPENSION": ("Suspended", Palette.BLUE),
     "DECISION_PROVISION_PARTIAL_TERMINATION": ("Partially Terminated", Palette.ORANGE),
     "DECISION_PROVISION_TOTAL_TERMINATION": ("Terminated", Palette.RED),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
@@ -533,7 +538,7 @@ DecisionTypeMetric = MetricDeclaration("decision_type", "Decision Types", {
     "vis_pro_acc": ("Visibility, Provision, Account", Palette.RED),
     "mon_pro_acc": ("Monetary, Provision, Account", Palette.CYAN),
     "vis_mon_pro_acc": ("Visibility, Monetary, Provision, Account", Palette.GREEN),
-    "is_null": ("—none—", Palette.GRAY),
+    "is_null": (NONE, Palette.GRAY),
 }, selector="entity")
 
 
@@ -545,7 +550,7 @@ DecisionVisibilityMetric = MetricDeclaration("decision_visibility", "Visibility 
     "DECISION_VISIBILITY_CONTENT_INTERACTION_RESTRICTED": ("Interaction Restricted", Palette.PURPLE),
     "DECISION_VISIBILITY_CONTENT_LABELLED": ("Labelled", Palette.PINK),
     "DECISION_VISIBILITY_OTHER": ("Other", Palette.BLUE),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
@@ -554,7 +559,7 @@ IncompatibleContentIllegalMetric = MetricDeclaration(
     "Incompatible Is Illegal", {
         "Yes": ("Yes", Palette.RED),
         "No": ("No", Palette.GREEN),
-        None: ("—none—", Palette.GRAY),
+        None: (NONE, Palette.GRAY),
     }
 )
 
@@ -564,7 +569,7 @@ InformationSourceMetric = MetricDeclaration("source_type", "Information Sources"
     "SOURCE_TRUSTED_FLAGGER": ("Trusted Flagger", Palette.BLUE),
     "SOURCE_TYPE_OTHER_NOTIFICATION": ("Other Notification", Palette.ORANGE),
     "SOURCE_VOLUNTARY": ("Voluntary", Palette.GREEN),
-    None: ("—none—", Palette.GRAY),
+    None: (NONE, Palette.GRAY),
 })
 
 
@@ -604,7 +609,7 @@ ProcessingDelayMetric = MetricDeclaration(
         "moderation_delay": ("Moderation", Palette.LIGHT_BLUE),
         "disclosure_delay": ("Disclosure", Palette.ORANGE),
         #"release_delay": ("Release", Palette.RED),
-        None: ("—none—", Palette.GRAY),
+        None: (NONE, Palette.GRAY),
     },
     selector="column",
     quantity="mean",
@@ -944,7 +949,7 @@ def _all_variants() -> list[str]:
     releases to address this churn is not very nimble. Instead, shantay checks
     transparency database releases and automatically updates its internal list.
     """
-    variants = ["—none—"]
+    variants = [NONE]
 
     for decl in (
         AccountTypeMetric,
@@ -1003,12 +1008,24 @@ date/times, shantay may have to correct for negative durations. It tracks the
 number of these corrections as well.
 """
 
-# Columns with arbitrary text included in the statistics
+# Columns with arbitrary text always included in the statistics
 TextColumns = (
     "decision_visibility_other",
     "decision_monetary_other",
+    "decision_ground_reference_url",
     "category_specification_other",
     "content_type_other",
+    "source_identity",
+)
+
+# Columns with excessive arbitrary text
+ExcessiveTextColumns = (
+    "illegal_content_legal_ground",
+    "illegal_content_explanation",
+    "incompatible_content_ground",
+    "incompatible_content_explanation",
+    "content_id_ean",
+    "decision_facts",
 )
 
 
