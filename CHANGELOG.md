@@ -3,28 +3,31 @@
 
 ## v0.6.0 (September ??, 2025)
 
-Shantay now covers all transparency DB columns in its summary statistics, while
-also providing more control over the extent of transparency DB extracts and the
-granularity of summary statistics.
+Shantay now covers all transparency DB columns in its summary statistics,
+including the `content_id_ean` column introduced with the schema change of
+2025-07-01. It also providing more control over the extent of transparency DB
+extracts and the granularity of summary statistics. The implementation has been
+restructured to require much less memory. Growth over time is much slower as
+well.
 
 ### Cover All Transparency DB Columns
 
-Shantay now also captures the free-text columns `decision_ground_reference_url`,
-`illegal_content_legal_ground`, `illegal_content_explanation`,
-`incompatible_content_ground`, `incompatible_content_explanation`,
-`decision_facts`, and `source_identity` in its summary statistics, thus covering
-*all* DSA transparency DB columns.
+Shantay now also captures the free-text columns `content_id_ean`,
+`decision_ground_reference_url`, `illegal_content_legal_ground`,
+`illegal_content_explanation`, `incompatible_content_ground`,
+`incompatible_content_explanation`, `decision_facts`, and `source_identity` in
+its summary statistics, thus covering *all* DSA transparency DB columns.
 
 In practice, most values in these string-valued columns are repeated many times,
 just as for enum-valued columns. However, values in string-valued columns are
 not known a-priori and their distribution has a very long tail of values that
 are hardly repeated or even unique. As a result, memory requirements for summary
 statistics quadruple when including value counts for the newly added columns.
-Since the `illegal_content_legal_ground`, `illegal_content_explanation`,
-`incompatible_content_ground`, `incompatible_content_explanation`, and
-`decision_facts` columns include the most text while providing hardly any
-additional information, Shantay only tracks the number of non-empty rows for
-these columns.
+Since the `content_id_ean`, `illegal_content_legal_ground`,
+`illegal_content_explanation`, `incompatible_content_ground`,
+`incompatible_content_explanation`, and `decision_facts` columns include the
+most text while providing hardly any additional information, Shantay only tracks
+the number of non-empty rows for these columns.
 
 ### Configure DB Extract and Summary Statistics
 
@@ -41,6 +44,25 @@ by platform and statement category instead of only by platform. With
 columns, including the five columns explicitly exempted by default. Each of
 these two options significantly increases Shantay's memory requirements. As a
 result, you may have to reduce the date range or the number of worker processes.
+
+### Lower Memory Requirements
+
+Shantay used to create summary statistics by creating several small data frame
+for each release and then combining them with the data frame with statistics for
+all previous releases into one data frame. To ensure good performance, Shantay
+also rechunked the data frame at that time, which ensures contiguous memory
+allocation. Unfortunately, this approach resulted in fairly high memory
+requirements, with worker processes requiring 40-60 GB of RAM for processing
+half a year of transparency data.
+
+With this release, Shantay uses a different approach that avoids having to
+reallocate one very large memory segment. Now, worker processes require 10-20 GB
+for processing almost two years of transparency data. Under this approach,
+Shantay processes each batch belonging to a daily release independently, saving
+the result to disk, and then combines all batch statistics into one data frame
+for the release, again saving the result to disk. Once all releases have been
+processed, Shantay combines the per-release frames into one as well. For now, it
+preserves both the per-release frames and the combined frame.
 
 ### Minor Improvements and Bug Fixes
 

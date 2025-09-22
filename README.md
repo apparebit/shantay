@@ -129,10 +129,10 @@ control and data recovery. Here are all of them:
       - `--stratify-by-category` instructs Shantay to break down all statistics
         by both statement category and platform instead of platform only.
       - `--stratify-all-text` instructs Shantay to determine value counts for
-        the DSA transparency DB's `illegal_content_legal_ground`,
-        `illegal_content_explanation`, `incompatible_content_ground`,
-        `incompatible_content_explanation`, and `decision_facts` columns instead
-        of simply counting non-empty rows.
+        the DSA transparency DB's `content_id_ean`,
+        `illegal_content_legal_ground`, `illegal_content_explanation`,
+        `incompatible_content_ground`, `incompatible_content_explanation`, and
+        `decision_facts` columns instead of simply counting non-empty rows.
 
     *Beware*: Enabling either option by itself significantly increases the
     memory requirements for collected data, in case of `--stratify-all-text`
