@@ -12,7 +12,7 @@ from typing import (
 )
 
 from .progress import NO_PROGRESS, Progress
-from .schema import humanize
+from .schema import humanize, normalize_category
 
 
 _NONWORD = re.compile(r'\W+')
@@ -551,7 +551,7 @@ class Filter:
     @classmethod
     def with_category(cls, category: str) -> Self:
         """Create a new filter for the given category."""
-        return cls(FilterKind.CATEGORY, category)
+        return cls(FilterKind.CATEGORY, normalize_category(category))
 
     @classmethod
     def with_platforms(cls, *platforms: str) -> Self:

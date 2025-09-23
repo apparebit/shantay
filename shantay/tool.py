@@ -187,7 +187,7 @@ def get_configuration(
             and (options.platform is None or options.task == "visualize")
         ):
             raise ConfigError(
-                f"--category, --platform, or --filter {filter} differs"
+                f"--category, --platform, or --filter {filter} differs "
                 f"from metadata {metadata.filter}"
             )
 
