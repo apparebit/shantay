@@ -27,9 +27,9 @@ from .schema import (
     DecisionGroundMetric, DecisionMonetaryMetric, DecisionProvisionMetric,
     DecisionTypeMetric, DecisionVisibilityMetric, ExcessiveTextColumns, humanize,
     IncompatibleContentIllegalMetric, InformationSourceMetric,
-    KeywordChildSexualAbuseMaterial, make_metric, MetaPlatforms, MetricDeclaration,
-    ModerationDelayMetric, NONE_IN_HTML, NULL, PlatformValueType, ProcessingDelayMetric,
-    SCHEMA, StatementCountMetric, TerritorialScopeMetric, TextColumns
+    make_metric, MetaPlatforms, MetricDeclaration, ModerationDelayMetric, NONE_IN_HTML,
+    NULL, PlatformValueType, ProcessingDelayMetric, SCHEMA, StatementCountMetric,
+    TerritorialScopeMetric, TextColumns
 )
 from .stats import get_tags, Statistics
 from .util import minify, to_markdown_table, upper_limit
@@ -577,46 +577,25 @@ class Visualizer:
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Determine keyword ranking
         _logger.debug('analyze keyword usage')
-        self._keyword_usage = self._statistics.frame().lazy().filter(
-            predicate("category_specification", entity=None)
-        ).group_by(
-            "variant"
-        ).agg(
-            pl.col("count").sum()
-        ).rename({
-            "variant": "keyword"
-        }).with_columns(
-            pl.when(
-                pl.col("keyword").is_null()
-            ).then(
-                pl.col("count")
-                / pl.col("count").sum()
-                * 100
-            ).otherwise(
-                pl.col("count")
-                / pl.col("count").filter(pl.col("keyword").is_not_null()).sum()
-                * 100
-            ).alias("pct")
-        ).sort(
-            pl.col("count"), descending=True, maintain_order=True
-        ).collect()
-
-        self._keyword_metric = make_metric(
-            "category_specification",
-            "Keywords",
-            self._keyword_usage.get_column("keyword"),
-            quant_label="SoRs with Keywords"
-        )
+        self._keyword_usage = self._tabulate_keyword_usage()
+        self._used_keywords = self._keyword_usage.drop_nulls().get_column("keyword")
 
         self._frequent_keywords = (
             self._keyword_usage
             .drop_nulls()
-            .filter(1 <= pl.col("pct"))
+            .filter(0.5 <= pl.col("pct"))
             .get_column("keyword")
         )
 
+        self._keyword_metric = make_metric(
+            "category_specification",
+            "Keywords",
+            self._used_keywords,
+            quant_label="SoRs with Keywords"
+        )
+
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-        _logger.debug("determine which platforms to include in report")
+        _logger.debug("select platforms for inclusion in report")
 
         # Handle explicitly requested platforms and extract with limited platforms
         filter = self._metadata.filter
@@ -691,7 +670,7 @@ class Visualizer:
         )
 
     def _render_head(self) -> str:
-        _logger.debug('render HTML <head>')
+        _logger.debug('render entity="HTML <head>"')
 
         description = str(self.filter) if self.is_filtered else "All Data"
         title = f"The DSA Transparency Database: {description}"
@@ -708,7 +687,7 @@ class Visualizer:
         return title
 
     def _render_intro(self, title: str) -> None:
-        _logger.debug('render introduction')
+        _logger.debug('render entity="introduction"')
         main_tag = self._tags[0]
 
         self._html(f'<body>\n<main>')
@@ -902,7 +881,7 @@ class Visualizer:
         )
 
     def _render_tables(self) -> None:
-        _logger.debug('render data tables')
+        _logger.debug('render entity="data tables"')
 
         self._html(f"<h2 id=data>{self._secno()}. The Data</h2>")
         self._markdown(self._statistics.summary(markdown=True))
@@ -948,7 +927,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
     def _render_charts(self) -> None:
         main_tag = self._tags[0]
-        _logger.debug('render charts tag="%s"', "" if main_tag is None else main_tag)
+        _logger.debug('render entity="charts", tag="%s"', "" if main_tag is None else main_tag)
 
         if main_tag is None:
             title = f"<h2 id=dailies>{self._secno()}. Daily Statements of Reasons</h2>"
@@ -1002,6 +981,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         ))
 
         if not self.is_filtered:
+            self._html("""
+                 <p>The following two charts include only platforms that have
+                at least 1,000,000 statements of reasons with keywords.</p>
+            """)
+
             self._chart("keywords-by-platform", alt.vconcat(
                 self._render_overall_keyword_usage_by_platform(percent=True, tag=main_tag),
                 self._render_overall_keyword_usage_by_platform(percent=False, tag=main_tag),
@@ -1016,7 +1000,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         for tag in self._tags[1:]:
             assert tag is not None
-            _logger.debug('render charts tag="%s"', tag)
+            _logger.debug('render entity="charts", tag="%s"', tag)
             self._html(f"<h2 id={tag}>{self._secno()}. Focus on {humanize(tag)}</h2>")
             self._render_standard_timelines(
                 file_stem_for(tag), tag=tag
@@ -1028,7 +1012,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
     def _render_platform(self, platform: str) -> None:
         main_tag = self._tags[0]
         _logger.debug(
-            'render charts tag="%s", platform="%s"',
+            'render entity="charts", tag="%s", platform="%s"',
             "" if main_tag is None else main_tag,
             platform
         )
@@ -1050,7 +1034,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             filter["platform"] = effective_platform
 
         if self._statistics.frame().filter(predicate(**filter)).height == 0:
-            _logger.debug('due to lack of data, skipping platform="%s"', platform)
+            _logger.debug('skipping platform="%s", reason="no data"', platform)
             self._html("<p>No data available for platform</p>")
             return
 
@@ -1065,6 +1049,18 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             )
             self._render_standard_timelines(
                 file_stem_for(platform), tag=main_tag, platform=effective_platform
+            )
+
+            self._html(
+                '''\
+    <p>The percentage for the "null" keyword denotes the fraction of <em>all</em> SoRs,
+    whereas all other percentages denote fractions of SoRs with keywords only.</p>
+                ''')
+            self._frame(
+                self._tabulate_keyword_usage(
+                    tag=main_tag, platform=effective_platform
+                ),
+                klass="right-except-2"
             )
         finally:
             if platform == "Meta":
@@ -1759,7 +1755,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 ).mark_text(
                     dy=-8,
                     align="center",
-                    fontSize=10,
+                    fontSize=9,
                 )
                 chart = chart + labels
         elif not spec.has_variants():
@@ -2096,21 +2092,39 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             text = base.mark_text(
                 yOffset=30,
                 fontWeight="bold",
+                fontSize=10,
             )
             chart = chart + text
 
         return chart.interactive() if self._with_interaction else chart
 
+    # ----------------------------------------------------------------------------------
+
     def _render_overall_keyword_usage_by_platform(
         self, percent: bool, tag: None | str = None
     ) -> _ChartT:
-        frame = self._statistics.frame().lazy().filter(
+        base = self._statistics.frame().lazy().filter(
             predicate(
                 "category_specification",
                 entity=None,
                 variant=NOT_NULL,
                 tag=tag,
             )
+        )
+
+        platforms = base.group_by(
+            pl.col("platform"),
+        ).agg(
+            *aggregates(),
+        ).filter(
+            pl.col("count").gt(1_000_000)
+        ).select(
+            pl.col("platform")
+        )
+
+        frame = base.join(
+            # Filter out platform with less than 1M SoRs
+            platforms, on=pl.col("platform"), how="right",
         ).group_by(
             pl.col("platform", "variant"),
         ).agg(
@@ -2140,18 +2154,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         else:
             title += "Total Counts"
 
-        y_data = "sum(percent):Q" if percent else "sum(count):Q"
-        y_title = (
+        y_axis = alt.Y(
+            "sum(percent):Q" if percent else "sum(count):Q"
+        ).title(
             "Percent (Statements of Reasons)" if percent else "Statements of Reasons"
         )
 
-        color = alt.Color("variant:N")
-        if KeywordChildSexualAbuseMaterial in self._tags:
-            color = color.scale(
-                domain=self._keyword_metric.variant_labels(),
-                range=self._keyword_metric.variant_colors(),
-            )
-        color = color.title("Keyword")
+        if percent:
+            y_axis = y_axis.scale(domain=(0, 100), clamp=True)
 
         chart = alt.Chart(
             frame, title=title
@@ -2160,8 +2170,11 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             tooltip=True,
         ).encode(
             alt.X("platform:N", axis=alt.Axis(labelAngle=-45)).title("Platform"),
-            alt.Y(y_data).title(y_title),
-            color,
+            y_axis,
+            alt.Color("variant:N").title("Keyword").scale(
+                domain=self._keyword_metric.variant_labels(),
+                range=self._keyword_metric.variant_colors(),
+            )
         ).properties(
             width=self.timeline_width,
             height=self.timeline_height,
@@ -2169,26 +2182,72 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         return chart.interactive() if self._with_interaction else chart
 
     def _render_overall_keyword_usage(self) -> _ChartT:
+        metric = make_metric(
+            "category_specification",
+            "Popular Keywords",
+            self._frequent_keywords,
+            quant_label="SoRs with Popular Keywords (> 0.5%)"
+        )
+
         table = self._keyword_usage.filter(
             pl.col("keyword").is_in(self._frequent_keywords)
         ).with_columns(
             pl.col("keyword")
             .cast(pl.String)
-            .replace(self._keyword_metric.replacements())
+            .replace(metric.replacements())
         )
 
         chart = alt.Chart(
-            table, title="Keywords Appearing in > 1% of SoRs"
+            table, title="Keywords in >= 0.5% of SoRs with Keywords"
         ).mark_arc(
             tooltip=True,
         ).encode(
             alt.Theta("count:Q"),
             alt.Color("keyword:N").scale(
-                domain=self._keyword_metric.variant_labels(),
-                range=self._keyword_metric.variant_colors(),
+                domain=metric.variant_labels(),
+                range=metric.variant_colors(),
             ).title("Keyword")
         )
         return chart.interactive() if self._with_interaction else chart
+
+    def _tabulate_keyword_usage(
+        self,
+        tag: None | str = None,
+        platform: None | str = None,
+    ) -> pl.DataFrame:
+        if platform is None:
+            filter = predicate("category_specification", entity=None, tag=tag)
+        else:
+            filter = predicate(
+                "category_specification",
+                entity=None,
+                tag=tag,
+                platform=platform,
+            )
+
+        return self._statistics.frame().lazy().filter(
+            filter
+        ).group_by(
+            "variant"
+        ).agg(
+            pl.col("count").sum()
+        ).rename({
+            "variant": "keyword"
+        }).with_columns(
+            pl.when(
+                pl.col("keyword").is_null()
+            ).then(
+                pl.col("count")
+                / pl.col("count").sum()
+                * 100
+            ).otherwise(
+                pl.col("count")
+                / pl.col("count").filter(pl.col("keyword").is_not_null()).sum()
+                * 100
+            ).alias("pct")
+        ).sort(
+            pl.col("count"), descending=True, maintain_order=True
+        ).collect()
 
     def _prepare_text_usage(
         self,

@@ -55,7 +55,7 @@ def minify(value: int) -> str:
 
     factor = 1_000 ** (round // 3)
     prec = 2 - (round % 3)
-    letter = " KMGT"[round // 3].strip()
+    letter = " KMBT"[round // 3].strip()
 
     return f"{value / factor:,.{prec}f}{letter}"
 
