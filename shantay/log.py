@@ -107,6 +107,8 @@ class LogMessage:
 
     def batches(self) -> None | int:
         """Get the batch number if any."""
+        if "count" in self:
+            return cast(int, self.props["count"])
         if "file-count" in self:
             return cast(int, self.props["file-count"])
         if "file" in self:
@@ -193,6 +195,7 @@ class LogEntry:
     information on subsequent lines.
     """
 
+    line_number: int
     timestamp: dt.datetime
     pid: int
     module: str
@@ -204,18 +207,20 @@ class LogEntry:
     def parse_file(cls, path: Path) -> Iterator[Self]:
         """Parse the contents of the log file. Since log files may get rather
         large, this method is a generator."""
+        file_name = str(path)
+
         with open(path, mode="r", encoding="utf8") as file:
             line = file.readline()
-            no = 1
+            line_number = 1
 
             while line != "":
                 # Parse an entry
-                entry = cls.parse(no, line)
+                entry = cls.parse(file_name, line_number, line)
 
                 # Collect subsequent lines that are not log entries
                 trace = []
                 while (line := file.readline()):
-                    no += 1
+                    line_number += 1
 
                     if "︙" in line:
                         break
@@ -228,16 +233,17 @@ class LogEntry:
                 yield entry
 
     @classmethod
-    def parse(cls, number: int, line: str) -> Self:
+    def parse(cls, file: str, line_number: int, line: str) -> Self:
         """Parse a log line."""
         parts = line.strip().split("︙")
         if len(parts) != 5:
-            raise ValueError(f'malformed log entry in line {number:,}:{line}')
+            raise ValueError(f'{file}:{line_number}: malformed log entry')
         level = parts[3]
         if level not in ("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"):
-            raise ValueError(f'malformed log level in line {number:,}:{line}')
+            raise ValueError(f'{file}:{line_number}: malformed log level')
 
         return cls(
+            line_number,
             dt.datetime.fromisoformat(parts[0]),
             int(parts[1]),
             parts[2],
@@ -301,9 +307,9 @@ class LogEntry:
             prefix="returning result for"
         )
 
-    def is_summarized_file(self) -> bool:
-        """Determine whether the log entry marks a successfully summarized file."""
-        return self.message.has("file", "latency", "unit", prefix="summarized")
+    def is_summarized_batch(self) -> bool:
+        """Determine whether the log entry marks a summarized batch file."""
+        return self.message.has("file", "latency", "unit", prefix="summarized batch")
 
     def is_combined_batches(self) -> bool:
         """Determine whether the log entry marks the combining of per-batch stats."""
@@ -387,7 +393,7 @@ class TimeSeriesEntry:
         stream.write(f"{self.value:.3f}")
 
     @classmethod
-    def extract(cls, log: Iterator[LogEntry]) -> Iterator[None | Self]:
+    def extract(cls, log_file: str, log: Iterator[LogEntry]) -> Iterator[None | Self]:
         coordinator = None
         worker_count = 0
         workers = {}
@@ -396,7 +402,8 @@ class TimeSeriesEntry:
         for index, entry in enumerate(log):
             if entry.is_rule() and entry.module == "shantay":
                 print(
-                    f"log record #{index:,} marks new run; starting afresh",
+                    f"WARNING {log_file}:{entry.line_number}: restarting extraction, "
+                    "as log record marks new run",
                     file=sys.stderr
                 )
 
@@ -407,7 +414,7 @@ class TimeSeriesEntry:
                 yield None
                 continue
 
-            if entry.is_summarized_file():
+            if entry.is_summarized_batch():
                 batch = entry.message.batches()
                 metric = "latency"
                 value = entry.message.latency()
@@ -420,6 +427,14 @@ class TimeSeriesEntry:
                 metric = "batches"
                 value = batch
             else:
+                continue
+
+            if value is None:
+                print(
+                    f'WARNING {log_file}:{entry.line_number}: skipping log record, '
+                    f'as it lacks {metric} entry',
+                    file=sys.stderr,
+                )
                 continue
 
             if entry.pid == coordinator:
@@ -437,8 +452,6 @@ class TimeSeriesEntry:
             else:
                 latest_release[entry.pid] = release
 
-            assert value is not None
-
             yield cls(
                 entry.timestamp,
                 entry.pid,
@@ -450,9 +463,14 @@ class TimeSeriesEntry:
             )
 
     @classmethod
-    def extract_into_file(cls, log: Iterator[LogEntry], path: Path) -> None:
-        with open(path, mode="w", encoding="utf8") as file:
-            for datum in cls.extract(log):
+    def extract_into_file(
+        cls,
+        log_file: str,
+        log: Iterator[LogEntry],
+        output: Path
+    ) -> None:
+        with open(output, mode="w", encoding="utf8") as file:
+            for datum in cls.extract(log_file, log):
                 if datum is None:
                     file.seek(0)
                     file.truncate()
@@ -469,15 +487,30 @@ class TimeSeriesEntry:
         from .color import Palette
 
         frame = pl.read_csv(csv)
+        data = frame.filter(pl.col("label").ne("coordinator"))
+        if data.height == 0:
+            data = frame
+            labels = ["coordinator"]
+            colors = [Palette.BLUE]
+        else:
+            count = data.select(pl.col("label").n_unique()).item()
+            labels = [f"worker-{n}" for n in range(1, count + 1)]
+            colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:count]]
 
-        worker_data = frame.filter(pl.col("label").ne("coordinator"))
-        worker_count = worker_data.select(pl.col("label").n_unique()).item()
-
-        labels = [f"worker-{n}" for n in range(1, worker_count + 1)]
-        colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:worker_count]]
+        min, max = data.select(
+            pl.col("release").min().alias("min"),
+            pl.col("release").max().alias("max"),
+        ).row(0)
+        count = Release.of(max) - Release.of(min) + 1
+        if count < 100:
+            dot_size = 10
+        elif count < 500:
+            dot_size = 6
+        else:
+            dot_size = 2
 
         base = alt.Chart(
-            worker_data
+            data
         ).encode(
             alt.X("release:T").title("Release")
         )
@@ -485,7 +518,7 @@ class TimeSeriesEntry:
         latency = base.transform_filter(
             alt.datum.metric == "latency"
         ).mark_circle(
-            size=2,
+            size=dot_size,
         ).encode(
             alt.Y("value:Q").title("Dots: Latency (seconds)"),
             alt.Color("label:N").scale(domain=labels, range=colors),
@@ -540,16 +573,16 @@ if __name__ == "__main__":
 
     if "csv" in options.task:
         print(
-            f'extracting metrics from log "{options.log}" into "{options.csv}"',
+            f'INFO: extracting metrics from log "{options.log}" into "{options.csv}"',
             file=sys.stderr,
         )
         file_parser = LogEntry.parse_file(options.log)
-        TimeSeriesEntry.extract_into_file(file_parser, options.csv)
+        TimeSeriesEntry.extract_into_file(str(options.log), file_parser, options.csv)
 
     if "svg" in options.task:
         svg = options.csv.with_suffix(".svg") if options.svg is None else options.svg
         print(
-            f'visualizing metrics from "{options.csv}" into "{svg}"',
+            f'INFO: visualizing metrics from "{options.csv}" into "{svg}"',
             file=sys.stderr,
         )
         TimeSeriesEntry.visualize(options.csv, svg)
