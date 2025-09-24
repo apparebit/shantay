@@ -170,7 +170,7 @@ supported tasks:
 
 def main(argv: None | Sequence[str] = None) -> int:
     # Handle command line options
-    from .color import Style
+    from shantay.color import Style
     parser = get_parser(Style)
 
     if argv is None:
@@ -191,13 +191,13 @@ def main(argv: None | Sequence[str] = None) -> int:
         level = logging.INFO
 
     # Configure logging, since sync_web_platforms writes to the log
-    from .logging import configure_logging, log_rule
+    from shantay.logutil import configure_logging, log_rule
     configure_logging(options.logfile, level=level)
     log_rule()
 
     # To be fully effective, this function must be invoked before the model,
     # schema, or stats modules have been loaded. That is the case right here.
-    from ._platform import sync_web_platforms
+    from shantay._platform import sync_web_platforms
     action = sync_web_platforms()
     if action == "disk":
         raise AssertionError(
@@ -207,7 +207,7 @@ def main(argv: None | Sequence[str] = None) -> int:
             "    https://github.com/apparebit/shantay/issues/new/choose\n\n"
         )
 
-    from .tool import run
+    from shantay.tool import run
     return run(options)
 
 

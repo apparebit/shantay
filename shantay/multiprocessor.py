@@ -10,7 +10,7 @@ import time
 from types import FrameType
 from typing import Any, cast
 
-from .logging import log_max_rss
+from .logutil import log_max_rss
 from .metadata import Metadata
 from .model import (
     Config, Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage

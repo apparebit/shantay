@@ -427,7 +427,7 @@ def setup(stream: TextIO) -> None:
     tmp = _reset_temp_storage()
     tick()
 
-    from shantay.logging import configure_logging
+    from shantay.logutil import configure_logging
     configure_logging(str(tmp / "log.log"))
     tick()
 

@@ -7,7 +7,7 @@ import polars as pl
 from .runtime import TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
-from shantay.logging import log_rule, Size
+from shantay.logutil import log_rule, Size
 from shantay.metadata import Metadata
 from shantay.model import Config, Daily, ReleaseRange, Storage
 from shantay.multiprocessor import Multiprocessor
