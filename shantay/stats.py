@@ -401,18 +401,18 @@ class Collector:
         pairs = {}
         md = cast(dict, metadata_entry or {})
 
-        batch_rows_with_keywords = (
+        extract_rows_with_keywords = (
             self._source.select(
                 pl.col("category_specification").is_null().not_().sum()
             ).item()
         )
 
         pairs["batch_count"] = md.get("batch_count")
-        pairs["batch_rows"] = self._source.height
-        pairs["batch_rows_with_keywords"] = batch_rows_with_keywords
+        pairs["extract_rows"] = self._source.height
+        pairs["extract_rows_with_keywords"] = extract_rows_with_keywords
         pairs["total_rows"] = self._source.height if tag is None else md.get("total_rows")
         pairs["total_rows_with_keywords"] = (
-            batch_rows_with_keywords if tag is None
+            extract_rows_with_keywords if tag is None
             else md.get("total_rows_with_keywords")
         )
         height = len(pairs)
@@ -751,21 +751,21 @@ class _Summarizer:
             pl.col("platform").n_unique()
         ).item()
 
-        batch_rows = get_quantity(frame, "batch_rows", entity=None, tag=tag)
+        extract_rows = get_quantity(frame, "extract_rows", entity=None, tag=tag)
         total_rows = get_quantity(frame, "total_rows", entity=None, tag=None)
-        batch_kw_rows = get_quantity(frame, "batch_rows_with_keywords", entity=None, tag=tag)
+        extract_kw_rows = get_quantity(frame, "extract_rows_with_keywords", entity=None, tag=tag)
         total_kw_rows = get_quantity(frame, "total_rows_with_keywords", entity=None, tag=None)
-        assert tag is None or batch_rows is not None
-        assert tag is None or batch_kw_rows is not None
+        assert tag is None or extract_rows is not None
+        assert tag is None or extract_kw_rows is not None
         assert total_rows is not None
         assert total_kw_rows is not None
 
-        batch_rows_pct = (
-            (batch_rows or 0) / total_rows * 100 if total_rows != 0 else None
+        extract_rows_pct = (
+            (extract_rows or 0) / total_rows * 100 if total_rows != 0 else None
         )
-        batch_rows_with_keywords_pct = (
-            (batch_kw_rows or 0) / batch_rows * 100
-            if batch_rows is not None and batch_rows != 0
+        extract_rows_with_keywords_pct = (
+            (extract_kw_rows or 0) / extract_rows * 100
+            if extract_rows is not None and extract_rows != 0
             else None
         )
         total_rows_with_keywords_pct = (
@@ -776,10 +776,10 @@ class _Summarizer:
             ("start_date", frame.select(pl.col("start_date").min()).item()),
             ("end_date", frame.select(pl.col("end_date").max()).item()),
             ("batch_count", get_quantity(frame, "batch_count", entity=None)),
-            ("batch_rows", batch_rows),
-            ("batch_rows_pct", batch_rows_pct),
-            ("batch_rows_with_keywords", batch_kw_rows),
-            ("batch_rows_with_keywords_pct", batch_rows_with_keywords_pct),
+            ("extract_rows", extract_rows),
+            ("extract_rows_pct", extract_rows_pct),
+            ("extract_rows_with_keywords", extract_kw_rows),
+            ("extract_rows_with_keywords_pct", extract_rows_with_keywords_pct),
             ("total_rows", total_rows),
             ("total_rows_with_keywords", total_kw_rows),
             ("total_rows_with_keywords_pct", total_rows_with_keywords_pct),

@@ -1,0 +1,71 @@
+{
+    "@schema": "https://json-schema.org/draft/2020-12/schema",
+    "@id": "https://apparebit.com/schema/shantay-metadata.json",
+    "type": "object",
+    "properties": {
+        "@schema": {"const": "https://apparebit.com/schema/shantay-metadata.json"},
+        "config": {
+            "type": "object",
+            "properties": {
+                "stem": {"type": "string"},
+                "filter": {"$ref": "#/$defs/filter"}
+            },
+            "required": ["stem", "filter"]
+        },
+        "releases": {
+            "type": "object",
+            "propertyNames": {"format": "date"},
+            "additionalPropeties": {
+                "type": "object",
+                "properties": {
+                    "batch_count": {"type": "integer"},
+                    "total_rows": {"type": "integer"},
+                    "total_rows_with_keywords": {"type": "integer"},
+                    "extract_rows": {"type": "integer"},
+                    "extract_rows_with_keywords": {"type": "integer"},
+                    "sha256": {
+                        "type": "string",
+                        "pattern": "^[0-9a-fA-F]{64}$"
+                    }
+                },
+                "required": ["batch_count", "total_rows", "total_rows_with_keywords"]
+            }
+        }
+    },
+    "required": ["@schema", "config", "releases"],
+    "$defs": {
+        "filter": {
+            "oneOf": [
+                {"type": "null"},
+                {
+                    "type": "object",
+                    "properties": {
+                        "kind": {"enum": ["category", "platform", "expression"]},
+                        "criterion": {}
+                    },
+                    "if": {
+                        "properties": {
+                            "kind": {"const": "platform"}
+                        }
+                    },
+                    "then": {
+                        "properties": {
+                            "criterion": {
+                                "type": "array",
+                                "items": {"type": "string"}
+                            }
+                        }
+                    },
+                    "else": {
+                        "properties": {
+                            "criterion": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": ["kind", "criterion"]
+                }
+            ]
+        }
+    }
+}

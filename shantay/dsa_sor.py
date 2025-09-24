@@ -443,16 +443,16 @@ class StatementsOfReasons(Dataset):
     def _assemble_frame_counters(
         self, frame: pl.DataFrame, total_rows: int, total_rows_with_keywords: int
     ) -> Counter:
-        batch_rows = frame.height
-        batch_rows_with_keywords = frame.select(
+        extract_rows = frame.height
+        extract_rows_with_keywords = frame.select(
             pl.col("category_specification").is_not_null().sum(),
         ).item()
 
         return Counter(
             total_rows=total_rows,
             total_rows_with_keywords=total_rows_with_keywords,
-            batch_rows=batch_rows,
-            batch_rows_with_keywords=batch_rows_with_keywords,
+            extract_rows=extract_rows,
+            extract_rows_with_keywords=extract_rows_with_keywords,
         )
 
     @annotate_error(filename_arg="root")

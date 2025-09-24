@@ -133,8 +133,8 @@ class TestDistill(TestCase):
             self.assertEqual(counters["batch_count"], 2)
             self.assertEqual(counters["total_rows"], 100)
             self.assertEqual(counters["total_rows_with_keywords"], 12)
-            self.assertEqual(counters["batch_rows"], 8)
-            self.assertEqual(counters["batch_rows_with_keywords"], 2)
+            self.assertEqual(counters["extract_rows"], 8)
+            self.assertEqual(counters["extract_rows_with_keywords"], 2)
 
             framedir = STAGING / release.directory
             self.assertFalse(framedir.exists())
@@ -172,8 +172,8 @@ class TestDistill(TestCase):
             self.assertEqual(counters["batch_count"], 2)
             self.assertEqual(counters["total_rows"], 100 + 102)
             self.assertEqual(counters["total_rows_with_keywords"], 12 + 1)
-            self.assertEqual(counters["batch_rows"], 8 + 9)
-            self.assertEqual(counters["batch_rows_with_keywords"], 2 + 0)
+            self.assertEqual(counters["extract_rows"], 8 + 9)
+            self.assertEqual(counters["extract_rows_with_keywords"], 2 + 0)
 
             self.assertTrue(batch1.exists())
             self.assertFrameEqual(
@@ -640,8 +640,8 @@ EXPECTED_ANALYSIS = {
     ],
     "column": [
         "batch_count",
-        "batch_rows",
-        "batch_rows_with_keywords",
+        "extract_rows",
+        "extract_rows_with_keywords",
         "total_rows",
         "total_rows_with_keywords",
         "rows",

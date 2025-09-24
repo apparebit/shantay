@@ -512,12 +512,12 @@ class MetadataEntry(TypedDict, total=False):
     """The metadata associated with a release."""
     batch_count: Required[int]
     total_rows: Optional[int]
-    batch_rows: Optional[int]
+    extract_rows: Optional[int]
     sha256: Optional[str]
 
     # Specific to DSA SoR DB
     total_rows_with_keywords: Optional[int]
-    batch_rows_with_keywords: Optional[int]
+    extract_rows_with_keywords: Optional[int]
 
 
 class FullMetadataEntry(MetadataEntry):

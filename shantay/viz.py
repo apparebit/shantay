@@ -694,8 +694,8 @@ class Visualizer:
         self._html(f'<h1>{title}</h1>')
 
         row = self._statistics.frame().lazy().select(
-            pl.col("count").filter(predicate("batch_rows", tag=main_tag)).sum()
-            .alias("batch_rows"),
+            pl.col("count").filter(predicate("extract_rows", tag=main_tag)).sum()
+            .alias("extract_rows"),
             pl.col("count").filter(predicate("total_rows", tag=None)).sum()
             .alias("total_rows"),
             pl.col("platform").n_unique(),
@@ -712,7 +712,7 @@ class Visualizer:
             pl.col("text").filter(predicate(tag=main_tag)).n_unique()
             .alias("unique_other_entries"),
         ).collect().row(0)
-        batch_rows, total_rows, platform, days, start_date, end_date, *rest = row
+        extract_rows, total_rows, platform, days, start_date, end_date, *rest = row
         other_entries, unique_other_entries = rest
 
         tag_toc = "\n            ".join(
@@ -758,7 +758,7 @@ class Visualizer:
                     "with",
                 ],
                 "Quantity": [(f"{el:,}" if isinstance(el, int) else f"{el}") for el in [
-                    batch_rows,
+                    extract_rows,
                     total_rows,
                     platform,
                     days.days,
@@ -1166,9 +1166,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             source = "total_rows"
             filter = predicate("total_rows", tag=tag)
         else:
-            source = "batch_rows"
+            source = "extract_rows"
             filter = predicate("total_rows", tag=None).or_(
-                predicate("batch_rows", tag=tag)
+                predicate("extract_rows", tag=tag)
             )
 
         table = self._statistics.frame().filter(
@@ -1278,7 +1278,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
 
         if tag is not None:
             expr2 = (
-                pl.col("column").is_in(["batch_rows_with_keywords", "batch_rows"])
+                pl.col("column").is_in(["extract_rows_with_keywords", "extract_rows"])
                 .and_(pl.col("tag").eq(tag))
             )
         else:
@@ -1307,7 +1307,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             if tag is None:
                 columns = ["total_rows_with_keywords", "total_rows"]
             else:
-                columns = ["batch_rows_with_keywords", "batch_rows"]
+                columns = ["extract_rows_with_keywords", "extract_rows"]
 
             frame = base_frame.group_by(
                 pl.col("start_date").dt.year().alias("year"),
@@ -1340,7 +1340,7 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
             fractions.append(percent_fraction("total"))
         if tag is not None:
             column_names.append(humanize(tag))
-            fractions.append(percent_fraction("batch"))
+            fractions.append(percent_fraction("extract"))
 
         return frame.select(
             pl.col("start_date", "end_date"),

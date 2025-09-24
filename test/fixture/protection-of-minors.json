@@ -1,5 +1,5 @@
 {
-  "@id": "Shantay 665.0",
+  "@schema": "https://apparebit.com/schema/shantay-metadata.json",
   "config": {
     "stem": "protection-of-minors",
     "filter": {
@@ -12,8 +12,8 @@
       "batch_count": 2,
       "total_rows": 202,
       "total_rows_with_keywords": 13,
-      "batch_rows": 17,
-      "batch_rows_with_keywords": 2,
+      "extract_rows": 17,
+      "extract_rows_with_keywords": 2,
       "sha256": "72a8e51c384816314e16dd5608bad000cc7320592b1fe597e3852b31595c8889"
     }
   }

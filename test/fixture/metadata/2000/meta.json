@@ -1,5 +1,5 @@
 {
-    "@id": "Shantay 665.0",
+    "@schema": "https://apparebit.com/schema/shantay-metadata.json",
     "config": {
         "stem": "doom",
         "filter": {

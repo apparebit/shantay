@@ -17,7 +17,9 @@ from .model import (
 from .progress import NO_PROGRESS, Progress
 
 
-_FILE_TYPE = re.compile(r'^{\s*"@id":\s?"Shantay \d+[.]\d+[.]\d+"')
+JSON_SCHEMA_ID = "https://apparebit.com/schema/shantay-metadata.json"
+
+_FILE_TYPE = re.compile(fr'^\s*"@schema":\s?"{JSON_SCHEMA_ID}"')
 _logger = logging.getLogger(__spec__.parent)
 
 
@@ -216,8 +218,8 @@ class Metadata[R: Release]:
                 "batch_count",
                 "total_rows",
                 "total_rows_with_keywords",
-                "batch_rows",
-                "batch_rows_with_keywords",
+                "extract_rows",
+                "extract_rows_with_keywords",
                 "sha256",
             ):
                 # Copy over missing fields, check existing fields for consistency
@@ -240,7 +242,7 @@ class Metadata[R: Release]:
     def is_file(cls, file: Path) -> bool:
         """
         Determine whether the file contains metadata for Shantay. This method
-        checks the `@id` key and its value without parsing the JSON format.
+        checks the `@schema` key and its value without parsing the JSON format.
         """
         if file.suffix != ".json":
             return False
@@ -275,8 +277,8 @@ class Metadata[R: Release]:
         with open(file, mode="r", encoding="utf8") as stream:
             data = json.load(stream)
 
-        id = data.get("@id")
-        if id is None or not id.startswith("Shantay "):
+        schema = data.get("@schema")
+        if schema != JSON_SCHEMA_ID:
             raise ValueError(f'"{file}" is not a valid metadata file for Shantay')
 
         config = data["config"]
@@ -298,7 +300,7 @@ class Metadata[R: Release]:
         tmp = file.with_suffix(".tmp.json")
         with open(tmp, mode="w", encoding="utf8") as handle:
             json.dump({
-                "@id": f"Shantay {__version__}",
+                "@schema": JSON_SCHEMA_ID,
                 "config": {
                     "stem": self._stem,
                     "filter": None if self._filter is None else self._filter.to_json(),
