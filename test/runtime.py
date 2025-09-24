@@ -379,7 +379,6 @@ def _reset_temp_storage() -> Path:
 
 def _prepare_temp_storage(tmp: Path, tests: list[str]) -> None:
     for prefix in tests:
-        print(f">>>>> {prefix}")
         (tmp / f"{prefix}-staging").mkdir()
 
 
@@ -426,10 +425,6 @@ def setup(stream: TextIO) -> None:
     tick = _make_ticker(stream)
 
     tmp = _reset_temp_storage()
-    tick()
-
-    import shantay
-    shantay.__version__ = "665.0"
     tick()
 
     from shantay.logging import configure_logging
