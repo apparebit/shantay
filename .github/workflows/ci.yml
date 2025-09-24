@@ -76,7 +76,7 @@ jobs:
 
     - name: Generate Report
       run: |
-        python -m shantay visualize
+        uv run shantay visualize
         mkdir reports
         mv dsa-db-staging/builtin.html reports/db.html
 
