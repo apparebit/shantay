@@ -17,7 +17,7 @@ from .model import (
 from .progress import NO_PROGRESS, Progress
 
 
-JSON_SCHEMA_ID = "https://apparebit.com/schema/shantay-metadata.json"
+JSON_SCHEMA_ID = "https://apparebit.com/schema/shantay-metadata.schema.json"
 
 _FILE_TYPE = re.compile(fr'^\s*"@schema":\s?"{JSON_SCHEMA_ID}"')
 _logger = logging.getLogger(__spec__.parent)

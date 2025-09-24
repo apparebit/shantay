@@ -1,5 +1,5 @@
 {
-  "@schema": "https://apparebit.com/schema/shantay-metadata.json",
+  "@schema": "https://apparebit.com/schema/shantay-metadata.schema.json",
   "config": {
     "stem": "db",
     "filter": null
