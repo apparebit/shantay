@@ -234,27 +234,29 @@ file's name.
 ### 3.3 Summary Statistics
 
 In addition to yearly directories, *shantay* also stores the following two files
-inside root directories.
+and one directory inside root directories.
 
-  - A JSON file named after the filter with, for example,
+  - `<stem>.json`: This JSON file named after the filter with, for example,
     `protection-of-minors.json` containing an object whose `filter` property
     identifies the category `STATEMENT_CATEGORY_PROTECTION_OF_MINORS`. That same
     object also has a `releases` property with per-release metadata, including:
 
       - `batch_count` for the number of daily data files
-      - `batch_rows` for the number of statements included in the statistics
+      - `extract_rows` for the number of statements included in the statistics
       - `total_rows` for the number of statements before filtering
       - `sha256` for the (recursive) digest of the digests in the `sha256.txt`
         file, one for each daily data file
 
-  - `db.parquet` contains the summary statistics about the full database.
-    Statistics for distilled subsets are named after their filters. Each file
-    basically is a non-tidy, long data frame that uses up to seven columns for
-    identifying variables and up to four columns for identifying values. While
-    an encoding with fewer columns is eminently feasible, the schema is
-    optimized for being easy to work with (e.g., aggregations are trivial) and
-    compact to store (e.g., a column with mostly nulls requires almost no
-    space).
+    [shantay-metadata.json](https://raw.githubusercontent.com/apparebit/shantay/boss/shantay-metadata.json)
+    defines the JSON schema for such metadata files.
+
+  - `<stem>.parquet`: This parquet file contains the summary statistics about
+    the database. It contains a non-tidy, long data frame that uses up to nine
+    columns for identifying variables and up to four columns for identifying
+    values. While an encoding with fewer columns is eminently feasible, the
+    schema is optimized for being easy to work with (e.g., aggregations are
+    trivial) and compact to store (e.g., a column with mostly nulls requires
+    almost no space).
 
     The individual columns are:
 
@@ -275,14 +277,21 @@ inside root directories.
     If `mean` contains a value, then `count` also contains a value, thus
     enabling correct aggregation with a weighted average.
 
-    In theory, transparency database columns with arbitrary text let platforms
-    provide granular detail about content moderation decisions. In practice,
-    content moderation at scale pushes platforms towards standardizing free-form
-    text as well. Alibaba appears to be the one exception, with mostly unique
-    entries for these columns. Alas, that is the result of the firm including
-    case-specific identifiers in the text. Since that causes Alibaba to account
-    for 2/3 of rows in daily summary statistics, Shantay does not track
-    Alibaba's entries for the worst offending transparency database columns.
+  - `<stem>.stats`: The directory contains the per-release parquet files with
+    the summary statistics, with each file named after the release's ISO date.
+    `<stem>.parquet` contains the same data as the union of all files in
+    `<stem>.stats`.
+
+In theory, transparency database columns with arbitrary text let platforms
+provide granular detail about content moderation decisions. In practice, content
+moderation at scale pushes platforms towards standardizing free-form text as
+well. However, some platforms nonetheless record what appear to be case specific
+annotations or include unique identifiers, resulting in a very long tail of
+entries with few to no repetitions that takes up a significant amount of memory.
+That is the reason why Shantay, by default, omits the values of the
+`content_id_ean`, `illegal_content_legal_ground`, `illegal_content_explanation`,
+`incompatible_content_ground`, `incompatible_content_explanation`, and
+`decision_facts` columns from its summary statistics.
 
 
 ## 4. Big Data in the Small
@@ -340,24 +349,29 @@ to handle a rapidly increasing amount of storage and can easily consume all
 virtual memory—which does trigger an operating system crash.
 
 **Solutions**: These are not theoretical challenges. I have encountered all of
-them during the development of Shantay. The solution to solution to bulk storage
-being reliable and performant only for large reads and writes is use of the
-*staging directory*, which is assumed to be on the internal disk. The solution
-to running out of space on that disk is to aggressively delete intermediate
-state again.
+them during the development of Shantay. To address the limited reliability and
+performance of external bulk storage, Shantay uses a staging directory, which is
+assumed to be on the internal disk. To avoid running out of space on that disk,
+Shantay aggressively deletes intermediate state again. Finally, to avoid running
+out of virtual memory, Shantay does not construct the data frame with summary
+statistics incrementally anymore, but rather avoids making large memory
+allocations, with one exception, and also restarts worker processes.
 
-Finally, the solution to running out of virtual memory is more involved.
-Originally, Shantay incrementally built one data frame with all of the summary
-statistics. That was resulting in unreasonably fast growth of resident-set size
-(RSS).
+In more detail, it now persists a data frame with statistics for each batch
+making up a daily release, combines those partial statistics into per-release
+statistics when it is done processing all batches for a release, again
+persisting that per-release data frame while also deleting the per-batch frames,
+and finally combines those daily statistics into a single data frame upon
+completion. As a result, it only needs to make one large allocation towards the
+end of a run. But since this approach mostly persists outputs at the same
+granularity as inputs, it also makes it easier to change work, e.g., to
+partially recompute statistics, as well as workers, e.g., to proactively limit
+creeping memory growth.
 
-Instead, an approach that stores a data frame with partial statistics for each
-batch from the daily release, combines those partial statistics into one data
-frame for the daily release when done processing all data for that release, and
-finally combines those daily statistics into a single data frame fares much
-better, with much smaller initial RSS and much slower growth. I also added
-instrumentation for tracking the maximum RSS, which can be used to automatically
-recreate the worker pool in the future.
+To better track performance, Shantay regularly logs the maximum resident-set
+size for each process and the latency for the smallest unit of work, i.e.,
+computing the summary statistics for a release batch. Run `shantay.log` to
+extract these metrics into a CSV file and then visualize them as a SVG chart.
 
 ### 4.2 The Implementation
 

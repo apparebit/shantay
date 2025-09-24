@@ -4,11 +4,13 @@
 ## v0.6.0 (September ??, 2025)
 
 Shantay now covers all transparency DB columns in its summary statistics,
-including the `content_id_ean` column introduced with the schema change of
-2025-07-01. It also providing more control over the extent of transparency DB
-extracts and the granularity of summary statistics. The implementation has been
-restructured to require much less memory. Growth over time is much slower as
-well.
+including the `content_id_ean` column introduced with the EU's transparency DB
+schema change of 2025-07-01. It also supports a range of filters up to arbitrary
+queries for distilling extracts from the transparency DB as well as finer
+granularity of summary statistics. The implementation has been restructured to
+require much less memory. As a result, the schemas of summary statistics and
+metadata have changed; all extracts and summary statistics need to be
+recomputed.
 
 ### Cover All Transparency DB Columns
 
@@ -26,72 +28,81 @@ statistics quadruple when including value counts for the newly added columns.
 Since the `content_id_ean`, `illegal_content_legal_ground`,
 `illegal_content_explanation`, `incompatible_content_ground`,
 `incompatible_content_explanation`, and `decision_facts` columns include the
-most text while providing hardly any additional information, Shantay only tracks
-the number of non-empty rows for these columns.
+most text while providing little additional information, Shantay only tracks the
+number of non-empty rows for these columns by default; see below for how to
+change this default.
 
 ### Configure DB Extract and Summary Statistics
 
 In addition to distilling the transparency DB by `--category`, Shantay now also
 supports generating extracts for one or more `--platform`s or with an arbitrary
 Pola.rs `--filter` expression. The latter may use the customary `pl` for
-Pola.rs' namespace, but no other bindings, including for Python's builtins, are
+Pola.rs' namespace. No other bindings, including for Python's builtins, are
 available. Still, it would be folly to use an untrusted string as the `--filter`
 argument.
 
-With `--stratify-by-category`, Shantay collects summary statistics broken down
-by platform and statement category instead of only by platform. With
-`--stratify-all-text`, Shantay collects value counts for _all_ string-valued
-columns, including the five columns explicitly exempted by default. Each of
-these two options significantly increases Shantay's memory requirements. As a
-result, you may have to reduce the date range or the number of worker processes.
+When invoked with `--stratify-by-category`, Shantay collects summary statistics
+broken down by platform and statement category instead of only by platform. When
+invoked with `--stratify-all-text`, Shantay collects value counts for _all_
+string-valued columns, notably including the six columns exempted by default.
+Each of these two options significantly increases Shantay's memory requirements.
+Despite Shantay 0.6's reduced memory requirements (see below), the use of either
+option may require limiting the date range or the number of worker processes. As
+described below, Shantay regularly logs necessary statistics.
 
 ### Lower Memory Requirements
 
-Shantay used to create summary statistics by creating several small data frame
-for each release and then combining them with the data frame with statistics for
-all previous releases into one data frame. To ensure good performance, Shantay
-also rechunked the data frame at that time, which ensures contiguous memory
-allocation. Unfortunately, this approach resulted in fairly high memory
-requirements, with worker processes requiring 40-60 GB of RAM for processing
-half a year of transparency data.
+Shantay used to create summary statistics by creating several small data frames
+for each release and then combining them with the much larger data frame for all
+previous releases. To ensure good performance, Shantay also rechunked the
+resulting data frame, which ensures that all data is stored in contiguous
+memory. Unfortunately, this approach resulted in fairly high memory
+requirements, with worker processes easily requiring 40 GB of RAM for processing
+a couple of months of transparency data and memory growing to well over 60 GB
+for about six months of transparency data.
 
 With this release, Shantay uses a different approach that avoids having to
-reallocate one very large memory segment. Now, worker processes quickly ramp up
-to around 10 GB and then slow increase to around 17 GB after processing 22
-months of transparency data. Under the new approach, Shantay processes each
-batch belonging to a daily release independently, saving the result to disk, and
-then combines all batch statistics into one data frame for each release, again
-saving the result to disk. Once all releases have been processed, Shantay
-combines the per-release frames into a complete data frame as well. For now, it
-also preserves the per-release frames, which simplify incremental computation
-including recovery from failures.
+reallocate one very large memory segment. It processes each batch belonging to a
+daily release independently, saving the result to disk, and then combines all
+batch statistics into one data frame for each release, again saving the result
+to disk. Once all releases have been processed, Shantay combines the per-release
+frames into a complete data frame. It also preserves the per-release frames,
+which simplify incremental computation including recovery from failures.
 
-The same measurements show that per-batch latency slowly increases as well, from
-about 10s to 15s over 22 months. That strongly suggests to restart worker
-processes every n processed releases.
+Under the new approach, worker processes quickly ramp up to around 10 GB of RAM
+and then slowly increase to around 17 GB after processing 22 months of
+transparency data. Latency measurements show that per-batch processing time
+slowly increases as well, from about 10s to 15s over 22 months, even though
+batch sizes remain the same. To limit these increases in memory and latency,
+Shantay now restarts worker processes every *n* releases processed. Given the
+advantages of restarting even a single worker, running with one worker process
+now is the default.
 
-Shantay now logs the necessary statistics. `shantay.log` extracts performance
-statistics into a dedicated [CSV
+Shantay regularly logs both maximum resident-set size and the per release batch
+latency. Running `shantay.log` extracts performance statistics into a dedicated
+[CSV
 file](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.csv)
-and also visualizes them in [SVG
+and then visualizes the data in [SVG
 format](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.svg).
 
 ### Minor Improvements and Bug Fixes
 
 This release also contains several minor improvements and bug fixes:
 
-  * `--platform` can also be used to override Shantay's choice of platforms when
-    visualizing results. By default, Shantay selects them by popularity.
-  * Mark staging root directories for multiprocessing workers as `<name>.done`
-    upon completion. For debuggability, they are not deleted at the time; though
-    they are removed upon Shantay's next run with the same staging root.
-  * Fix labelling of mean moderation and disclosure delay lines. Move mean
-    disclosure delay to second, lower panel.
-  * Fix crashing errors when cleaning up directories during archive download,
-    when forwarding cancellations during multiprocessing, when just downloading
+  * The new `--platform` option can also be used to override Shantay's choice of
+    platforms when visualizing results. By default, Shantay includes Meta,
+    TikTok, X, and YouTube, as well as the five platforms submitting the most
+    SoRs ignoring the four manually selected ones.
+  * Shantay marks the staging directories for multiprocessing workers with the
+    `.done` suffix upon completion, resulting in `<name>.<pid>.done`. It delays
+    their deletion until the next invocation to aid trouble shooting.
+  * Generated reports now include per-platform tables of keyword usage.
+    Additionally, the size of annotations, the labelling of delays, the use of
+    colors, and the display of null values in tables have been fixed.
+  * Crashing errors when cleaning up directories during archive download, when
+    forwarding cancellations during multiprocessing, when just downloading
     archives with multiprocessing, and when the archive already contains the
-    requested statistics.
-  * Fix name of statistics file in tool help.
+    requested statistics have been fixed.
 
 
 ## v0.5.0 (July 28, 2025)
