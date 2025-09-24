@@ -16,8 +16,8 @@ from .model import (
     Config, Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
 )
 from .pool import (
-    Cancelled, check_not_cancelled, ErrorTrace, ErrorTraceFactory, Pool, Task,
-    WorkerProgress
+    Cancelled, check_not_cancelled, determine_worker_status, ErrorTrace,
+    ErrorTraceFactory, Pool, Task, WorkerProgress
 )
 from .processor import is_distilled, prepare_statistics, Processor
 from .progress import NO_PROGRESS, Progress
@@ -252,7 +252,8 @@ class Multiprocessor:
 
     def _done_with_task(self, task: Task, future: Future) -> None:
         assert self._pool is not None
-        tag, result = future.result()
+        tag, result, worker_status = future.result()
+        self._pool.report_worker_status(worker_status)
 
         # Retrying the same or the next release on errors probably will fail
         # again. Hence we fail fast on all error conditions.
@@ -269,22 +270,23 @@ class Multiprocessor:
                 )
             raise result
 
+        metadata_entry, stats = result
         if task.kwargs["task"] == "download":
             pass
         elif task.kwargs["task"] == "distill":
-            release = self._update_metadata(result)
+            release = self._update_metadata(metadata_entry)
             assert task.kwargs["release"] == release
 
             # If distill was scheduled as part of summarize, schedule summarization
             if self._task == "summarize-extract":
                 self._continuations.append(release)
         elif task.kwargs["task"].startswith("summarize"):
-            if result[0] is not None:
-                release = self._update_metadata(result[0])
+            if metadata_entry is not None:
+                release = self._update_metadata(metadata_entry)
                 assert task.kwargs["release"] == release
 
             # The coordinator can safely update its own staging area
-            result[1].write(
+            stats.write(
                 self._storage.staging_root / f"{self.stem}.stats",
                 should_finalize=True,
             )
@@ -373,19 +375,19 @@ def run_on_worker(
             'returning result for task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID
         )
-        return "value", result
+        return "value", result, determine_worker_status()
     except Cancelled as x:
         _logger.warning(
             'cancelled task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID
         )
-        return "cancel", x.args
+        return "cancel", x.args, determine_worker_status()
     except MissingPlatformError as x:
         _logger.warning(
             'missing platform names in task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID
         )
-        return "platforms", x.args
+        return "platforms", x.args, determine_worker_status()
     except Exception as x:
         _logger.error(
             'unexpected error in task="%s", release="%s", filter="%s", worker=%d',
@@ -393,7 +395,7 @@ def run_on_worker(
         )
         # Sleep for a spell so that the coordinator can catch up with logging.
         time.sleep(1)
-        return "error", ErrorTraceFactory(x)
+        return "error", ErrorTraceFactory(x), determine_worker_status()
     finally:
         log_max_rss(release.id)
 
@@ -429,10 +431,10 @@ def _run_on_worker(
     )
     if task == "download":
         processor.download_archive(release)
-        result = None
+        result = None, None
     elif task == "distill":
         processor.distill_release(release)
-        result = metadata[release] | dict(release=release)
+        result = metadata[release] | dict(release=release), None
     elif task == "summarize-all":
         stats = processor.summarize_full_release(release)
         result = metadata[release] | dict(release=release), stats

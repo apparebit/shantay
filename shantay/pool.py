@@ -28,13 +28,19 @@ over to its own root logger's handlers.
 
 If a task uses an instance of `WorkerProgress`, which has the exact same
 interface as `Progress`, invocations are automatically forwarded to the
-coordinator, which display one progress line per worker.
+coordinator, which displays one progress line per worker.
 
 After a call to `finish()`, the pool will not schedule any new tasks, even if
 they are available. After a call to `stop()`, it tries to cooperatively cancel
 workers' tasks by communicating the signal to workers. Thereafter, a worker's
 `is_cancelled()` returns `True` and a task should wind down by raising a
 `Cancelled` exception.
+
+Each worker process is only used for processing some fixed number of tasks. To
+correctly maintain its internal state, `Pool`'s client must invoke
+`determine_worker_status` upon completion of each task in a worker, recording
+the result, and then invoke `Pool.report_worker_status` in the coordinator,
+providing said result.
 """
 from collections.abc import Iterator, Mapping, Sequence
 from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
@@ -49,13 +55,14 @@ import sys
 import threading
 import traceback
 from types import TracebackType
-from typing import Any, Callable, Self
+from typing import Any, Callable, Literal, Self
 import uuid
 
 from .progress import Progress
 
 
 _PID = os.getpid()
+_MAX_TASKS = 180
 _PROGRESS = ["activity", "start", "step", "perform"]
 _logger = logging.getLogger(__name__)
 
@@ -133,7 +140,14 @@ class Pool:
             max_workers=size,
             mp_context = context,
             initializer=_initialize_worker,
-            initargs=(self._status_queue, self._cancel_queue, log_level, self.id),
+            initargs=(
+                self._status_queue,
+                self._cancel_queue,
+                log_level,
+                self.id,
+                _MAX_TASKS
+            ),
+            max_tasks_per_child=_MAX_TASKS,
         )
 
         self._done = threading.Event()
@@ -235,6 +249,15 @@ class Pool:
 
             _logger.debug('done processing tasks in pool="%s"', self._id)
 
+    def report_worker_status(self, status: None | tuple[str, int]) -> None:
+        """Invoke this method upon receiving a status update from worker."""
+        if status is None:
+            return
+
+        label, pid = status
+        if label == "last":
+            del self._index_table[pid]
+
     def finish(self) -> None:
         """
         Run already accepted tasks but reject new ones, shutting down upon
@@ -316,12 +339,19 @@ class _IndexTable:
     """
     A table mapping process IDs to indexes between 0 and some maximum size.
     """
-
+    # The implementation actually maintains a table of exactly double the
+    # maximum size, i.e., allows for two process IDs to share the same index.
+    # That ensures index availability even during times of transition from one
+    # worker to another, which is not an instantaneous event but subject to
+    # delays etc. This does assume, however, that two processes overlap only for
+    # a duration that is significantly smaller than the usual lifetime of a
+    # worker.
     def __init__(self, size: int) -> None:
         self._lock = threading.Lock()
         self._table = {}
         self._worker_pids = set()  # all worker PIDs
-        self._slots = (1 << size) - 1
+        # Create a number with (2 * size) ones serving as allocation bitmap
+        self._slots = (1 << (2 * size)) - 1
         self._size = size  # do not change
 
     @property
@@ -330,20 +360,24 @@ class _IndexTable:
 
     @property
     def workers(self) -> set[int]:
-        return self._worker_pids
+        with self._lock:
+            return self._worker_pids
 
-    def sync(self) -> None:
+    def sync(self) -> int:
         """
         Synchronize this table with the list of known subprocesses. This method
         removes any entry with a process ID that is not a child process. It does
         *not* add any mappings.
         """
+        count = 0
         with self._lock:
             active = frozenset((p.pid for p in mp.active_children()))
             # Copy the keys into a list since we may update the table.
             for pid in list(self._table.keys()):
                 if pid not in active:
                     self._deallocate(pid)
+                    count += 1
+        return count
 
     def setdefault(self, pid: int) -> int:
         """
@@ -351,7 +385,8 @@ class _IndexTable:
         this method adds one using the next available index.
         """
         with self._lock:
-            return self._table[pid] if pid in self._table else self._allocate(pid)
+            raw_index = self._table[pid] if pid in self._table else self._allocate(pid)
+            return raw_index % self._size
 
     def __contains__(self, pid: int) -> bool:
         """Determine whether the PID is included in the table."""
@@ -361,12 +396,13 @@ class _IndexTable:
     def __getitem__(self, pid: int) -> int:
         """Look up the ID's index."""
         with self._lock:
-            return self._table[pid]
+            return self._table[pid] % self._size
 
     def __delitem__(self, pid: int) -> None:
         """Delete an ID from this table, making the index available again."""
         with self._lock:
-            self._deallocate(pid)
+            if pid in self._table:
+                self._deallocate(pid)
 
     def _allocate(self, pid: int) -> int:
         slots = self._slots
@@ -594,6 +630,7 @@ def _initialize_worker(
     cancel_queue: mp.SimpleQueue,
     log_level: int,
     pool_id: str,
+    max_tasks: None | int,
 ) -> None:
     global _status_queue, _terminator
     status_queue._reader.close() # pyright: ignore[reportAttributeAccessIssue]
@@ -646,3 +683,18 @@ def _send_status_update(cmd: str, *args: Any) -> bool:
             'failed writing to queue="status", worker=%d', _PID, exc_info=x
         )
         return False
+
+
+_task_count = 0
+
+def determine_worker_status() -> None | tuple[Literal["first", "last"], int]:
+    """Invoke in worker process upon completion of a task."""
+    global _task_count
+    _task_count += 1
+
+    if _task_count == 1:
+        return "first", _PID
+    elif _task_count < _MAX_TASKS:
+        return None
+    else:
+        return "last", _PID
