@@ -20,6 +20,7 @@ from .pool import (
     WorkerProgress
 )
 from .processor import is_distilled, prepare_statistics, Processor
+from .progress import NO_PROGRESS, Progress
 from .schema import MissingPlatformError, update_platforms
 from .stats import Statistics
 
@@ -39,6 +40,8 @@ class Multiprocessor:
         coverage: ReleaseRange[Daily],
         config: Config,
         metadata: Metadata,
+        # This argument only exists for compatibility with Processor
+        progress: Progress = NO_PROGRESS,
     ) -> None:
         self._dataset = dataset
         self._storage = storage
@@ -90,7 +93,7 @@ class Multiprocessor:
         start_time = time.time()
 
         if task not in ("download", "distill", "summarize-all", "summarize-extract"):
-            raise ValueError(f"invalid task {task}")
+            raise ValueError(f"invalid task {task} for multiprocessing")
         if task.startswith("summarize"):
             self._pre_existing_stats = prepare_statistics(
                 self.stem, self._storage, self._config

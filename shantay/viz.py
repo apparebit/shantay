@@ -21,6 +21,7 @@ from .metadata import Metadata
 from .model import (
     Config, ConfigError, file_stem_for, Filter, FilterKind, ReleaseRange, Storage
 )
+from .progress import NO_PROGRESS, Progress
 from .schema import (
     AccountTypeMetric, AutomatedDecisionMetric, AutomatedDetectionMetric,
     ContentLanguageMetric, CategoryMetric, ContentTypeMetric, DecisionAccountMetric,
@@ -324,6 +325,7 @@ class Visualizer:
         with_interaction: bool = False,
         with_notebook: bool = False,
         with_platforms: None | Sequence[str] = None,
+        progress: Progress = NO_PROGRESS,
     ) -> None:
         self._storage = storage
         self._coverage = coverage
@@ -344,6 +346,10 @@ class Visualizer:
         self._section_num = 0
         self._chart_num = 0
         self._is_meta = False
+        self._progress = (
+            # This class prints lots of text to console at verbosity level 2
+            progress if config.progress and config.verbose < 2 else NO_PROGRESS
+        )
 
     @property
     def timeline_width(self) -> int | str:
@@ -513,6 +519,13 @@ class Visualizer:
 
     def run(self) -> pl.DataFrame:
         """Run this visualizer and return the underlying statistics."""
+        self._progress.activity(
+            "preparing to generate report...",
+            "generating report",
+            "platform",
+            with_rate=False,
+        )
+
         self._configure_display()
         shutil.rmtree(self._chart_dir, ignore_errors=True)
         self._chart_dir.mkdir(parents=True, exist_ok=True)
@@ -527,9 +540,11 @@ class Visualizer:
                 self._render_charts()
                 self._render_tables()
                 document.write(_DOC_FOOTER)
+                self._progress.step(len(self._top_platforms) + 1)
             finally:
                 self._document = None
 
+        self._progress.done()
         return self._statistics.frame()
 
     def _configure_display(self) -> None:
@@ -547,9 +562,6 @@ class Visualizer:
             path = self._storage.best_root / f"{self._metadata.stem}.parquet"
             statistics = Statistics.read(path)
 
-        _logger.info('using statistics file="%s"', path)
-
-        # Capture frequency, tags, date range
         self._frequency = self._coverage.frequency
         self._tags = get_tags(statistics.frame())
         if statistics.is_empty():
@@ -566,6 +578,63 @@ class Visualizer:
         )
         if self._statistics.frame().height == 0:
             raise ConfigError("cannot visualize less than a full month of data")
+
+        _logger.info('using statistics file="%s"', path)
+
+        # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
+        # Do platform selection ASAP to initialize progress bar
+        _logger.debug("select platforms for inclusion in report")
+
+        # Handle explicitly requested platforms and extract with limited platforms
+        filter = self._metadata.filter
+        if 0 < len(self._with_platforms):
+            # Special case: Explicitly requested platforms
+            self._meta = Statistics(f"{self._metadata.stem}.parquet")
+            self._top_platforms = self._with_platforms
+            self._progress.start(len(self._top_platforms) + 1)
+
+        elif filter is not None and filter.kind is FilterKind.PLATFORM:
+            # Special case: Platforms were filtered already
+            self._meta = Statistics(f"{self._metadata.stem}.parquet")
+            self._top_platforms = filter.criterion if 1 < len(filter.criterion) else []
+            self._progress.start(len(self._top_platforms) + 1)
+
+        else:
+            # Goal: Show top_num platforms in addition to Meta's and select platforms
+            top_num = 5
+            select_platforms = ("TikTok", "X", "YouTube")
+
+            # Line up top_num + len(Meta platforms) + len(select platforms):
+            # Even if we remove len(Meta platforms) + len(select platforms)
+            # again, we still end up with top_num platforms!
+            top = self._statistics.frame().lazy().filter(
+                predicate("rows", entity=None)
+            ).group_by(
+                pl.col("platform")
+            ).agg(
+                pl.col("count").sum()
+            ).sort(
+                "count", descending=True, maintain_order=True
+            ).head(
+                # Thanks to the len(...) terms, this selection must contain at least
+                # top_num platforms in addition to Meta's and select platforms.
+                top_num + len(MetaPlatforms) + len(select_platforms)
+            ).collect(
+            ).get_column(
+                "platform"
+            ).to_list()
+
+            # Remove redundant platforms from top_num list
+            preselected = set((*MetaPlatforms, *select_platforms))
+            for platform in top:
+                if platform in preselected:
+                    del top[top.index(platform)]
+
+            # Compose complete list
+            self._top_platforms = (
+                top[:top_num] + ["Meta", *MetaPlatforms, *select_platforms]
+            )
+            self._progress.start(len(self._top_platforms) + 1)
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
         # Determine keyword ranking
@@ -588,38 +657,12 @@ class Visualizer:
         )
 
         # ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~ ~
-        _logger.debug("select platforms for inclusion in report")
-
-        # Handle explicitly requested platforms and extract with limited platforms
-        filter = self._metadata.filter
-        if 0 < len(self._with_platforms):
-            self._meta = Statistics(f"{self._metadata.stem}.parquet")
-            self._top_platforms = self._with_platforms
-            return
-        if filter is not None and filter.kind is FilterKind.PLATFORM:
-            self._meta = Statistics(f"{self._metadata.stem}.parquet")
-            self._top_platforms = filter.criterion if 1 < len(filter.criterion) else []
-            return
-
-        meta_data = self._statistics.frame().filter(
-            pl.col("platform").is_in(MetaPlatforms)
-        )
-
-        main_tag = self._tags[0]
-        base_filter = (
-            pl.col("tag").is_null() if main_tag is None else pl.col("tag").eq(main_tag)
-        )
-
-        meta_platforms = []
-        for platform in MetaPlatforms:
-            if 0 < meta_data.filter(
-                base_filter.and_(pl.col("platform").eq(platform))
-            ).height:
-                meta_platforms.append(platform)
-
+        _logger.debug('aggregate Meta\'s statistics')
         self._meta = Statistics(
             f"{self._metadata.stem}-meta.parquet",
-            meta_data.group_by(
+            self._statistics.frame().filter(
+                pl.col("platform").is_in(MetaPlatforms)
+            ).group_by(
                 pl.col(
                     "start_date", "end_date",
                     "tag", "category", "column", "entity", "variant", "text"
@@ -629,37 +672,6 @@ class Visualizer:
                 pl.lit(None, dtype=PlatformValueType).alias("platform"),
                 *aggregates()
             )
-        )
-
-        # We want to show top_num platforms in addition to Meta's and selected ones
-        top_num = 5
-        select_platforms = ("TikTok", "X", "YouTube")
-
-        top = self._statistics.frame().lazy().filter(
-            predicate("rows", entity=None)
-        ).group_by(
-            pl.col("platform")
-        ).agg(
-            pl.col("count").sum()
-        ).sort(
-            "count", descending=True, maintain_order=True
-        ).head(
-            # Thanks to the len(...) terms, this selection must contain at least
-            # top_num platforms in addition to Meta's and select platforms.
-            top_num + len(MetaPlatforms) + len(select_platforms)
-        ).collect(
-        ).get_column(
-            "platform"
-        ).to_list()
-
-        # Remove Meta's platforms, leaving at least top_num non-Meta platforms
-        for platform in [*meta_platforms, *select_platforms]:
-            if platform in top:
-                del top[top.index(platform)]
-
-        # Compose complete list
-        self._top_platforms = (
-            top[:top_num] + ["Meta", *meta_platforms, *select_platforms]
         )
 
     def _render_head(self) -> str:
@@ -999,7 +1011,8 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
                 file_stem_for(tag), tag=tag
             )
 
-        for platform in self._top_platforms:
+        for index, platform in enumerate(self._top_platforms):
+            self._progress.step(index + 1, extra=f"handling {platform}")
             self._render_platform(platform)
 
     def _render_platform(self, platform: str) -> None:

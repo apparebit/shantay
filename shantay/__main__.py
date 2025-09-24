@@ -147,6 +147,7 @@ supported tasks:
     )
     group.add_argument(
         "-v", "--verbose",
+        default=0,
         action="count",
         help="enable verbose console output and logging (optional; may be repeated)",
     )

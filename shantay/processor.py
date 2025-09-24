@@ -922,6 +922,7 @@ class Processor[R: Release]:
             with_interaction=self._config.interactive_report,
             with_clamped_outliers=self._config.clamp_outliers,
             with_platforms=self._config.platforms,
+            progress=self._progress,
         ).run()
 
 

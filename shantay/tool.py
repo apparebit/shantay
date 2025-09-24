@@ -20,6 +20,7 @@ from .model import (
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
+from .progress import NO_PROGRESS, Progress
 from .schema import MissingPlatformError, PlatformLookupTable, StatementCategory
 from .stats import Statistics
 from .util import scale_time
@@ -227,10 +228,12 @@ def get_configuration(
         range = date_range.dailies()
 
     # Handle --workers
-    if options.workers < 1:
-        raise ConfigError(f"worker number must be positive but is {options.workers}")
+    if options.workers < 0:
+        raise ConfigError(
+            f"worker number must be non-negative but is {options.workers}"
+        )
     if options.task in ("info", "recover", "visualize") or storage.archive_root is None:
-        options.workers = 1
+        options.workers = 0
 
     if options.interactive_report and options.task != "visualize":
         raise ConfigError("please only use --interactive-report with `visualize` task")
@@ -239,7 +242,7 @@ def get_configuration(
 
     # Instantiate the config object
     config = Config.of(
-        progress=True,
+        progress="CI" not in os.environ, # Do not show progress bar in CI
         platforms=platforms,
         **{n: getattr(options, n) for n in CONFIG_OPTIONS}
     )
@@ -290,6 +293,7 @@ def _run(options: Any) -> None:
         coverage=range,
         config=config,
         metadata=metadata,
+        progress=Progress() if config.progress else NO_PROGRESS,
     )
     frame = processor.run(task)
 
