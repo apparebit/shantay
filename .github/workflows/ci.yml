@@ -40,9 +40,7 @@ jobs:
       run: uv run runtest.py
 
     - name: Build Wheel
-      run: |
-        uv build --wheel
-        echo "WHEEL_NAME=$(ls dist/*.whl | cut -c 6-)" >> $GITHUB_ENV
+      run: uv build --wheel
 
     - name: Upload Wheel
       uses: actions/upload-artifact@v4
@@ -50,9 +48,35 @@ jobs:
         name: shantay
         path: dist
 
+  report:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+    - name: Set Up UV incl. Python
+      uses: astral-sh/setup-uv@v6
+      with:
+        enable-cache: true
+        python-version: 3.12
+
+    - name: Create Venv
+      run: |
+        uv venv
+        mkdir dist
+
+    - name: Download Wheel
+      uses: actions/download-artifact@v5
+      with:
+        name: shantay
+        path: dist
+
+    - run: echo "WHEEL_NAME=$(find dist/*.whl | tail -n 1 | cut -c 6-)" >> "$GITHUB_ENV"
+
+    - name: Install Wheel
+      run: uv pip install "./dist/$WHEEL_NAME"
+
     - name: Generate Report
       run: |
-        python "dist/$WHEEL_NAME/shantay" visualize
+        python -m shantay visualize
         mkdir reports
         mv dsa-db-staging/builtin.html reports/db.html
 
@@ -64,7 +88,7 @@ jobs:
         path: reports/
 
   deploy:
-    needs: build
+    needs: [build, report]
     permissions:
       pages: write
       id-token: write
