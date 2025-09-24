@@ -662,6 +662,7 @@ CONFIG_OPTIONS = [
     "stratify_all_text",
     "offline",
     "workers",
+    "verbose",
     "interactive_report",
     "clamp_outliers",
 ]
@@ -675,6 +676,7 @@ class Config:
     offline: bool = False
     workers: int = 0
     progress: bool = False
+    verbose: int = 0
 
     # DB Extract
     platforms: None | tuple[str, ...] = None
@@ -693,6 +695,7 @@ class Config:
             "offline": False,
             "workers": 0,
             "progress": False,
+            "verbose": 0,
             "platforms": None,
             "stratify_by_category": False,
             "stratify_all_text": False,

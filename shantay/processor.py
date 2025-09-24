@@ -739,7 +739,7 @@ class Processor[R: Release]:
         shutil.rmtree(self._storage.staging_root / release.parent_directory)
 
         latency = time.time() - start_time
-        _logger.debug(
+        _logger.info(
             'summarized release="%s", filter="%s", latency=%.3f, unit="sec"',
             release.id, filter or "", latency
         )
@@ -883,7 +883,7 @@ class Processor[R: Release]:
                 shutil.rmtree(self._storage.staging_root / release.temp_directory)
 
                 latency = time.time() - start_time
-                _logger.debug(
+                _logger.info(
                     'summarized batch file="%s", latency=%.3f, unit="sec"',
                     name, latency
                 )

@@ -49,6 +49,9 @@ jobs:
         path: dist
 
   report:
+    # This job scratches two itches: First, it automatically recreates the full
+    # transparency database report. Second, it tests that the generated wheel
+    # actually works.
     needs: build
     runs-on: ubuntu-latest
     steps:

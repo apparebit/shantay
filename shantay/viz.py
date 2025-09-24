@@ -207,7 +207,7 @@ _logger = logging.getLogger(__spec__.parent)
 
 type _ChartT = alt.Chart | alt.LayerChart | alt.VConcatChart
 
-class _Renderer(metaclass=ABCMeta):
+class _SilentRenderer:
 
     def __init__(self, charts: Path) -> None:
         self._charts = charts
@@ -217,29 +217,28 @@ class _Renderer(metaclass=ABCMeta):
         return self._charts
 
     @property
-    @abstractmethod
-    def plain(self) -> bool: ...
+    def plain(self) -> bool:
+        return True
 
-    @abstractmethod
-    def html(self, markup: str) -> None: ...
+    def html(self, markup: str) -> None:
+        pass
 
-    @abstractmethod
-    def md(self, markdown: str) -> None: ...
+    def md(self, markdown: str) -> None:
+        pass
 
-    @abstractmethod
-    def frame(self, frame: pl.DataFrame) -> None: ...
+    def frame(self, frame: pl.DataFrame) -> None:
+        pass
 
-    @abstractmethod
-    def chart(self, name: str, chart: str | _ChartT) -> None: ...
+    def chart(self, name: str, chart: str | _ChartT) -> None:
+        if isinstance(chart, str):
+            (self._charts / name).write_text(chart, encoding="utf8")
+        else:
+            chart.save(self._charts / name)
 
 
 _TAG = re.compile(r"<[^>]+>")
 
-class _PlainTextRenderer(_Renderer):
-
-    @property
-    def plain(self) -> bool:
-        return True
+class _PlainTextRenderer(_SilentRenderer):
 
     def html(self, markup: str) -> None:
         print(_TAG.sub("", markup))
@@ -253,11 +252,6 @@ class _PlainTextRenderer(_Renderer):
         print(frame)
         print()
 
-    def chart(self, name: str, chart: str | _ChartT) -> None:
-        if isinstance(chart, str):
-            (self._charts / name).write_text(chart, encoding="utf8")
-        else:
-            chart.save(self._charts / name)
 
 display = HTML = Markdown = None
 try:
@@ -269,7 +263,7 @@ except ImportError:
 if display is None:
     _NotebookRenderer = None # pyright: ignore[reportAssignmentType]
 else:
-    class _NotebookRenderer(_Renderer):
+    class _NotebookRenderer(_SilentRenderer):
 
         @property
         def plain(self) -> bool:
@@ -286,10 +280,7 @@ else:
 
         def chart(self, name: str, chart: str | _ChartT) -> None:
             display(chart) # pyright: ignore[reportOptionalCall]
-            if isinstance(chart, str):
-                (self._charts / name).write_text(chart, encoding="utf8")
-            else:
-                chart.save(self._charts / name)
+            super().chart(name, chart)
 
 
 # --------------------------------------------------------------------------------------
@@ -344,8 +335,10 @@ class Visualizer:
         self._chart_dir = storage.staging_root / "charts" / metadata.stem
         if with_notebook:
             self._renderer = _NotebookRenderer(self._chart_dir)
-        else:
+        elif 2 <= config.verbose:
             self._renderer = _PlainTextRenderer(self._chart_dir)
+        else:
+            self._renderer = _SilentRenderer(self._chart_dir)
         self._timelines = False
         self._timestamp = dt.datetime.now()
         self._section_num = 0

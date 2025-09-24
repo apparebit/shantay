@@ -121,9 +121,9 @@ supported tasks:
     )
     group.add_argument(
         "--workers",
-        default=1,
+        default=0,
         type=int,
-        help="use the given number of worker processes (default: 1)",
+        help="use the given number of worker processes (default: 0)",
     )
 
     group = parser.add_argument_group("output")
@@ -132,12 +132,6 @@ supported tasks:
         default="shantay.log",
         type=Path,
         help="set file receiving log output (default: `./shantay.log`)",
-    )
-    group.add_argument(
-        "--quiet",
-        dest="verbose",
-        action="store_false",
-        help="disable verbose logging (optional)",
     )
     group.add_argument(
         "--interactive-report",
@@ -151,12 +145,10 @@ supported tasks:
         help="if one or two months have more SoRs than the rest, clamp "
         "those outliers"
     )
-
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        help="print detailed information about tool execution to the console, "
-        "including for Pola.rs"
+    group.add_argument(
+        "-v", "--verbose",
+        action="count",
+        help="enable verbose console output and logging (optional; may be repeated)",
     )
 
     parser.add_argument(
@@ -181,11 +173,12 @@ def main(argv: None | Sequence[str] = None) -> int:
         parser.print_help()
         sys.exit(1)
 
-    if options.debug:
+    if 3 <= options.verbose:
         os.environ["SHANTAY_DEBUG"] = "pool"
         os.environ["POLARS_VERBOSE"] = "1"
         level = logging.NOTSET
-    elif options.verbose:
+    # Level 2 enables console output during visualization
+    elif options.verbose == 1:
         level = logging.DEBUG
     else:
         level = logging.INFO

@@ -89,7 +89,9 @@ def get_configuration(
     storage = Storage(
         archive_root=options.archive,
         extract_root=options.extract,
-        staging_root=options.staging if options.staging else Path.cwd() / "dsa-db-staging",
+        staging_root=(
+            options.staging if options.staging else Path.cwd() / "dsa-db-staging"
+        )
     )
 
     # Acquire lock file
@@ -212,7 +214,8 @@ def get_configuration(
         last = dt.date.fromisoformat(options.last)
         if latest < last:
             raise ConfigError(
-                f"{last.isoformat()} is later than last possible date {latest.isoformat()}"
+                f"{last.isoformat()} is later than last "
+                f"possible date {latest.isoformat()}"
             )
     else:
         last = latest
@@ -281,28 +284,14 @@ def _run(options: Any) -> None:
         else:
             task = "summarize-extract"
 
-    if 1 < config.workers:
-        dataset = StatementsOfReasons()
-        # Since the multiprocessor doesn't do `visualize`, there is no need for
-        # stat_source either
-        processor = Multiprocessor(
-            dataset=dataset,
-            storage=storage,
-            coverage=range,
-            config=config,
-            metadata=metadata,
-        )
-        frame = processor.run(task)
-    else:
-        # Processor uses an analysis context as necessary internally.
-        processor = Processor(
-            dataset=StatementsOfReasons(),
-            storage=storage,
-            coverage=range,
-            config=config,
-            metadata=metadata,
-        )
-        frame = processor.run(task)
+    processor = (Processor if config.workers == 0 else Multiprocessor)(
+        dataset=StatementsOfReasons(),
+        storage=storage,
+        coverage=range,
+        config=config,
+        metadata=metadata,
+    )
+    frame = processor.run(task)
 
     if options.task == "summarize":
         assert frame is not None
