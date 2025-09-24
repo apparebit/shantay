@@ -27,26 +27,52 @@ jobs:
         cache: "npm"
     - run: npm ci
 
-    - name: Set Up Python
-      uses: actions/setup-python@v5
+    - name: Set Up UV incl. Python
+      uses: astral-sh/setup-uv@v6
       with:
-        python-version: "3.12"
-        cache: "pip"
+        enable-cache: true
+        python-version: 3.12
 
-    - name: Install Package and Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install --editable .
-        pip install --group dev
+    - name: Install Dependencies
+      run: uv sync
 
     - name: Run Checks
-      run: python runtest.py
+      run: uv run runtest.py
 
     - name: Build Wheel
-      run: flit build --format wheel
+      run: |
+        uv build --wheel
+        echo "WHEEL_NAME=$(ls dist/*.whl | cut -c 6-)" >> $GITHUB_ENV
 
     - name: Upload Wheel
       uses: actions/upload-artifact@v4
       with:
         name: shantay
         path: dist
+
+    - name: Generate Report
+      run: |
+        python "dist/$WHEEL_NAME/shantay" visualize
+        mkdir reports
+        mv dsa-db-staging/builtin.html reports/db.html
+
+    - name: Upload Report
+      id: deployment
+      uses: actions/upload-pages-artifact@v4
+      with:
+        name: github-pages
+        path: reports/
+
+  deploy:
+    needs: build
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+    - name: Deploy to GitHub Pages
+      id: deployment
+      uses: actions/deploy-pages@v4
