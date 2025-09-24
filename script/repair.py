@@ -77,7 +77,7 @@ class Repair:
                 self.error(x.args[0])
                 self._redistill.append(release)
 
-            batch_count = batch_rows = batch_kw_rows = 0
+            batch_count = extract_rows = extract_kw_rows = 0
             for path in directory.glob(release.batch_glob):
                 rows, kw_rows = pl.scan_parquet(path).select(
                     pl.len()
@@ -89,17 +89,17 @@ class Repair:
                 ).collect().row(0)
 
                 batch_count += 1
-                batch_rows += rows
-                batch_kw_rows += kw_rows
+                extract_rows += rows
+                extract_kw_rows += kw_rows
 
             md_entry["batch_count"] = batch_count
-            md_entry["batch_rows"] = batch_rows
-            md_entry["batch_rows_with_keywords"] = batch_kw_rows
+            md_entry["extract_rows"] = extract_rows
+            md_entry["extract_rows_with_keywords"] = extract_kw_rows
             extract_metadata[release] = md_entry
             extract_metadata.write_json(self._storage.staging_root / metadata_file)
             _logger.info(
                 'release %s has %d batches with %d rows and %d rows with keywords',
-                release, batch_count, batch_rows, batch_kw_rows
+                release, batch_count, extract_rows, extract_kw_rows
             )
 
         return extract_metadata

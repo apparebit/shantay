@@ -64,6 +64,9 @@ class TestSummarize(TestCase):
 
         processor.run("summarize-all")
 
+        # Preserve a copy to simplify updating the fixture when warranted
+        shutil.copy(storage.staging_root / "db.parquet", TMP)
+
         self.validate_db_summary()
         _logger.info('completed test for runner="Processor", task="summarize-all"')
 
@@ -128,6 +131,9 @@ class TestSummarize(TestCase):
         )
 
         processor.run("summarize-extract")
+
+        # Preserve a copy to simplify updating the fixture when warranted
+        shutil.copy(storage.staging_root / "protection-of-minors.parquet", TMP)
 
         self.validate_extract_summary()
         _logger.info('completed test for runner="Processor", task="summarize-extract"')
