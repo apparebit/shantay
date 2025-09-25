@@ -27,7 +27,7 @@ jobs:
         cache: "npm"
     - run: npm ci
 
-    - name: Set Up UV incl. Python
+    - name: Set Up UV and Python
       uses: astral-sh/setup-uv@v6
       with:
         enable-cache: true
@@ -55,7 +55,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
-    - name: Set Up UV incl. Python
+    - name: Set Up UV and Python
       uses: astral-sh/setup-uv@v6
       with:
         enable-cache: true
@@ -72,10 +72,13 @@ jobs:
         name: shantay
         path: dist
 
-    - run: echo "WHEEL_NAME=$(find dist/*.whl | tail -n 1 | cut -c 6-)" >> "$GITHUB_ENV"
+    - name: Determine Wheel Name
+      run: echo "WHEEL_NAME=$(find dist/*.whl | tail -n 1 | cut -c 6-)" >> "$GITHUB_ENV"
 
     - name: Install Wheel
-      run: uv pip install "./dist/$WHEEL_NAME"
+      run: |
+        echo "Installing $WHEEL_NAME"
+        uv pip install "./dist/$WHEEL_NAME"
 
     - name: Generate Report
       run: |
