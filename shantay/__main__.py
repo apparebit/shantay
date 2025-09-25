@@ -56,7 +56,15 @@ supported tasks:
   `protection-of-minors.parquet` stores statistics for the
   `STATEMENT_CATEGORY_PROTECTION_OF_MINORS` category. The corresponding
   metadata is stored in a JSON file in the same directory. The same naming
-  convention applies to the JSON metadata and HTML visualizations.\
+  convention applies to the JSON metadata and HTML visualizations.
+
+  `-v` or `--verbose` may be repeated, with the number of verbose options
+   controlling message volume for both console and log:
+
+    - Level 0 logs `INFO`, `WARNING`, and `ERROR` messages. It prints status
+      updates to standard error in CI and otherwise shows progress bars.
+    - Level 1 logs `DEBUG` messages, too.
+    - Level 2 prints detailed tracing information to the console.\
         """
     )
 
@@ -174,11 +182,10 @@ def main(argv: None | Sequence[str] = None) -> int:
         parser.print_help()
         sys.exit(1)
 
-    if 3 <= options.verbose:
+    if 2 <= options.verbose:
         os.environ["SHANTAY_DEBUG"] = "pool"
         os.environ["POLARS_VERBOSE"] = "1"
         level = logging.NOTSET
-    # Level 2 enables console output during visualization
     elif options.verbose == 1:
         level = logging.DEBUG
     else:

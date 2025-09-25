@@ -20,7 +20,7 @@ from .model import (
 )
 from .multiprocessor import Multiprocessor
 from .processor import Processor
-from .progress import NO_PROGRESS, Progress
+from .progress import NO_PROGRESS, LinePrinter, Progress
 from .schema import MissingPlatformError, PlatformLookupTable, StatementCategory
 from .stats import Statistics
 from .util import scale_time
@@ -242,7 +242,7 @@ def get_configuration(
 
     # Instantiate the config object
     config = Config.of(
-        progress="CI" not in os.environ, # Do not show progress bar in CI
+        progress=True,
         platforms=platforms,
         **{n: getattr(options, n) for n in CONFIG_OPTIONS}
     )
@@ -277,6 +277,15 @@ def _run(options: Any) -> None:
         fsck(storage.the_extract_root)
         return
 
+    # Determine the progress tracker
+    if not config.progress:
+        progress = NO_PROGRESS
+    elif 2 <= options.verbose or "CI" in os.environ:
+        # Level 2 prints a lot, which makes a progress bar difficult to render
+        progress = LinePrinter()
+    else:
+        progress = Progress()
+
     # Internally, we distinguish between two plus versions of summarize
     task = options.task
     if task == "summarize":
@@ -293,7 +302,7 @@ def _run(options: Any) -> None:
         coverage=range,
         config=config,
         metadata=metadata,
-        progress=Progress() if config.progress else NO_PROGRESS,
+        progress=progress,
     )
     frame = processor.run(task)
 
