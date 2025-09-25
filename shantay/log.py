@@ -17,10 +17,21 @@ from typing import cast, Literal, Self, TextIO
 from .model import Release
 
 
-COMMA_SPACE = re.compile(r",\s+")
-DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
-BATCH = re.compile(r"(?<=-full-)[0-9]{5}")
-RULE = re.compile(r"^▁+$")
+_KEY_VALUE = re.compile(
+    r"""
+    (?P<key> [-_a-zA-Z0-9]+)
+    [=]
+    (?P<value>
+        [_0-9]+ ([.][0-9]+)?
+        | ["] [^"]* ["]
+    )
+    ([,] \s*)?
+    """,
+    re.VERBOSE
+)
+
+_DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
+_BATCH = re.compile(r"(?<=-full-)[0-9]{5}")
 
 
 class NoArgument:
@@ -40,29 +51,25 @@ class LogMessage:
     @classmethod
     def parse(cls, s: str) -> Self:
         """Parse the log message."""
+        if "=" not in s:
+            return cls(s, {})
+
         prefix = None
+
+        t = s[:s.index("=")]
+        if " " in t:
+            cut = t.rindex(" ")
+            prefix = t[:cut].strip()
+            s = s[cut + 1:]
+
         props = {}
-
-        parts = COMMA_SPACE.split(s.strip())
-        for index, part in enumerate(parts):
-            key, sep, value = part.partition("=")
-            if sep == '':
-                if index != 0 or len(parts) != 1:
-                    raise ValueError(f'malformed log message "{s}"')
-                key = key.strip()
-                if key:
-                    prefix = key
-                break
-
-            if index == 0:
-                fix, _, key = key.rpartition(" ")
-                fix = fix.strip()
-                if fix:
-                    prefix = fix
+        pos = 0
+        while (match := _KEY_VALUE.match(s, pos)) is not None:
+            pos = match.end(0)
+            key = match.group("key")
+            value = match.group("value")
 
             if value.startswith('"'):
-                if not value.endswith('"'):
-                    raise ValueError(f"malformed key, value '{part}'")
                 value = value[1:-1]
 
                 if value == "":
@@ -99,7 +106,7 @@ class LogMessage:
         if "release" in self:
             return Release.of(cast(str, self.props["release"]))
         if "file" in self:
-            date = DATE.search(cast(str, self.props["file"]))
+            date = _DATE.search(cast(str, self.props["file"]))
             if date is not None:
                 return Release.of(date.group(0))
 
@@ -112,7 +119,7 @@ class LogMessage:
         if "file-count" in self:
             return cast(int, self.props["file-count"])
         if "file" in self:
-            batch = BATCH.search((cast(str, self.props["file"])))
+            batch = _BATCH.search((cast(str, self.props["file"])))
             if batch is not None:
                 return int(batch.group(0))
 
@@ -399,10 +406,10 @@ class TimeSeriesEntry:
         workers = {}
         latest_release = {}
 
-        for index, entry in enumerate(log):
+        for entry in log:
             if entry.is_rule() and entry.module == "shantay":
                 print(
-                    f"WARNING {log_file}:{entry.line_number}: restarting extraction, "
+                    f"WARN: {log_file}:{entry.line_number}: restarting extraction, "
                     "as log record marks new run",
                     file=sys.stderr
                 )
@@ -431,7 +438,7 @@ class TimeSeriesEntry:
 
             if value is None:
                 print(
-                    f'WARNING {log_file}:{entry.line_number}: skipping log record, '
+                    f'WARN: {log_file}:{entry.line_number}: skipping log record, '
                     f'as it lacks {metric} entry',
                     file=sys.stderr,
                 )
@@ -554,13 +561,12 @@ if __name__ == "__main__":
     parser.add_argument(
         "--csv",
         type=Path,
-        default=Path("shantay-perf.csv"),
-        help="the CSV file to generate (default: 'shantay-perf.csv')",
+        help="the CSV file to generate (default: '<logfile-name>.csv')",
     )
     parser.add_argument(
         "--svg",
         type=Path,
-        help="the SVG file to generate (default: CSV file with '.svg' suffix)"
+        help="the SVG file to generate (default: '<logfile-name>.svg')"
     )
     parser.add_argument(
         "task",
@@ -571,18 +577,21 @@ if __name__ == "__main__":
     )
     options = parser.parse_args(sys.argv[1:])
 
+    log_file = options.log
+    csv_file = log_file.with_suffix(".csv") if options.csv is None else options.csv
+    svg_file = log_file.with_suffix(".svg") if options.svg is None else options.svg
+
     if "csv" in options.task:
         print(
-            f'INFO: extracting metrics from log "{options.log}" into "{options.csv}"',
+            f'INFO: extracting metrics from log "{log_file}" into "{csv_file}"',
             file=sys.stderr,
         )
-        file_parser = LogEntry.parse_file(options.log)
-        TimeSeriesEntry.extract_into_file(str(options.log), file_parser, options.csv)
+        file_parser = LogEntry.parse_file(log_file)
+        TimeSeriesEntry.extract_into_file(str(log_file), file_parser, csv_file)
 
     if "svg" in options.task:
-        svg = options.csv.with_suffix(".svg") if options.svg is None else options.svg
         print(
-            f'INFO: visualizing metrics from "{options.csv}" into "{svg}"',
+            f'INFO: visualizing metrics from "{csv_file}" into "{svg_file}"',
             file=sys.stderr,
         )
-        TimeSeriesEntry.visualize(options.csv, svg)
+        TimeSeriesEntry.visualize(csv_file, svg_file)
