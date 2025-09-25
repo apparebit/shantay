@@ -57,10 +57,17 @@ from .progress import Progress
 from .util import IndexTable
 
 
-_PID = os.getpid()
-_MAX_TASKS = 180
-_PROGRESS = ["activity", "start", "step", "perform"]
+# In experiments with a pool of two workers summarizing the full database
+# starting with 2023-09-25, latency starts at 8s, jumps to 10s, declines to
+# almost 8s again, dips sharply to 2s around 2024-02-27, stays at 10s, and then
+# starts growing slowly after 2024-06-01 to about 12s in 2024-09-01. The period
+# from 2023-09-25 to 2024-06-01 corresponds to 250 days/releases/tasks or 125
+# tasks per worker.
+
 _logger = logging.getLogger(__name__)
+_MAX_TASKS = 125
+_PID = os.getpid()
+_PROGRESS = ["activity", "start", "step", "perform"]
 
 
 # ======================================================================================
