@@ -30,8 +30,8 @@ jobs:
     - name: Set Up UV and Python
       uses: astral-sh/setup-uv@v6
       with:
+        enable-cache: true
         python-version: 3.12
-        ignore-empty-workdir: true
 
     - name: Install Dependencies
       run: uv sync
@@ -58,8 +58,8 @@ jobs:
     - name: Set Up UV and Python
       uses: astral-sh/setup-uv@v6
       with:
-        enable-cache: true
         python-version: 3.12
+        ignore-empty-workdir: true
 
     - name: Create Venv
       run: |
