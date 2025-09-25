@@ -306,6 +306,10 @@ class LogEntry:
         and third entries of a new job."""
         return self.message.has("pid", "pool", prefix="initialized worker process")
 
+    def is_retired_worker(self) -> bool:
+        """Determine whether the log entry marks the retirement of a worker."""
+        return self.message.has("worker", "pool", prefix="retiring")
+
     def is_job_done(self) -> bool:
         """Determine whether the long entry marks the end of concurrently
         processing a release."""
@@ -488,7 +492,12 @@ class TimeSeriesEntry:
                     file.write("\n")
 
     @classmethod
-    def visualize(cls, csv: Path, svg: Path) -> None:
+    def visualize(
+        cls,
+        csv: Path,
+        svg: Path,
+        by_timestamp: bool = False,
+    ) -> None:
         import polars as pl
         import altair as alt
         from .color import Palette
@@ -504,22 +513,32 @@ class TimeSeriesEntry:
             labels = [f"worker-{n}" for n in range(1, count + 1)]
             colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:count]]
 
+        column = "timestamp" if by_timestamp else "release"
         min, max = data.select(
-            pl.col("release").min().alias("min"),
-            pl.col("release").max().alias("max"),
+            pl.col(column).min().alias("min"),
+            pl.col(column).max().alias("max"),
         ).row(0)
-        count = Release.of(max) - Release.of(min) + 1
-        if count < 100:
-            dot_size = 10
-        elif count < 500:
-            dot_size = 6
+        if by_timestamp:
+            dot_size = 3
         else:
-            dot_size = 2
+            count = Release.of(max) - Release.of(min) + 1
+
+            if count < 100:
+                dot_size = 10
+            elif count < 500:
+                dot_size = 5
+            else:
+                dot_size = 2
+
+        if by_timestamp:
+            x_axis = alt.X("timestamp:T").title("Timestamp")
+        else:
+            x_axis = alt.X("release:T").title("Release")
 
         base = alt.Chart(
             data
         ).encode(
-            alt.X("release:T").title("Release")
+            x_axis
         )
 
         latency = base.transform_filter(
@@ -542,7 +561,7 @@ class TimeSeriesEntry:
         chart = latency + rss
 
         chart.properties(
-            width = 1_000,
+            width = 800,
         ).resolve_scale(
             y = "independent",
         ).save(svg)
@@ -552,22 +571,31 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser()
-    parser.add_argument(
+    group = parser.add_argument_group("file names")
+    group.add_argument(
         "--log",
         type=Path,
         default=Path("shantay.log"),
         help="the log file to parse (default: 'shantay.log')",
     )
-    parser.add_argument(
+    group.add_argument(
         "--csv",
         type=Path,
         help="the CSV file to generate (default: '<logfile-name>.csv')",
     )
-    parser.add_argument(
+    group.add_argument(
         "--svg",
         type=Path,
         help="the SVG file to generate (default: '<logfile-name>.svg')"
     )
+
+    group = parser.add_argument_group("visualization")
+    group.add_argument(
+        "--by-timestamp",
+        action="store_true",
+        help="use timestamp as x-axis instead of release date",
+    )
+
     parser.add_argument(
         "task",
         choices=["csv", "svg", "csv+svg"],
@@ -594,4 +622,8 @@ if __name__ == "__main__":
             f'INFO: visualizing metrics from "{csv_file}" into "{svg_file}"',
             file=sys.stderr,
         )
-        TimeSeriesEntry.visualize(csv_file, svg_file)
+        TimeSeriesEntry.visualize(
+            csv_file,
+            svg_file,
+            by_timestamp=options.by_timestamp,
+        )
