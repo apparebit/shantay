@@ -59,6 +59,10 @@ jobs:
       uses: astral-sh/setup-uv@v6
       with:
         python-version: 3.12
+        # We disable the cache because setup-uv prunes packages from the cache,
+        # as downloading them again is faster on GitHub's runners.
+        # https://github.com/astral-sh/setup-uv?tab=readme-ov-file#disable-cache-pruning
+        enable-cache: false
         ignore-empty-workdir: true
 
     - name: Create Venv
