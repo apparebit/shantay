@@ -3,7 +3,7 @@ import logging
 from pathlib import Path
 import unittest
 
-from shantay.pool import Future, Pool, Task
+from shantay.pool import Pool, Result, Task
 
 
 ROOT = Path(__file__).parent
@@ -48,14 +48,14 @@ class TestPool(unittest.TestCase):
     def test_pool(self) -> None:
         pool = Pool(size=2, log_level=logging.DEBUG)
 
-        def upon_completion(task: Task, fut: Future) -> None:
-            result = fut.result()
+        def upon_completion(task: Task, result: Result) -> None:
+            value = result.to_inner()
             if task.fn is task1:
-                self.assertEqual(result, ONE)
+                self.assertEqual(value, ONE)
             elif task.fn is task2:
-                self.assertEqual(result, TWO)
+                self.assertEqual(value, TWO)
             else:
-                self.assertEqual(result, THREE)
+                self.assertEqual(value, THREE)
 
         pool.run(tasks(), upon_completion)
 
@@ -81,9 +81,9 @@ class TestPool(unittest.TestCase):
                 'shantay.pool︙DEBUG︙done processing tasks in pool=',
                 'shantay.pool︙DEBUG︙received command="finish" thread="status_manager"',
                 'shantay.pool︙DEBUG︙start processing tasks in pool=',
-                'shantay.pool︙DEBUG︙submit fn="test.test_pool.task1", pool=',
-                'shantay.pool︙DEBUG︙submit fn="test.test_pool.task2", pool=',
-                'shantay.pool︙DEBUG︙submit fn="test.test_pool.task3", pool=',
+                'shantay.pool︙DEBUG︙submit task="test.test_pool.task1(\'1\')", pool=',
+                'shantay.pool︙DEBUG︙submit task="test.test_pool.task2(\'2\')", pool=',
+                'shantay.pool︙DEBUG︙submit task="test.test_pool.task3(\'3\')", pool=',
                 *(['shantay.pool︙INFO︙initialized worker process pid='] * (length-9)),
                 'test.test_pool︙INFO︙task1 processes "1"',
                 'test.test_pool︙INFO︙task2 processes "2"',

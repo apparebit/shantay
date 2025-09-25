@@ -44,6 +44,9 @@ def annotate_error[**P, R](
     return annotate_error
 
 
+# --------------------------------------------------------------------------------------
+
+
 def minify(value: int) -> str:
     """Format the value with three digits and optionally one letter."""
     limit = 1_000
@@ -158,6 +161,9 @@ def upper_limit(n: int, *, leading: int = 2, minimum: int = 100) -> int:
     return math.ceil(n / factor) * factor
 
 
+# --------------------------------------------------------------------------------------
+
+
 def to_markdown_table(
     *rows: Sequence[object],
     columns: Sequence[str],
@@ -248,6 +254,9 @@ def _get_format(tp: type) -> Callable[[object], str]:
         return lambda c: "" if c is None else f"{c}"
 
 
+# --------------------------------------------------------------------------------------
+
+
 if sys.platform == "darwin":
     import resource
     def get_max_rss() -> None | int:
@@ -264,3 +273,102 @@ else:
     def get_max_rss() -> None | int:
         """Get the maximum resident set size."""
         return None
+
+
+# --------------------------------------------------------------------------------------
+
+
+class IndexTable[K]:
+    """
+    An index table mapping keys of type K to zero-based indices.
+
+    Looking up a previously unknown key automatically assigns an index to the
+    key. Once established, this table maintains the mapping until the key is
+    explicitly deleted. The capacity is a hard limit. Once reached, no indices
+    are assigned until keys have been deleted again.
+
+    ```
+    >>> t = IndexTable(2)
+    >>> t["spam"]
+    0
+    >>> t["ham"]
+    1
+    >>> t["spam"]
+    0
+    >>> t["eggs"]
+    ValueError: index table is full
+    >>> del t["ham"]
+    >>> "ham" in t
+    False
+    >>> t["eggs"]
+    1
+    >>> t["spam"]
+    0
+    ```
+
+    This implementation uses a bit map to track allocated indices with very low
+    overhead. That works best for capacities up to around the bit-length of a
+    processor word, i.e., a capacity of 64 for 64-bit architectures.
+    """
+    def __init__(self, capacity: int) -> None:
+        self._table: dict[K, int] = {}
+        self._slots = (1 << capacity) - 1
+        self._capacity = capacity
+
+    @property
+    def capacity(self) -> int:
+        """Get this index table's capacity."""
+        return self._capacity
+
+    def clear(self) -> None:
+        """Clear this index table, removing all keys."""
+        self._table.clear()
+        self._slots = (1 << self._capacity) - 1
+
+    def keys(self) -> Iterable[K]:
+        """Get an iterable over the keys."""
+        return self._table.keys()
+
+    def values(self) -> Iterable[int]:
+        """Get an iterable over the values, i.e., allocated indices."""
+        return self._table.values()
+
+    def items(self) -> Iterable[tuple[K, int]]:
+        """Get an iterable over the key, index mappings."""
+        return self._table.items()
+
+    def __len__(self) -> int:
+        """Determine the number of key, index mappings."""
+        return len(self._table)
+
+    def __contains__(self, key: K) -> bool:
+        """Determine whether this index table contains the given key."""
+        return key in self._table
+
+    def __getitem__(self, key: K) -> int:
+        """
+        Look up the index for the given key. If this index table does not
+        contain the given key, this method attempts to assign an index.
+        """
+        index = self._table.get(key)
+        if index is not None:
+            return index
+
+        slots = self._slots
+        if slots == 0:
+            raise ValueError("index table is full")
+
+        index = (slots & -slots).bit_length() - 1
+        self._slots &= ~(1 << index)
+        self._table[key] = index
+        return index
+
+    def __delitem__(self, key: K) -> int:
+        """Delete the key, index mapping from this table."""
+        index = self._table.get(key)
+        if index is None:
+            raise ValueError(f"{key} is not a key for index table")
+
+        del self._table[key]
+        self._slots |= (1 << index)
+        return index

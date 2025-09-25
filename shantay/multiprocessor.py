@@ -1,6 +1,5 @@
 from collections import deque
 from collections.abc import Iterator
-from concurrent.futures import Future
 import logging
 import multiprocessing as mp
 import os
@@ -16,8 +15,7 @@ from .model import (
     Config, Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
 )
 from .pool import (
-    Cancelled, check_not_cancelled, determine_worker_status, ErrorTrace,
-    ErrorTraceFactory, Pool, Task, WorkerProgress
+    Cancelled, check_not_cancelled, Pool, Result, Task, WorkerProgress
 )
 from .processor import is_distilled, prepare_statistics, Processor
 from .progress import NO_PROGRESS, Progress
@@ -104,7 +102,7 @@ class Multiprocessor:
             frame = self._run(task)
         finally:
             # Mark workers' staging roots as used
-            for worker in self._pool.workers:
+            for worker in self._pool.all_workers:
                 staging = self._storage.isolate_staging_root(worker)
                 if not staging.exists():
                     continue
@@ -250,27 +248,9 @@ class Multiprocessor:
 
         return release
 
-    def _done_with_task(self, task: Task, future: Future) -> None:
+    def _done_with_task(self, task: Task, result: Result) -> None:
         assert self._pool is not None
-        tag, result, worker_status = future.result()
-        self._pool.report_worker_status(worker_status)
-
-        # Retrying the same or the next release on errors probably will fail
-        # again. Hence we fail fast on all error conditions.
-        if tag == "cancel":
-            raise Cancelled(*result)
-        elif tag == "platforms":
-            update_platforms(result[0])
-            raise MissingPlatformError(*result)
-        elif tag == "error":
-            if not isinstance(result.__cause__, ErrorTrace):
-                print(
-                    f"*** Unexpected cause {type(result.__cause__)}: "
-                    f"{result.__cause__} ***"
-                )
-            raise result
-
-        metadata_entry, stats = result
+        metadata_entry, stats = result.to_inner()
         if task.kwargs["task"] == "download":
             pass
         elif task.kwargs["task"] == "distill":
@@ -357,11 +337,10 @@ def run_on_worker(
     any). This function catches any exceptions raised while processing the given
     task and instead returns a tuple with an `ErrorTraceFactory`.
     """
-    # For reasons unbeknownst to man, the process pool executor unpickles all
-    # worker exceptions as instances of the same type. To work around this
-    # madness, we turn exceptions that require special handling in the
-    # coordinator into tagged values. We still raise unexpected, arbitrary
-    # exceptions, which trigger the coordinator to fail fast.
+    _logger.debug(
+        'running task="%s", release="%s", filter="%s", worker=%d',
+        task, release, metadata.filter or "", _PID
+    )
     try:
         result = _run_on_worker(
             task,
@@ -375,27 +354,27 @@ def run_on_worker(
             'returning result for task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID
         )
-        return "value", result, determine_worker_status()
+        return result
     except Cancelled as x:
         _logger.warning(
             'cancelled task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID
         )
-        return "cancel", x.args, determine_worker_status()
+        raise
     except MissingPlatformError as x:
         _logger.warning(
             'missing platform names in task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID
         )
-        return "platforms", x.args, determine_worker_status()
-    except Exception as x:
+        raise
+    except BaseException as x:
         _logger.error(
             'unexpected error in task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID, exc_info=x
         )
         # Sleep for a spell so that the coordinator can catch up with logging.
         time.sleep(1)
-        return "error", ErrorTraceFactory(x), determine_worker_status()
+        raise
     finally:
         log_max_rss(release.id)
 
@@ -407,7 +386,7 @@ def _run_on_worker(
     config: Config,
     release: Daily,
     metadata: Metadata,
-) -> Any:
+) -> tuple[None | FullMetadataEntry, None | Statistics]:
     # Check for cancellation
     check_not_cancelled()
 
@@ -425,19 +404,15 @@ def _run_on_worker(
     )
 
     # Actually run the task
-    _logger.debug(
-        'running task="%s", release="%s", filter="%s", worker=%d',
-        task, release, metadata.filter or "", _PID
-    )
     if task == "download":
         processor.download_archive(release)
-        result = None, None
+        return None, None
     elif task == "distill":
         processor.distill_release(release)
-        result = metadata[release] | dict(release=release), None
+        return cast(FullMetadataEntry, metadata[release] | dict(release=release)), None
     elif task == "summarize-all":
         stats = processor.summarize_full_release(release)
-        result = metadata[release] | dict(release=release), stats
+        return cast(FullMetadataEntry, metadata[release] | dict(release=release)), stats
     elif task == "summarize-extract":
         stats = Statistics(
             f"{release}.parquet",
@@ -445,8 +420,6 @@ def _run_on_worker(
             stratify_all_text=config.stratify_all_text,
         )
         processor.summarize_release_extract(release, stats)
-        result = None, stats
+        return None, stats
     else:
         raise AssertionError(f"invalid task {task}")
-
-    return result

@@ -35,17 +35,12 @@ they are available. After a call to `stop()`, it tries to cooperatively cancel
 workers' tasks by communicating the signal to workers. Thereafter, a worker's
 `is_cancelled()` returns `True` and a task should wind down by raising a
 `Cancelled` exception.
-
-Each worker process is only used for processing some fixed number of tasks. To
-correctly maintain its internal state, `Pool`'s client must invoke
-`determine_worker_status` upon completion of each task in a worker, recording
-the result, and then invoke `Pool.report_worker_status` in the coordinator,
-providing said result.
 """
-from collections.abc import Iterator, Mapping, Sequence
-from concurrent.futures import FIRST_COMPLETED, Future, ProcessPoolExecutor, wait
+from collections.abc import Iterable, Iterator, Mapping, Sequence
+from concurrent.futures import FIRST_COMPLETED, ProcessPoolExecutor, wait
 import copy
 from dataclasses import dataclass
+import io
 import itertools
 import logging
 import multiprocessing as mp
@@ -55,16 +50,47 @@ import sys
 import threading
 import traceback
 from types import TracebackType
-from typing import Any, Callable, Literal, Self
+from typing import Any, Callable, Self
 import uuid
 
 from .progress import Progress
+from .util import IndexTable
 
 
 _PID = os.getpid()
 _MAX_TASKS = 180
 _PROGRESS = ["activity", "start", "step", "perform"]
 _logger = logging.getLogger(__name__)
+
+
+# ======================================================================================
+# Data Structures to Transfer Tasks and Results Between Coordinator and Workers
+
+
+@dataclass(frozen=True, slots=True)
+class Result:
+    """A container for the result of a task execution."""
+
+    value: Any
+    exception: None | BaseException
+
+    @classmethod
+    def from_value(cls, value: Any) -> Self:
+        """Create a result with the given value while also marking task
+        completion."""
+        return cls(value, None)
+
+    @classmethod
+    def from_exception(cls, exception: BaseException) -> Self:
+        """Create a result with the given exception while also marking task
+        completion."""
+        return cls(None, WorkerError(exception))
+
+    def to_inner(self) -> Any:
+        """Get this result's value or raise its exception."""
+        if self.exception is not None:
+            raise self.exception
+        return self.value
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,9 +101,28 @@ class Task:
     args: Sequence[Any]
     kwargs: Mapping[str, Any]
 
+    def __repr__(self) -> str:
+        buffer = io.StringIO()
+        buffer.write(self.fn.__module__)
+        buffer.write(".")
+        buffer.write(self.fn.__qualname__)
+        buffer.write("(")
+        for index, arg in enumerate(self.args):
+            if 0 < index:
+                buffer.write(", ")
+            buffer.write(repr(arg))
+        for index, (name, arg) in enumerate(self.kwargs.items()):
+            if (index == 0 and 0 < len(self.args)) or 0 < index:
+                buffer.write(", ")
+            buffer.write(name)
+            buffer.write("=")
+            buffer.write(repr(arg))
+        buffer.write(")")
+        return buffer.getvalue()
 
-# --------------------------------------------------------------------------------------
-# The coordinator
+
+# ======================================================================================
+# Code to Run in Coordinator
 
 
 class Pool:
@@ -127,11 +172,11 @@ class Pool:
 
         _, height = shutil.get_terminal_size()
         self._trackers = [Progress(row=height - i) for i in range(size)]
-        self._index_table = _IndexTable(size)
+        self._index_table = _PoolIndexTable(size)
 
         self._status_manager = threading.Thread(
             target=_manage_status,
-            args=(self._status_queue, self._trackers, self._index_table),
+            args=(self._status_queue, self._trackers, self._index_table, self.id),
             daemon=True,
         )
         self._status_manager.start()
@@ -161,8 +206,8 @@ class Pool:
         return self._size
 
     @property
-    def workers(self) -> set[int]:
-        return self._index_table.workers
+    def all_workers(self) -> Iterable[int]:
+        return self._index_table.all_workers
 
     def is_running(self) -> bool:
         """Determine whether this pool is running, hence accepting tasks."""
@@ -208,7 +253,7 @@ class Pool:
     def run(
         self,
         tasks: Iterator[Task],
-        on_completion: Callable[[Task, Future], None],
+        on_completion: Callable[[Task, Result], None],
     ) -> None:
         """Run this pool."""
         # Loosely based on https://github.com/alexwlchan/concurrently
@@ -216,23 +261,38 @@ class Pool:
         with self:
             futures = {}
             for task in itertools.islice(tasks, self._size):
-                _logger.debug('submit fn="%s.%s", pool="%s"',
-                    task.fn.__module__, task.fn.__qualname__, self._id,
-                )
-                fut = self._executor.submit(task.fn, *task.args, **task.kwargs)
+                _logger.debug('submit task="%r", pool="%s"', task, self._id)
+                fut = self._executor.submit(_run_task, task)
                 futures[fut] = task
 
             while futures:
                 done, _ = wait(futures, return_when=FIRST_COMPLETED)
 
                 for fut in done:
-                    # Fail fast on exceptions!
-                    if fut.exception() is not None:
-                        self.stop()
-
                     task = futures.pop(fut)
+
+                    # Fail fast on unhandled exceptions indicating a pool bug
+                    if (exception := fut.exception()) is not None:
+                        _logger.error(
+                            'unhandled exception in task="%r", pool="%s"',
+                            task, self.id, exc_info=exception
+                        )
+                        self.stop()
+                        raise exception
+
+                    # Fail fast on unexpected exceptions indicating a task bug
+                    result: Result = fut.result()
+
+                    if result.exception is not None:
+                        _logger.error(
+                            'unexpected exception in task="%r", pool="%s"',
+                            task, self.id, exc_info=result.exception
+                        )
+                        self.stop()
+                        raise result.exception
+
                     try:
-                        on_completion(task, fut)
+                        on_completion(task, result)
                     except:
                         self.stop()
                         raise
@@ -241,22 +301,11 @@ class Pool:
 
                 if self._state.is_running():
                     for task in itertools.islice(tasks, len(done)):
-                        _logger.debug('submit fn="%s.%s", pool="%s"',
-                            task.fn.__module__, task.fn.__qualname__, self._id,
-                        )
-                        fut = self._executor.submit(task.fn, *task.args, **task.kwargs)
+                        _logger.debug('submit task="%r", pool="%s"', task, self._id)
+                        fut = self._executor.submit(_run_task, task)
                         futures[fut] = task
 
             _logger.debug('done processing tasks in pool="%s"', self._id)
-
-    def report_worker_status(self, status: None | tuple[str, int]) -> None:
-        """Invoke this method upon receiving a status update from worker."""
-        if status is None:
-            return
-
-        label, pid = status
-        if label == "last":
-            del self._index_table[pid]
 
     def finish(self) -> None:
         """
@@ -335,7 +384,7 @@ class _PoolState:
             return True
 
 
-class _IndexTable:
+class _PoolIndexTable:
     """
     A table mapping process IDs to indexes between 0 and some maximum size.
     """
@@ -346,22 +395,19 @@ class _IndexTable:
     # delays etc. This does assume, however, that two processes overlap only for
     # a duration that is significantly smaller than the usual lifetime of a
     # worker.
-    def __init__(self, size: int) -> None:
+    def __init__(self, capacity: int) -> None:
         self._lock = threading.Lock()
-        self._table = {}
-        self._worker_pids = set()  # all worker PIDs
-        # Create a number with (2 * size) ones serving as allocation bitmap
-        self._slots = (1 << (2 * size)) - 1
-        self._size = size  # do not change
+        self._table = IndexTable(capacity * 2)
+        self._all_workers = []
+        self._capacity = capacity
 
     @property
-    def size(self) -> int:
-        return self._size
+    def capacity(self) -> int:
+        return self._capacity
 
     @property
-    def workers(self) -> set[int]:
-        with self._lock:
-            return self._worker_pids
+    def all_workers(self) -> Iterable[int]:
+        return self._all_workers
 
     def sync(self) -> int:
         """
@@ -375,18 +421,9 @@ class _IndexTable:
             # Copy the keys into a list since we may update the table.
             for pid in list(self._table.keys()):
                 if pid not in active:
-                    self._deallocate(pid)
+                    del self._table[pid]
                     count += 1
         return count
-
-    def setdefault(self, pid: int) -> int:
-        """
-        Look up the process ID. If the table does not already contain a mapping,
-        this method adds one using the next available index.
-        """
-        with self._lock:
-            raw_index = self._table[pid] if pid in self._table else self._allocate(pid)
-            return raw_index % self._size
 
     def __contains__(self, pid: int) -> bool:
         """Determine whether the PID is included in the table."""
@@ -396,35 +433,24 @@ class _IndexTable:
     def __getitem__(self, pid: int) -> int:
         """Look up the ID's index."""
         with self._lock:
-            return self._table[pid] % self._size
+            is_new_mapping = pid not in self._table
+            index = self._table[pid] % self._capacity
+            if is_new_mapping:
+                self._all_workers.append(pid)
+            return index
 
     def __delitem__(self, pid: int) -> None:
         """Delete an ID from this table, making the index available again."""
         with self._lock:
             if pid in self._table:
-                self._deallocate(pid)
-
-    def _allocate(self, pid: int) -> int:
-        slots = self._slots
-        assert slots != 0, "no index slot available"
-        self._worker_pids.add(pid)
-
-        index = (slots & -slots).bit_length() - 1
-        self._slots &= ~(1 << index)
-        self._table[pid] = index
-        return index
-
-    def _deallocate(self, pid: int) -> int:
-        index = self._table[pid]
-        del self._table[pid]
-        self._slots |= (1 << index)
-        return index
+                del self._table[pid]
 
 
 def _manage_status(
     status_queue: mp.SimpleQueue,
     trackers: list[Progress],
-    index_table: _IndexTable,
+    index_table: _PoolIndexTable,
+    pool_id: str,
 ) -> None:
     while True:
         try:
@@ -437,18 +463,23 @@ def _manage_status(
             break
 
         pid, cmd, *args = message
+        if cmd == "retire":
+            _logger.info('retiring worker pid=%d, pool="%s"', pid, pool_id)
+            del index_table[pid]
+            continue
         if cmd == "log":
             for handler in logging.getLogger().handlers:
                 handler.handle(args[0])
             continue
         if cmd in _PROGRESS:
-            getattr(trackers[index_table.setdefault(pid)], cmd)(*args)
+            getattr(trackers[index_table[pid]], cmd)(*args)
             continue
 
         _logger.error('received invalid command="%s", worker=%d', cmd, pid)
 
 
 # ======================================================================================
+# Code to Run in Worker
 
 
 _is_cancelled = threading.Event()
@@ -512,8 +543,8 @@ class Cancelled(Exception):
 
 class ErrorTrace(Exception):
     """
-    An exception wrapping a textual exception trace akin to
-    `concurrent.futures`' private `_RemoteTraceback`.
+    An exception wrapping a textual stack trace akin to `concurrent.futures`'
+    private `_RemoteTraceback`.
     """
     def __init__(self, trace: str) -> None:
         self.trace = trace
@@ -528,15 +559,16 @@ def with_error_trace[E: BaseException](exc: E, trace: str) -> E:
     return exc
 
 
-class ErrorTraceFactory:
+class WorkerError(Exception):
     """
-    A factory object to exchange exceptions between multiprocessing queues.
+    A worker error.
 
-    Python uses the standard library's pickle module for transferring objects
-    through a queue. While exceptions can be (un)pickled, their traceback does
-    not survive serialization, yet is critically needed for debugging. To
-    preserve the trace, this object captures the exception's trace in textual
-    form and uses an `ErrorTrace` as cause for the deserialized exception.
+    Each instance of this class wraps another exception. Furthermore, while the
+    stack trace of regular exceptions does not survive pickling and hence does
+    not survive transmission across process boundaries, this class eagerly
+    captures the stack trace during instantiation and preserves that trace when
+    being pickled. Upon unpickling, a worker error becomes an instance of the
+    wrapped exception, but with a remote error as cause.
     """
     def __init__(self, exc: BaseException) -> None:
         trace = "".join(traceback.format_exception(exc))
@@ -685,16 +717,16 @@ def _send_status_update(cmd: str, *args: Any) -> bool:
         return False
 
 
-_task_count = 0
+_task_run_count = 0
 
-def determine_worker_status() -> None | tuple[Literal["first", "last"], int]:
-    """Invoke in worker process upon completion of a task."""
-    global _task_count
-    _task_count += 1
+def _run_task(task: Task) -> Result:
+    global _task_run_count
+    _task_run_count += 1
 
-    if _task_count == 1:
-        return "first", _PID
-    elif _task_count < _MAX_TASKS:
-        return None
-    else:
-        return "last", _PID
+    try:
+        return Result.from_value(task.fn(*task.args, **task.kwargs))
+    except BaseException as x:
+        return Result.from_exception(x)
+    finally:
+        if _MAX_TASKS <= _task_run_count:
+            _send_status_update("retire")
