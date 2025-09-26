@@ -690,28 +690,11 @@ class Config:
     interactive_report: bool = False
     clamp_outliers: bool = False
 
-    @classmethod
-    def defaults(cls) -> dict[str, Any]:
-        return {
-            "offline": False,
-            "workers": 0,
-            "max_tasks": None,
-            "progress": True,
-            "verbose": 0,
-            "platforms": None,
-            "stratify_by_category": False,
-            "stratify_all_text": False,
-            "interactive_report": False,
-            "clamp_outliers": False,
-        }
-
-    @classmethod
-    def of(cls, **kwargs: Any) -> Self:
-        kwargs["platforms"] = (
-            None if (ps := kwargs.get("platforms", None)) is None or len(ps) == 0
-            else tuple(ps)
-        )
-        return cls(**(cls.defaults() | kwargs))
+    def __post_init__(self) -> None:
+        # Normalize platforms
+        ps = self.platforms
+        if ps is not None and len(ps) == 0:
+            object.__setattr__(self, "platforms", None)
 
     @property
     def stratification(self) -> dict[str, bool]:

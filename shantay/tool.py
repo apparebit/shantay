@@ -241,9 +241,10 @@ def get_configuration(
         raise ConfigError("please only use --clamp-outliers with `visualize` task")
 
     # Instantiate the config object
-    config = Config.of(
+    config = Config(
         progress=True,
-        platforms=platforms,
+        platforms=platforms if platforms is None else tuple(platforms),
+        max_tasks=90 if 0 < options.workers else None,
         **{n: getattr(options, n) for n in CONFIG_OPTIONS}
     )
 
