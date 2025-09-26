@@ -43,6 +43,6 @@ def log_max_rss(release: str) -> None:
     size = get_max_rss()
     if size is not None:
         _logger.info(
-            'maximum resident-set-size=%s, unit="B", release="%s"',
+            'maximum resident-set-size=%s, unit="byte", release="%s"',
             f'{size:_}', release
         )
