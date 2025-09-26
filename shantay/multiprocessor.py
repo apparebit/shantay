@@ -55,7 +55,11 @@ class Multiprocessor:
         self._pool = None
         self._register_handlers()
         # Use the same level as the root logger
-        self._pool = Pool(size=config.workers, log_level=logging.getLogger().level)
+        self._pool = Pool(
+            size=config.workers,
+            log_level=logging.getLogger().level,
+            max_tasks=config.max_tasks,
+        )
 
         self._running_time = 0
 
@@ -74,6 +78,7 @@ class Multiprocessor:
         _logger.info('running multiprocessor with pid=%d, task="%s"', _PID, task)
         _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
         _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
+        _logger.info('    key="runtime.max_tasks",    value=%s', self._config.max_tasks_str)
         _logger.info('    key="runtime.progress",     value="%s"', self._config.progress)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")

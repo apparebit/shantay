@@ -70,6 +70,7 @@ class Processor[R: Release]:
         _logger.info('running processor with pid=%d, task="%s"', os.getpid(), task)
         _logger.info('    key="runtime.offline",      value="%s"', self._config.offline)
         _logger.info('    key="runtime.workers",      value=%d', self._config.workers)
+        _logger.info('    key="runtime.max_tasks",    value=%s', self._config.max_tasks_str)
         _logger.info('    key="runtime.progress",     value="%s"', self._config.progress)
         _logger.info('    key="dataset.name",         value="%s"', self._dataset.name)
         _logger.info('    key="storage.archive_root", value="%s"', self._storage.archive_root or "")

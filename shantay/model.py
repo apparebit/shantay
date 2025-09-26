@@ -721,6 +721,9 @@ class Config:
             "stratify_all_text": self.stratify_all_text,
         }
 
+    @property
+    def max_tasks_str(self) -> str:
+        return '""' if self.max_tasks is None else f"{self.max_tasks}"
 
 class MetadataProtocol[R: Release](Protocol):
     """The protocol for release metadata."""

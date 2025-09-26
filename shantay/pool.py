@@ -707,7 +707,10 @@ def _initialize_worker(
 
     # Log under module name
     _worker.logger = logging.getLogger(__name__)
-    _worker.logger.info('initialized worker process pid=%d, pool="%s"', _PID, pool_id)
+    _worker.logger.info(
+        'initialized worker process pid=%d, max_tasks=%s, pool="%s"',
+        _PID, '""' if max_tasks is None else f"{max_tasks}", pool_id
+    )
 
 
 def _wait_for_cancellation(signal: mp.SimpleQueue) -> None:
