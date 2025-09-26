@@ -50,11 +50,11 @@ for storing the complete database.
 The previous command will run for quite a while, downloading and analyzing
 release after release after release. Depending on your hardware, using more than
 one process for downloading and analyzing the data may be faster. The following
-invocation, for example, uses three worker processes for downloading and
-analyzing data:
+invocation, for example, uses two worker processes for downloading and analyzing
+data:
 
 ```
-$ uvx shantay --archive <directory> --last 2023-12-31 --multiproc 3 summarize
+$ uvx shantay --archive <directory> --last 2023-12-31 --workers 2 summarize
 ```
 
 Don't forget to replace `<directory>` with the actual path.
@@ -168,7 +168,7 @@ allow for some posting delay.
 Depending on available memory and processor cores, `--workers` may speed up
 distillation and/or summarization. It takes the number of worker processes as
 its only argument. Since Pola.rs is rather aggressive in its use of hardware
-resources, the number of workers should probably be small, 2 or 3, no more.
+resources, the number of workers should probably be small, 2 or 3, but no more.
 
 Summary statistics are stored in `db.parquet` for the full database and in a
 file named after the category, platform, or filter for distilled data. For
@@ -294,7 +294,7 @@ That is the reason why Shantay, by default, omits the values of the
 `decision_facts` columns from its summary statistics.
 
 
-## 4. Big Data in the Small
+## 4. Implementing Big Data in the Small
 
 Unlike most big data tools, Shantay is designed to run on consumer-level
 hardware. A reasonably fast laptop or desktop with an external flash drive, such
@@ -337,43 +337,54 @@ redundancy towards reliability, that isn't possible when targeting a single
 computer. Worse, some of the targeted hardware adds to the reliability
 challenges. Notably, external USB drives are a cost-effective solution for
 providing the necessary bulk storage. But those drives are at their most
-reliable and performant for bulk-reads and -writes only.
+reliable and performant for bulk-reads and -writes only. For that reason,
+Shantay uses a staging directory, which is assumed to be on an internal drive.
 
-However, since such internal drives are not dedicated to storing transparency
-data, they also may only have 100-200 GB of free space. But with a 3.5 GB daily
-release archive easily expanding into 70 GB of CSV data, it would take only 2 to
-3 worker processes fully expanding daily releases to completely fill the
-internal drive, which will trigger dire operating system warnings at best and a
-crash at worst. Similarly, when processing transparency data, each worker needs
-to handle a rapidly increasing amount of storage and can easily consume all
-virtual memory—which does trigger an operating system crash.
+However, since internal drives are not dedicated to storing transparency data,
+they may only have 100-200 GB of free space. But with a 3.5 GB daily release
+archive easily expanding into 70 GB of CSV data, it would take only 2 to 3
+worker processes fully expanding daily releases to completely fill the internal
+drive. That triggers dire operating system warnings at best and simply crashes
+the OS at worst. Similarly, when processing transparency data, each worker
+requires a substantial amount of memory and a couple of workers can easily
+consume all virtual memory—which does trigger an OS crash.
 
 **Solutions**: These are not theoretical challenges. I have encountered all of
-them during the development of Shantay. To address the limited reliability and
-performance of external bulk storage, Shantay uses a staging directory, which is
-assumed to be on the internal disk. To avoid running out of space on that disk,
-Shantay aggressively deletes intermediate state again. Finally, to avoid running
-out of virtual memory, Shantay does not construct the data frame with summary
-statistics incrementally anymore, but rather avoids making large memory
-allocations, with one exception, and also restarts worker processes.
+them during the development of Shantay. As already mentioned, tso address the
+limited reliability and performance of external bulk storage, Shantay uses a
+staging directory on an internal disk. It also is careful to always save or copy
+files under a temporary file name and to atomically rename that file only after
+the save or copy operation succeeded. To avoid running out of persistent storage
+space, Shantay aggressively deletes intermediate state again. Finally, to avoid
+running out of virtual memory, Shantay does not incrementally accumulate
+statistics into one ever larger data frame, but rather combines per-release
+frames only once, just before completion.
 
-In more detail, it now persists a data frame with statistics for each batch
+In more detail, Shantay now persists a data frame with statistics for each batch
 making up a daily release, combines those partial statistics into per-release
-statistics when it is done processing all batches for a release, again
-persisting that per-release data frame while also deleting the per-batch frames,
-and finally combines those daily statistics into a single data frame upon
-completion. As a result, it only needs to make one large allocation towards the
-end of a run. But since this approach mostly persists outputs at the same
-granularity as inputs, it also makes it easier to change work, e.g., to
-partially recompute statistics, as well as workers, e.g., to proactively limit
-creeping memory growth.
+statistics when it is done processing all batches for a release, and then
+persists that per-release data frame (while also deleting the per-batch frames).
+Only when it is done computing per-release statistics, Shantay combines them
+into a single data frame. As a result, it only makes one large allocation
+towards the end of a run instead of reallocating an ever growing region.
 
-To better track performance, Shantay regularly logs the maximum resident-set
-size for each process and the latency for the smallest unit of work, i.e.,
-computing the summary statistics for a release batch. Run `shantay.log` to
-extract these metrics into a CSV file and then visualize them as a SVG chart.
+Given unreliable hardware and a lack of redundancy, Shantay uses checksums for
+detecting corrupted data. After an interruption, it resumes long-running tasks,
+as long as it is restarted with the same command line arguments. It does not yet
+support the partial recomputation of arbitrary intermediate results. However,
+that has become eminently feasible now that it consistently uses the same or a
+finer partitioning scheme than the input (which uses daily releases).
 
-### 4.2 The Implementation
+![Latency and maximum
+resident-set-size](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/performance.svg)
+
+To better track performance, Shantay regularly logs the latency of the smallest
+unit of work (computing summary statistics for a release batch) as well as the
+maximum resident-set size for each process. When running the `shantay.log`
+module as a script, it extracts those metrics into a CSV file and visualizes
+them as an SVG chart, like the example shown above.
+
+### 4.2 Modular Structure
 
 To keep separate concerns actually separate, Shantay's implementation
 distinguishes between code that orchestrates the data processing and code that
@@ -416,6 +427,33 @@ extraction and visualization through type declarations.
 `shantay.schema.TRANSFORM` defines how to process each column of transparency
 data and `shantay.schema.FIELDS` defines how to visualize each metric. The
 `stats` and `viz` modules implement the corresponding interpreters.
+
+Additional functionality is provided by these modules:
+
+  - [`shantay.color`](https://github.com/apparebit/shantay/blob/boss/shantay/color.py)
+    defines the palette for Shantay's visualizations, which is based on
+    [Observable's 2024 color
+    palette](https://observablehq.com/blog/crafting-data-colors)
+  - [`shantay.digest`](https://github.com/apparebit/shantay/blob/boss/shantay/digest.py)
+    simplifies checksum calculation and validation.
+  - [`shantay.log`](https://github.com/apparebit/shantay/blob/boss/shantay/log.py)
+    contains classes for analyzing the log.
+  - [`shantay.logutil`](https://github.com/apparebit/shantay/blob/boss/shantay/logutil.py)
+    contains helper functions for configuring the logging system and writign to
+    the log.
+  - [`shantay.__main__`](https://github.com/apparebit/shantay/blob/boss/shantay/__main__.py)
+    and
+    [`shantay.tool`](https://github.com/apparebit/shantay/blob/boss/shantay/tool.py)
+    implement the command line interface; that functionality is spread over two
+    modules because `__main__` may call functions that mustn't run after
+    Shantay's core modules have been loaded.
+  - [`shantay.pool`](https://github.com/apparebit/shantay/blob/boss/shantay/pool.py)
+    implements Shantay's worker pool; it internally reuses Python's
+    `concurrent.futures.ProcessPoolExecutor`.
+  - [`shantay.progress`](https://github.com/apparebit/shantay/blob/boss/shantay/progress.py)
+    implements visual and textual progress tracking.
+  - [`shantay.util`](https://github.com/apparebit/shantay/blob/boss/shantay/util.py)
+    implements assorted helper functions and data structures.
 
 ----
 
