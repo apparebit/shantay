@@ -3,6 +3,7 @@ import logging
 from pathlib import Path
 import unittest
 
+from shantay.logutil import log_rule, Size
 from shantay.pool import Pool, Result, Task
 
 
@@ -46,6 +47,9 @@ def tasks() -> Iterator[Task]:
 class TestPool(unittest.TestCase):
 
     def test_pool(self) -> None:
+        log_rule(Size.M)
+        logger.info('testing component="Pool"')
+
         pool = Pool(size=2, log_level=logging.DEBUG)
 
         def upon_completion(task: Task, result: Result) -> None:
@@ -75,18 +79,21 @@ class TestPool(unittest.TestCase):
             lines = sorted(l[l.index("︙", 24) + 1:] for l in lines[offset:])
 
             length = len(lines)
-            self.assertIn(length, (10, 11))
+            self.assertEqual(length, 11)
 
             for index, snippet in enumerate([
                 'shantay.pool︙DEBUG︙done processing tasks in pool=',
                 'shantay.pool︙DEBUG︙received command="finish" thread="status_manager"',
                 'shantay.pool︙DEBUG︙start processing tasks in pool=',
-                'shantay.pool︙DEBUG︙submit task="test.test_pool.task1(\'1\')", pool=',
-                'shantay.pool︙DEBUG︙submit task="test.test_pool.task2(\'2\')", pool=',
-                'shantay.pool︙DEBUG︙submit task="test.test_pool.task3(\'3\')", pool=',
+                'shantay.pool︙DEBUG︙submit task="test.test_pool.task1", pool=',
+                'shantay.pool︙DEBUG︙submit task="test.test_pool.task2", pool=',
+                'shantay.pool︙DEBUG︙submit task="test.test_pool.task3", pool=',
                 *(['shantay.pool︙INFO︙initialized worker process pid='] * (length-9)),
                 'test.test_pool︙INFO︙task1 processes "1"',
                 'test.test_pool︙INFO︙task2 processes "2"',
                 'test.test_pool︙INFO︙task3 processes "3"',
             ]):
-                self.assertIn(snippet, lines[index ])
+                self.assertIn(snippet, lines[index])
+
+        logger.info('completed test for component="Pool"')
+

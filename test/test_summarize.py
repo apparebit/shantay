@@ -36,7 +36,7 @@ class TestSummarize(TestCase):
         shutil.rmtree(EXTRACT, ignore_errors=True)
         shutil.rmtree(ARCHIVE, ignore_errors=True)
         STAGING.mkdir(parents=True)
-        shutil.copytree(FIXTURE / "archive", ARCHIVE)
+        shutil.copytree(FIXTURE / "archive" / "2024", ARCHIVE / "2024")
 
     def tearDown(self):
         pass
@@ -58,7 +58,7 @@ class TestSummarize(TestCase):
             dataset=dataset,
             storage=storage,
             coverage=coverage,
-            config=Config(),
+            config=Config(progress=False),
             metadata=metadata,
         )
 
@@ -87,7 +87,7 @@ class TestSummarize(TestCase):
             dataset=dataset,
             storage=storage,
             coverage=coverage,
-            config=Config(workers=1),
+            config=Config(progress=False, workers=1),
             metadata=metadata,
         )
 
@@ -126,7 +126,7 @@ class TestSummarize(TestCase):
             dataset=dataset,
             storage=storage,
             coverage=coverage,
-            config=Config(),
+            config=Config(progress=False),
             metadata=metadata,
         )
 
@@ -155,7 +155,7 @@ class TestSummarize(TestCase):
             dataset=dataset,
             storage=storage,
             coverage=coverage,
-            config=Config(workers=1),
+            config=Config(progress=False, workers=1),
             metadata=metadata,
         )
 

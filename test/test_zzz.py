@@ -8,7 +8,7 @@ import sys
 from .runtime import StyledStream
 
 from shantay.log import LogEntry
-from shantay.model import Release
+from shantay.model import Release, ReleaseRange
 
 
 LOG = Path(__file__).parent / "tmp" / "log.log"
@@ -29,45 +29,35 @@ class TestZzz(unittest.TestCase):
                 print(entry)
             print("", flush=True)
 
-        worker_entries = 0
-        test_pool_entries = 0
-        test_sum_entries = 0
-        warning_entries = 0
+        warnings = errors = starts = completions = 0
         traces = []
-        release = Release.of(2024, 3, 14)
-        state = None
+        is_multi = None
 
         for entry in log:
-            # Count entries with unusual PID, level, or module; collect traces
-            if entry.pid != PID:
-                worker_entries += 1
-            if entry.module == "test.test_pool":
-                test_pool_entries += 1
-            if entry.module == "test.test_summarize":
-                test_sum_entries += 1
             if entry.level == "WARNING":
-                warning_entries += 1
-                if entry.exc_info is not None:
-                    traces.append(entry.exc_info)
+                warnings += 1
+            if entry.level == "ERROR":
+                errors += 1
+            if entry.exc_info is not None:
+                traces.append(entry.exc_info)
+            if entry.message.has("runner", "task") or entry.message.has("component"):
+                if entry.message.prefix == "testing":
+                    starts += 1
+                    is_multi = (
+                        entry.message.has("component")
+                        or entry.message.props.get("runner", "").startswith("Multi")
+                    )
+                elif entry.message.prefix == "completed test for":
+                    completions += 1
+                    is_multi = None
+            if is_multi is not None:
+                if entry.pid != PID:
+                    self.assertTrue(is_multi)
+                if entry.module == "shantay.pool":
+                    self.assertTrue(is_multi)
 
-            # Switch release testing on and off as needed
-            if (
-                state != "release"
-                and entry.level == "INFO"
-                and entry.message.prefix in ("staged", "distill")
-            ):
-                state = "release"
-            elif state == "release" and entry.level == "WARNING":
-                state = None
-
-            # Test release
-            if state == "release":
-                self.assertEqual(entry.message.release(), release)
-
-        self.assertEqual(worker_entries, 50)
-        self.assertEqual(test_pool_entries, 3)
-        self.assertEqual(test_sum_entries, 8)
-        self.assertEqual(warning_entries, 10)
+        self.assertEqual(warnings, 10)
+        self.assertEqual(errors, 0)
         self.assertEqual(len(traces), 5)
         for index in range(1, 5):
             self.assertEqual(traces[0], traces[index])

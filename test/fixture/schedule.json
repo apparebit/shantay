@@ -1,0 +1,58 @@
+{
+  "@schema": "https://apparebit.com/schema/shantay-metadata.schema.json",
+  "config": {
+    "stem": "db",
+    "filter": null
+  },
+  "releases": {
+    "2025-08-05": {
+      "batch_count": 5,
+      "total_rows": 442,
+      "total_rows_with_keywords": 19
+    },
+    "2025-08-06": {
+      "batch_count": 7,
+      "total_rows": 482,
+      "total_rows_with_keywords": 47
+    },
+    "2025-08-07": {
+      "batch_count": 4,
+      "total_rows": 367
+    },
+    "2025-08-08": {
+      "batch_count": 4,
+      "total_rows": 299,
+      "total_rows_with_keywords": 3
+    },
+    "2025-08-09": {
+      "batch_count": 5,
+      "total_rows": 471,
+      "total_rows_with_keywords": 85
+    },
+    "2025-08-10": {
+      "batch_count": 4,
+      "total_rows": 363,
+      "total_rows_with_keywords": 1
+    },
+    "2025-08-11": {
+      "batch_count": 5,
+      "total_rows": 442,
+      "total_rows_with_keywords": 22
+    },
+    "2025-08-12": {
+      "batch_count": 7,
+      "total_rows": 482,
+      "total_rows_with_keywords": 28
+    },
+    "2025-08-13": {
+      "batch_count": 4,
+      "total_rows": 367,
+      "total_rows_with_keywords": 57
+    },
+    "2025-08-14": {
+      "batch_count": 4,
+      "total_rows": 299,
+      "total_rows_with_keywords": 24
+    }
+  }
+}

@@ -65,7 +65,6 @@ from .util import IndexTable
 # tasks per worker.
 
 _logger = logging.getLogger(__name__)
-_MAX_TASKS = 125
 _PID = os.getpid()
 _PROGRESS = ["activity", "start", "step", "perform"]
 
@@ -108,6 +107,10 @@ class Task:
     args: Sequence[Any]
     kwargs: Mapping[str, Any]
 
+    @property
+    def name(self) -> str:
+        return f"{self.fn.__module__}.{self.fn.__qualname__}"
+
     def __repr__(self) -> str:
         buffer = io.StringIO()
         buffer.write(self.fn.__module__)
@@ -149,6 +152,7 @@ class Pool:
         size: None | int = None,
         context: None | Any = None,
         log_level: int = logging.WARNING,
+        max_tasks: None | int = None,
     ) -> None:
         self._id = uuid.uuid1().hex
 
@@ -197,9 +201,9 @@ class Pool:
                 self._cancel_queue,
                 log_level,
                 self.id,
-                _MAX_TASKS
+                max_tasks,
             ),
-            max_tasks_per_child=_MAX_TASKS,
+            max_tasks_per_child=max_tasks,
         )
 
         self._done = threading.Event()
@@ -268,7 +272,7 @@ class Pool:
         with self:
             futures = {}
             for task in itertools.islice(tasks, self._size):
-                _logger.debug('submit task="%r", pool="%s"', task, self._id)
+                _logger.debug('submit task="%s", pool="%s"', task.name, self._id)
                 fut = self._executor.submit(_run_task, task)
                 futures[fut] = task
 
@@ -281,8 +285,8 @@ class Pool:
                     # Fail fast on unhandled exceptions indicating a pool bug
                     if (exception := fut.exception()) is not None:
                         _logger.error(
-                            'unhandled exception in task="%r", pool="%s"',
-                            task, self.id, exc_info=exception
+                            'unhandled exception in task="%s", pool="%s"',
+                            task.name, self.id, exc_info=exception
                         )
                         self.stop()
                         raise exception
@@ -292,8 +296,8 @@ class Pool:
 
                     if result.exception is not None:
                         _logger.error(
-                            'unexpected exception in task="%r", pool="%s"',
-                            task, self.id, exc_info=result.exception
+                            'unexpected exception in task="%s", pool="%s"',
+                            task.name, self.id, exc_info=result.exception
                         )
                         self.stop()
                         raise result.exception
@@ -308,7 +312,10 @@ class Pool:
 
                 if self._state.is_running():
                     for task in itertools.islice(tasks, len(done)):
-                        _logger.debug('submit task="%r", pool="%s"', task, self._id)
+                        _logger.debug(
+                            'submit task="%s", pool="%s"',
+                            task.name, self._id
+                        )
                         fut = self._executor.submit(_run_task, task)
                         futures[fut] = task
 
@@ -656,10 +663,12 @@ def _has_console_handler(logger: logging.Logger) -> bool:
     return False
 
 
-# The three globals are only used within worker processes, which are tied to a
-# pool instance. In other words, a process may instantiate more than one Pool.
+# The five globals are only used within worker processes, which are tied to a
+# pool instance. Hence, a process may instantiate more than one Pool.
 _status_queue = None
 _terminator = None
+_max_task_run_count = None
+_task_run_count = 0
 class _worker:
     logger = _logger
 
@@ -671,7 +680,8 @@ def _initialize_worker(
     pool_id: str,
     max_tasks: None | int,
 ) -> None:
-    global _status_queue, _terminator
+    global _max_task_run_count, _status_queue, _terminator
+    _max_task_run_count = max_tasks
     status_queue._reader.close() # pyright: ignore[reportAttributeAccessIssue]
     _status_queue = status_queue
 
@@ -724,16 +734,15 @@ def _send_status_update(cmd: str, *args: Any) -> bool:
         return False
 
 
-_task_run_count = 0
-
 def _run_task(task: Task) -> Result:
     global _task_run_count
-    _task_run_count += 1
 
     try:
         return Result.from_value(task.fn(*task.args, **task.kwargs))
     except BaseException as x:
         return Result.from_exception(x)
     finally:
-        if _MAX_TASKS <= _task_run_count:
-            _send_status_update("retire")
+        if _max_task_run_count is not None:
+            _task_run_count += 1
+            if _max_task_run_count <= _task_run_count:
+                _send_status_update("retire")

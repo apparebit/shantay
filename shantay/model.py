@@ -675,7 +675,8 @@ class Config:
     # Runtime
     offline: bool = False
     workers: int = 0
-    progress: bool = False
+    max_tasks: None | int = None
+    progress: bool = True
     verbose: int = 0
 
     # DB Extract
@@ -694,7 +695,8 @@ class Config:
         return {
             "offline": False,
             "workers": 0,
-            "progress": False,
+            "max_tasks": None,
+            "progress": True,
             "verbose": 0,
             "platforms": None,
             "stratify_by_category": False,

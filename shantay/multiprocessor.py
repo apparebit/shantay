@@ -101,7 +101,7 @@ class Multiprocessor:
         try:
             frame = self._run(task)
         finally:
-            # Mark workers' staging roots as used
+            # Mark workers' staging roots as "done"
             for worker in self._pool.all_workers:
                 staging = self._storage.isolate_staging_root(worker)
                 if not staging.exists():
@@ -250,6 +250,9 @@ class Multiprocessor:
 
     def _done_with_task(self, task: Task, result: Result) -> None:
         assert self._pool is not None
+        if isinstance(result.exception, MissingPlatformError):
+            update_platforms(result.exception.args)
+
         metadata_entry, stats = result.to_inner()
         if task.kwargs["task"] == "download":
             pass
@@ -372,8 +375,6 @@ def run_on_worker(
             'unexpected error in task="%s", release="%s", filter="%s", worker=%d',
             task, release, metadata.filter or "", _PID, exc_info=x
         )
-        # Sleep for a spell so that the coordinator can catch up with logging.
-        time.sleep(1)
         raise
     finally:
         log_max_rss(release.id)

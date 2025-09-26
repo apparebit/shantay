@@ -12,7 +12,7 @@ from io import StringIO
 from pathlib import Path
 import re
 import sys
-from typing import cast, Literal, Self, TextIO
+from typing import Any, Literal, Self, TextIO
 
 from .model import Release
 
@@ -46,7 +46,7 @@ class LogMessage:
     """
 
     prefix: None | str
-    props: Mapping[str, None | bool | int | float | str ]
+    props: Mapping[str, Any]
 
     @classmethod
     def parse(cls, s: str) -> Self:
@@ -104,9 +104,9 @@ class LogMessage:
     def release(self) -> None | Release:
         """Get the release if any."""
         if "release" in self:
-            return Release.of(cast(str, self.props["release"]))
+            return Release.of(self.props["release"])
         if "file" in self:
-            date = _DATE.search(cast(str, self.props["file"]))
+            date = _DATE.search(self.props["file"])
             if date is not None:
                 return Release.of(date.group(0))
 
@@ -115,11 +115,11 @@ class LogMessage:
     def batches(self) -> None | int:
         """Get the batch number if any."""
         if "count" in self:
-            return cast(int, self.props["count"])
+            return self.props["count"]
         if "file-count" in self:
-            return cast(int, self.props["file-count"])
+            return self.props["file-count"]
         if "file" in self:
-            batch = _BATCH.search((cast(str, self.props["file"])))
+            batch = _BATCH.search(self.props["file"])
             if batch is not None:
                 return int(batch.group(0))
 
