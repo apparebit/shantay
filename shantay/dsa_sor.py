@@ -234,6 +234,9 @@ class StatementsOfReasons(Dataset):
                 release,
                 self._scan_csv_with_polars(csv_files, filter)
             )
+            # Reading CSV files generally should be logged at DEBUG level.
+            # However, if the first strategy fails, success should be logged at
+            # INFO level to maximize chances that record will make it into log.
             _logger.debug(
                 'ingested rows=%d, strategy=1, using="globbing Pola.rs", file="%s"',
                 frame.height, name
@@ -265,7 +268,7 @@ class StatementsOfReasons(Dataset):
                 )
                 frames.append(frame)
 
-                _logger.debug(
+                _logger.info(
                     'ingested rows=%d, strategy=2, using="Pola.rs", file="%s"',
                     frame.height, file_path.name
                 )
@@ -281,7 +284,7 @@ class StatementsOfReasons(Dataset):
                 frame = self.finish_frame(release, frame.lazy())
                 frames.append(frame)
 
-                _logger.debug(
+                _logger.info(
                     'ingested rows=%d, strategy=3, using="Python\'s CSV module", file="%s"',
                     frame.height, file_path.name
                 )

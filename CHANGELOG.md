@@ -3,18 +3,18 @@
 
 ## v0.6.0 (September ??, 2025)
 
-Shantay now covers all transparency DB columns in its summary statistics,
+Shantay now **covers all transparency DB columns** in its summary statistics,
 including the `content_id_ean` column introduced with the EU's transparency DB
-schema change of 2025-07-01. It also supports a range of filters up to arbitrary
-queries for distilling extracts from the transparency DB as well as finer
-granularity of summary statistics. The implementation has been restructured to
-require much less memory. As a result, the schemas of summary statistics and
-metadata have changed; all extracts and summary statistics need to be
+schema change of 2025-07-01. It also supports **more expressive filters up to
+arbitrary queries** for distilling extracts from the transparency DB as well as
+finer granularity of summary statistics. The implementation **requires much less
+memory** and logs performance metrics. Alas, the schemas of summary statistics
+and metadata have changed; extracts and summary statistics need to be
 recomputed.
 
 ### Cover All Transparency DB Columns
 
-Shantay now also captures the free-text columns `content_id_ean`,
+Shantay now includes the free-text columns `content_id_ean`,
 `decision_ground_reference_url`, `illegal_content_legal_ground`,
 `illegal_content_explanation`, `incompatible_content_ground`,
 `incompatible_content_explanation`, `decision_facts`, and `source_identity` in
@@ -22,68 +22,70 @@ its summary statistics, thus covering *all* DSA transparency DB columns.
 
 In practice, most values in these string-valued columns are repeated many times,
 just as for enum-valued columns. However, values in string-valued columns are
-not known a-priori and their distribution has a very long tail of values that
-are hardly repeated or even unique. As a result, memory requirements for summary
-statistics quadruple when including value counts for the newly added columns.
-Since the `content_id_ean`, `illegal_content_legal_ground`,
-`illegal_content_explanation`, `incompatible_content_ground`,
-`incompatible_content_explanation`, and `decision_facts` columns include the
-most text while providing little additional information, Shantay only tracks the
-number of non-empty rows for these columns by default; see below for how to
-change this default.
+not known a-priori and their distributions have very long tails. As a result,
+memory requirements for summary statistics quadruple when including value counts
+for the newly added columns. Since the `content_id_ean`,
+`illegal_content_legal_ground`, `illegal_content_explanation`,
+`incompatible_content_ground`, `incompatible_content_explanation`, and
+`decision_facts` columns include the most text while providing little additional
+information, Shantay only tracks the number of non-empty rows for these columns;
+see below for how to change this default.
 
 ### Configure DB Extract and Summary Statistics
 
 In addition to distilling the transparency DB by `--category`, Shantay now also
-supports generating extracts for one or more `--platform`s or with an arbitrary
-Pola.rs `--filter` expression. The latter may use the customary `pl` for
-Pola.rs' namespace. No other bindings, including for Python's builtins, are
-available. Still, it would be folly to use an untrusted string as the `--filter`
-argument.
+supports extracting one or more `--platform`s or using an arbitrary Pola.rs
+`--filter` expression. The latter may use the customary `pl` for Pola.rs'
+namespace. No other bindings, including for Python's builtins, are available.
+Still, it would be folly to use an untrusted string as the `--filter` argument.
 
-When invoked with `--stratify-by-category`, Shantay collects summary statistics
-broken down by platform and statement category instead of only by platform. When
-invoked with `--stratify-all-text`, Shantay collects value counts for _all_
-string-valued columns, notably including the six columns exempted by default.
-Each of these two options significantly increases Shantay's memory requirements.
-Despite Shantay 0.6's reduced memory requirements (see below), the use of either
-option may require limiting the date range or the number of worker processes. As
-described below, Shantay regularly logs necessary statistics.
+When invoked with `--stratify-by-category`, Shantay breaks down summary
+statistics by platform *and* statement category instead of only by platform.
+When invoked with `--stratify-all-text`, Shantay collects value counts for _all_
+string-valued columns, notably including the six columns exempted by default
+(see above). Each of these two options significantly increases Shantay's memory
+requirements. Despite Shantay 0.6's reduced memory requirements (see below), the
+use of either option may require limiting the date range or the number of worker
+processes. As described below, Shantay regularly logs necessary statistics.
 
 ### Lower Memory Requirements
 
-Shantay used to create summary statistics by creating several small data frames
+Shantay used to collect summary statistics by creating several small data frames
 for each release and then combining them with the much larger data frame for all
 previous releases. To ensure good performance, Shantay also rechunked the
 resulting data frame, which ensures that all data is stored in contiguous
-memory. Unfortunately, this approach resulted in fairly high memory
-requirements, with worker processes easily requiring 40 GB of RAM for processing
-a couple of months of transparency data and memory growing to well over 60 GB
-for about six months of transparency data.
+memory. Unfortunately, this resulted in high per-process memory requirements,
+with worker processes taking up 40 GB of RAM for processing a couple of months
+of transparency data and then growing to well over 60 GB after processing six
+months of transparency data.
 
 With this release, Shantay uses a different approach that avoids having to
-reallocate one very large memory segment. It processes each batch belonging to a
-daily release independently, saving the result to disk, and then combines all
-batch statistics into one data frame for each release, again saving the result
-to disk. Once all releases have been processed, Shantay combines the per-release
-frames into a complete data frame. It also preserves the per-release frames,
-which simplify incremental computation including recovery from failures.
+repeatedly reallocate one very large memory segment. Shantay now processes each
+batch belonging to a daily release by itself, saves the result to disk, and then
+combines all batch statistics into one data frame for each release, again saving
+the result to disk. Once all releases have been processed, Shantay combines the
+per-release frames into a complete data frame. It also preserves the per-release
+frames, which simplify incremental computation including recovery from failures.
 
 Under the new approach, worker processes quickly ramp up to around 10 GB of RAM
-and then slowly increase to around 17 GB after processing 22 months of
-transparency data. Latency measurements show that per-batch processing time
-slowly increases as well, from about 10s to 15s over 22 months, even though
-batch sizes remain the same. To limit these increases in memory and latency,
-Shantay now restarts worker processes every *n* releases processed. Given the
-advantages of restarting even a single worker, running with one worker process
-now is the default.
+and then grow to around 17 GB while processing 22 months of transparency data.
+Latency measurements show that per-batch processing times slowly increase as
+well, from about 10s to 15s, even though batch sizes remain the same. To mostly
+avoid limit this creeping degradation, Shantay now restarts worker processes
+every *n=90* releases. The ability to thusly restart even a single worker means
+that `--workers 1` is preferable to no worker processes.
+
+![Latency and maximum
+resident-set-size](https://raw.githubusercontent.com/apparebit/shantay/boss/viz/performance.svg)
 
 Shantay regularly logs both maximum resident-set size and the per release batch
 latency. Running `shantay.log` extracts performance statistics into a dedicated
 [CSV
 file](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.csv)
 and then visualizes the data in [SVG
-format](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.svg).
+format](https://github.com/apparebit/shantay/blob/boss/docs/artifacts/shantay-perf.svg)
+as illustrated above. (The dip in processing times around 2014-02-27 is due to
+daily releases comprising many more, smaller batches.)
 
 ### Minor Improvements and Bug Fixes
 
