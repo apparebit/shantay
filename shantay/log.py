@@ -36,10 +36,6 @@ _DATE = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 _BATCH = re.compile(r"(?<=-full-)[0-9]{5}")
 
 
-class NoArgument:
-    pass
-
-
 @dataclasses.dataclass(slots=True)
 class LogMessage:
     """
@@ -354,9 +350,7 @@ class LogEntry:
             stream.write("\n")
             stream.write(self.exc_info)
 
-
 # --------------------------------------------------------------------------------------
-
 
 @dataclasses.dataclass(frozen=True, slots=True)
 class TimeSeriesEntry:
@@ -409,9 +403,7 @@ class TimeSeriesEntry:
         else:
             stream.write(f"{self.value:_.3f}")
 
-
 # ======================================================================================
-
 
 class Printer:
     """Message the user."""
@@ -450,9 +442,7 @@ class Printer:
     def error(self, x: BaseException) -> Self:
         return self._pln(f"ERROR {self.location}{x}")
 
-
 # --------------------------------------------------------------------------------------
-
 
 class Control(enum.StrEnum):
     """The continuation of control flow."""
@@ -582,7 +572,9 @@ class Analyzer:
         if self._header is None:
             self._header = header
             return Control.RESTART
-        if header["task"] in ("info", "summarize-builtin", "visualize"):
+
+        simple_tasks = ("info", "summarize-builtin", "visualize")
+        if self._header["task"] in simple_tasks or header in simple_tasks:
             return Control.RESTART
 
         # Compare header with previous header
@@ -643,9 +635,7 @@ class Analyzer:
                     datum.write(file, with_label=True)
                     file.write("\n")
 
-
 # --------------------------------------------------------------------------------------
-
 
 def visualize(csv: Path, svg: Path, by_timestamp: bool = False) -> None:
     import polars as pl
@@ -666,7 +656,11 @@ def visualize(csv: Path, svg: Path, by_timestamp: bool = False) -> None:
     else:
         count = data.select(pl.col("label").n_unique()).item()
         labels = [f"worker-{n}" for n in range(1, count + 1)]
-        colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:count]]
+        colors = [
+            Palette[n] for n in (
+                ["BLUE", "RED", "CYAN", "PINK", "PURPLE", "ORANGE"] * (count // 6 + 1)
+            )[:count]
+        ]
 
     column = "timestamp" if by_timestamp else "release"
     min, max = data.select(
@@ -721,9 +715,7 @@ def visualize(csv: Path, svg: Path, by_timestamp: bool = False) -> None:
         y = "independent",
     ).save(svg)
 
-
 # --------------------------------------------------------------------------------------
-
 
 def get_options(argv: None | list[str] = None) -> Any:
     import argparse
