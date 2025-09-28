@@ -5,11 +5,17 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python Debugger: Module",
+            "name":"Debug Log Analysis",
+            "type":"debugpy",
+            "request":"launch",
+            "module":"shantay.log"
+        },
+        {
+            "name": "Debug Summarize Task",
             "type": "debugpy",
             "request": "launch",
             "module": "shantay",
-            "args": ["--archive", "/Volumes/dsa-sor-db/archive", "--extract", "/Volumes/dsa-sor-db/data", "--workers", "2", "distill"]
-        }
+            "args": ["--archive", "/Volumes/dsa/archive", "--workers", "2", "summarize"]
+        },
     ]
 }

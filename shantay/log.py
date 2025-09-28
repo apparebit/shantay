@@ -8,10 +8,12 @@ textual representation in Shantay's log and regenerate the same text again
 from collections.abc import Iterator, Mapping
 import dataclasses
 import datetime as dt
+import enum
 from io import StringIO
 from pathlib import Path
 import re
 import sys
+import traceback
 from typing import Any, Literal, Self, TextIO
 
 from .model import Release
@@ -45,7 +47,7 @@ class LogMessage:
     which are optional.
     """
 
-    prefix: None | str
+    prefix: str
     props: Mapping[str, Any]
 
     @classmethod
@@ -54,7 +56,7 @@ class LogMessage:
         if "=" not in s:
             return cls(s, {})
 
-        prefix = None
+        prefix = ""
 
         t = s[:s.index("=")]
         if " " in t:
@@ -92,9 +94,9 @@ class LogMessage:
     def __contains__(self, key: str) -> bool:
         return key in self.props
 
-    def has(self, *keys: str, prefix: None | str | type = NoArgument) -> bool:
+    def has(self, *keys: str, prefix: None | str = None) -> bool:
         """Determine whether the message has all given properties."""
-        if prefix is not NoArgument and prefix != self.prefix:
+        if prefix is not None and prefix != self.prefix:
             return False
         for key in keys:
             if not key in self:
@@ -170,28 +172,29 @@ class LogMessage:
 
     def write(self, stream: TextIO) -> None:
         """Write the log message to the stream."""
-        if self.prefix is not None:
+        if self.prefix != "":
             stream.write(self.prefix)
             stream.write(" ")
 
         for index, (key, value) in enumerate(self.props.items()):
             if index != 0:
                 stream.write(", ")
-
-            if value is None:
-                value ='""'
-            elif isinstance(value, bool):
-                value = f'"{value}"'.lower()
-            elif isinstance(value, int):
-                value = f'{value}'
-            elif isinstance(value, float):
-                value = f'{value}'
-            else:
-                value = f'"{value}"'
-
             stream.write(key)
             stream.write("=")
-            stream.write(value)
+            stream.write(self.format_value(value))
+
+    @classmethod
+    def format_value(cls, value: Any) -> str:
+        if value is None:
+            return '""'
+        elif isinstance(value, bool):
+            return f'"{value}"'.lower()
+        elif isinstance(value, int):
+            return f'{value}'
+        elif isinstance(value, float):
+            return f'{value}'
+        else:
+            return f'"{value}"'
 
 
 @dataclasses.dataclass(slots=True)
@@ -260,10 +263,7 @@ class LogEntry:
 
     def is_rule(self) -> bool:
         """Determine whether the log entry contains a horizontal rule as message."""
-        return (
-            self.message.prefix is not None
-            and self.message.prefix[:3] in ("───", "━━━", "═══", "▁▁▁", "___")
-        )
+        return self.message.prefix[:3] in ("───", "━━━", "═══", "▁▁▁", "___")
 
     def is_task_start(self) -> bool:
         """Determine whether the log entry marks the beginning of a task."""
@@ -283,7 +283,7 @@ class LogEntry:
     def is_key_value(self) -> bool:
         """Determine whether the log entry contains a key, value pair describing
         a task."""
-        return self.message.has("key", "value", prefix=None)
+        return self.message.has("key", "value", prefix="")
 
     def is_job_start1(self) -> bool:
         """Determine whether the log entry is the first entry for concurrently
@@ -355,6 +355,9 @@ class LogEntry:
             stream.write(self.exc_info)
 
 
+# --------------------------------------------------------------------------------------
+
+
 @dataclasses.dataclass(frozen=True, slots=True)
 class TimeSeriesEntry:
 
@@ -401,173 +404,328 @@ class TimeSeriesEntry:
         stream.write(",")
         stream.write(self.metric)
         stream.write(",")
-        stream.write(f"{self.value:.3f}")
+        if isinstance(self.value, int):
+            stream.write(f"{self.value:_}")
+        else:
+            stream.write(f"{self.value:_.3f}")
 
-    @classmethod
-    def extract(cls, log_file: str, log: Iterator[LogEntry]) -> Iterator[None | Self]:
-        coordinator = None
-        worker_count = 0
-        workers = {}
-        latest_release = {}
 
-        for entry in log:
+# ======================================================================================
+
+
+class Printer:
+    """Message the user."""
+
+    def __init__(self, stream: None | TextIO = None) -> None:
+        self._stream = stream or sys.stderr
+        self._file = ""
+        self._line = 0
+
+    @property
+    def location(self) -> str:
+        if self._file == "":
+            return ""
+        return f"{self._file}:{self._line} "
+
+    def processing(self, /, file: None | str = None, line: None | int = None) -> Self:
+        if file is not None:
+            self._file = file
+        if line is not None:
+            self._line = line
+        return self
+
+    def _pln(self, s: str) -> Self:
+        stream = self._stream
+        stream.write(s)
+        stream.write("\n")
+        stream.flush()
+        return self
+
+    def info(self, s: str) -> Self:
+        return self._pln(f"INFO {self.location}{s}")
+
+    def warn(self, s: str) -> Self:
+        return self._pln(f"WARN {self.location}{s}")
+
+    def error(self, x: BaseException) -> Self:
+        return self._pln(f"ERROR {self.location}{x}")
+
+
+# --------------------------------------------------------------------------------------
+
+
+class Control(enum.StrEnum):
+    """The continuation of control flow."""
+    RESTART = "restart"
+    CONTINUE = "continue"
+    FINISH = "finish"
+
+
+class Analyzer:
+
+    def __init__(self, log: Iterator[LogEntry], printer: Printer) -> None:
+        # Log content
+        self._log = log
+        self._entry = None
+
+        # Message printer
+        self._cli = printer
+
+        # Analysis state
+        self._header = None
+        self.reset()
+
+    def reset(self) -> None:
+        self._coordinator = None
+        self._worker_count = 0
+        self._workers = {}
+        self._releases = {}
+
+    def next(self) -> None | LogEntry:
+        if self._entry is None:
+            entry = next(self._log, None)
+        else:
+            entry, self._entry = self._entry, None
+
+        if entry is not None:
+            self._cli.processing(line=entry.line_number)
+
+        return entry
+
+    def push_back(self, entry: LogEntry) -> None:
+        if self._entry is not None:
+            raise ValueError("unable to push back second log entry")
+
+        self._entry = entry
+
+    def get_worker_id(self, entry: LogEntry) -> None | int:
+        if self._coordinator is None:
+            self._coordinator = entry.pid
+            return None
+        elif entry.pid == self._coordinator:
+            return None
+        elif entry.pid not in self._workers:
+            self._worker_count += 1
+            self._workers[entry.pid] = self._worker_count
+        return self._workers[entry.pid]
+
+    def get_release(self, entry: LogEntry) -> None | Release:
+        release = entry.message.release()
+        if release is not None:
+            self._releases[entry.pid] = release
+        return self._releases[entry.pid]
+
+    def get_metric(self, entry: LogEntry) -> None | TimeSeriesEntry:
+        if entry.is_summarized_batch():
+            batch = entry.message.batches()
+            metric = "latency"
+            value = entry.message.latency()
+        elif entry.is_max_rss():
+            batch = None
+            metric = "max-rss"
+            value = entry.message.resident_set_size()
+        elif entry.is_combined_batches():
+            batch = entry.message.batches()
+            metric = "batches"
+            value = batch
+        else:
+            return None
+
+        if value is None:
+            self._cli.warn(f"skipping log record lacking {metric} entry")
+            return None
+
+        worker_id = self.get_worker_id(entry)
+        release = self.get_release(entry)
+
+        return TimeSeriesEntry(
+            timestamp=entry.timestamp,
+            process_id=entry.pid,
+            worker_id=worker_id,
+            release=release,
+            batch=batch,
+            metric=metric,
+            value=value,
+        )
+
+    def read_task_start(self) -> None | LogEntry:
+        # Skip log entries about updating platform names
+        while (entry := self.next()) and not entry.is_task_start():
+            pass
+        return entry
+
+    def read_header(self, start: LogEntry) -> None | dict[str, Any]:
+        engine = "Multiprocessor" if "Multi" in start.message.prefix else "Processor"
+        props = {
+            "task": start.message.props["task"],
+            "engine": engine,
+        }
+
+        while (entry := self.next()) and entry.message.has("key", "value", prefix=""):
+            props[entry.message.props["key"]] = entry.message.props["value"]
+        if entry is None:
+            return None
+
+        self.push_back(entry)
+        return props
+
+    def determine_control(self) -> Control:
+        # Skip entries about platform names until entry marking task start
+        entry = self.read_task_start()
+        if entry is None:
+            return Control.FINISH
+
+        # Read header with key, value pairs
+        header = self.read_header(entry)
+        if header is None:
+            return Control.FINISH
+        if self._header is None:
+            self._header = header
+            return Control.RESTART
+        if header["task"] in ("info", "summarize-builtin", "visualize"):
+            return Control.RESTART
+
+        # Compare header with previous header
+        other = self._header
+        if not all(header.get(k) == other.get(k) for k in (
+            "task", "filter", "coverage.first"
+        )):
+            self._header = header
+            return Control.RESTART
+
+        # Read until next entry with release
+        release = None
+        while (entry := self.next()) and not (release := entry.message.release()):
+            pass
+        if entry is None:
+            return Control.FINISH
+
+        if any(abs(release - r) <= 1 for r in self._releases.values()):
+            return Control.CONTINUE
+        else:
+            return Control.RESTART
+
+    def extract(self) -> Iterator[None | TimeSeriesEntry]:
+        while (entry := self.next()):
             if entry.is_rule() and entry.module == "shantay":
-                print(
-                    f"WARN: {log_file}:{entry.line_number}: restarting extraction, "
-                    "as log record marks new run",
-                    file=sys.stderr
-                )
+                control = self.determine_control()
+                if control is Control.FINISH:
+                    self._cli.info("finishing because logged task ended")
+                    break
+                elif control is Control.CONTINUE:
+                    self._cli.info('continuing because logged task continued')
+                    continue
+                elif control is Control.RESTART:
+                    self._cli.info('restarting because logged task changed')
+                    assert self._header is not None
+                    for k, v in self._header.items():
+                        self._cli.info(f'    {k}={LogMessage.format_value(v)}')
+                    self.reset()
+                    yield None
+                    continue
 
-                coordinator = entry.pid
-                worker_count = 0
-                workers.clear()
-                latest_release.clear()
-                yield None
-                continue
+            ts_entry = self.get_metric(entry)
+            if ts_entry is not None:
+                yield ts_entry
 
-            if entry.is_summarized_batch():
-                batch = entry.message.batches()
-                metric = "latency"
-                value = entry.message.latency()
-            elif entry.is_max_rss():
-                batch = None
-                metric = "max-rss"
-                value = entry.message.resident_set_size()
-            elif entry.is_combined_batches():
-                batch = entry.message.batches()
-                metric = "batches"
-                value = batch
-            else:
-                continue
-
-            if value is None:
-                print(
-                    f'WARN: {log_file}:{entry.line_number}: skipping log record, '
-                    f'as it lacks {metric} entry',
-                    file=sys.stderr,
-                )
-                continue
-
-            if entry.pid == coordinator:
-                worker_id = None
-            else:
-                if entry.pid not in workers:
-                    worker_count += 1
-                    workers[entry.pid] = worker_count
-                worker_id = workers[entry.pid]
-
-            # Patch in latest release if missing from log entry
-            release = entry.message.release()
-            if release is None:
-                release = latest_release.get(entry.pid)
-            else:
-                latest_release[entry.pid] = release
-
-            yield cls(
-                entry.timestamp,
-                entry.pid,
-                worker_id,
-                release,
-                batch,
-                metric,
-                value,
-            )
-
-    @classmethod
-    def extract_into_file(
-        cls,
-        log_file: str,
-        log: Iterator[LogEntry],
-        output: Path
-    ) -> None:
+    def extract_into_file(self, output: Path) -> None:
         with open(output, mode="w", encoding="utf8") as file:
-            for datum in cls.extract(log_file, log):
+            TimeSeriesEntry.write_header(file, with_label=True)
+            file.write("\n")
+
+            for datum in self.extract():
                 if datum is None:
                     file.seek(0)
                     file.truncate()
-                    cls.write_header(file, with_label=True)
+                    TimeSeriesEntry.write_header(file, with_label=True)
                     file.write("\n")
                 else:
                     datum.write(file, with_label=True)
                     file.write("\n")
 
-    @classmethod
-    def visualize(
-        cls,
-        csv: Path,
-        svg: Path,
-        by_timestamp: bool = False,
-    ) -> None:
-        import polars as pl
-        import altair as alt
-        from .color import Palette
 
-        frame = pl.read_csv(csv)
-        data = frame.filter(pl.col("label").ne("coordinator"))
-        if data.height == 0:
-            data = frame
-            labels = ["coordinator"]
-            colors = [Palette.BLUE]
+# --------------------------------------------------------------------------------------
+
+
+def visualize(csv: Path, svg: Path, by_timestamp: bool = False) -> None:
+    import polars as pl
+    import altair as alt
+    from .color import Palette
+
+    frame = pl.read_csv(
+        csv, schema_overrides={"value": pl.String}
+    ).with_columns(
+        pl.col("value").str.replace_all("_", "").cast(pl.Float64)
+    )
+
+    data = frame.filter(pl.col("label").ne("coordinator"))
+    if data.height == 0:
+        data = frame
+        labels = ["coordinator"]
+        colors = [Palette.BLUE]
+    else:
+        count = data.select(pl.col("label").n_unique()).item()
+        labels = [f"worker-{n}" for n in range(1, count + 1)]
+        colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:count]]
+
+    column = "timestamp" if by_timestamp else "release"
+    min, max = data.select(
+        pl.col(column).min().alias("min"),
+        pl.col(column).max().alias("max"),
+    ).row(0)
+    if by_timestamp:
+        dot_size = 3
+    else:
+        count = Release.of(max) - Release.of(min) + 1
+
+        if count < 100:
+            dot_size = 10
+        elif count < 500:
+            dot_size = 5
         else:
-            count = data.select(pl.col("label").n_unique()).item()
-            labels = [f"worker-{n}" for n in range(1, count + 1)]
-            colors = [Palette[n] for n in ["BLUE", "RED", "GREEN", "PINK"][:count]]
+            dot_size = 2
 
-        column = "timestamp" if by_timestamp else "release"
-        min, max = data.select(
-            pl.col(column).min().alias("min"),
-            pl.col(column).max().alias("max"),
-        ).row(0)
-        if by_timestamp:
-            dot_size = 3
-        else:
-            count = Release.of(max) - Release.of(min) + 1
+    if by_timestamp:
+        x_axis = alt.X("timestamp:T").title("Timestamp")
+    else:
+        x_axis = alt.X("release:T").title("Release")
 
-            if count < 100:
-                dot_size = 10
-            elif count < 500:
-                dot_size = 5
-            else:
-                dot_size = 2
+    base = alt.Chart(
+        data
+    ).encode(
+        x_axis
+    )
 
-        if by_timestamp:
-            x_axis = alt.X("timestamp:T").title("Timestamp")
-        else:
-            x_axis = alt.X("release:T").title("Release")
+    latency = base.transform_filter(
+        alt.datum.metric == "latency"
+    ).mark_circle(
+        size=dot_size,
+    ).encode(
+        alt.Y("value:Q").title("Dots: Latency (seconds)"),
+        alt.Color("label:N").scale(domain=labels, range=colors),
+    )
 
-        base = alt.Chart(
-            data
-        ).encode(
-            x_axis
-        )
+    rss = base.transform_filter(
+        alt.datum.metric == "max-rss"
+    ).mark_line(
+    ).encode(
+        alt.Y("value:Q").title("Lines: Maximum Resident-Size Size (GB)"),
+        alt.Color("label:N").scale(domain=labels, range=colors),
+    )
 
-        latency = base.transform_filter(
-            alt.datum.metric == "latency"
-        ).mark_circle(
-            size=dot_size,
-        ).encode(
-            alt.Y("value:Q").title("Dots: Latency (seconds)"),
-            alt.Color("label:N").scale(domain=labels, range=colors),
-        )
+    chart = latency + rss
 
-        rss = base.transform_filter(
-            alt.datum.metric == "max-rss"
-        ).mark_line(
-        ).encode(
-            alt.Y("value:Q").title("Lines: Maximum Resident-Size Size (GB)"),
-            alt.Color("label:N").scale(domain=labels, range=colors),
-        )
-
-        chart = latency + rss
-
-        chart.properties(
-            width = 800,
-        ).resolve_scale(
-            y = "independent",
-        ).save(svg)
+    chart.properties(
+        width = 800,
+    ).resolve_scale(
+        y = "independent",
+    ).save(svg)
 
 
-if __name__ == "__main__":
+# --------------------------------------------------------------------------------------
+
+
+def get_options(argv: None | list[str] = None) -> Any:
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -603,27 +761,36 @@ if __name__ == "__main__":
         nargs="?",
         help="the task to perform (default: csv+svg)",
     )
-    options = parser.parse_args(sys.argv[1:])
+
+    return parser.parse_args(argv)
+
+
+def main(printer: Printer, argv: None | list[str]) -> int:
+    options = get_options(argv)
 
     log_file = options.log
     csv_file = log_file.with_suffix(".csv") if options.csv is None else options.csv
     svg_file = log_file.with_suffix(".svg") if options.svg is None else options.svg
 
     if "csv" in options.task:
-        print(
-            f'INFO: extracting metrics from log "{log_file}" into "{csv_file}"',
-            file=sys.stderr,
-        )
+        printer.info(f'extracting metrics from "{log_file}" into "{csv_file}"')
+        printer.processing(file=str(log_file))
         file_parser = LogEntry.parse_file(log_file)
-        TimeSeriesEntry.extract_into_file(str(log_file), file_parser, csv_file)
+        Analyzer(file_parser, printer).extract_into_file(csv_file)
+        printer.processing(file="")
 
     if "svg" in options.task:
-        print(
-            f'INFO: visualizing metrics from "{csv_file}" into "{svg_file}"',
-            file=sys.stderr,
-        )
-        TimeSeriesEntry.visualize(
-            csv_file,
-            svg_file,
-            by_timestamp=options.by_timestamp,
-        )
+        printer.info(f'visualizing metrics from "{csv_file}" into "{svg_file}"')
+        visualize(csv_file, svg_file, by_timestamp=options.by_timestamp)
+
+    return 0
+
+
+if __name__ == "__main__":
+    printer = Printer()
+    try:
+        sys.exit(main(printer, sys.argv[1:]))
+    except Exception as x:
+        printer.error(x)
+        traceback.print_exception(x)
+        sys.exit(1)
