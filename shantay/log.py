@@ -444,7 +444,7 @@ class Printer:
 
 # --------------------------------------------------------------------------------------
 
-class Control(enum.StrEnum):
+class Continuation(enum.StrEnum):
     """The continuation of control flow."""
     RESTART = "restart"
     CONTINUE = "continue"
@@ -559,23 +559,23 @@ class Analyzer:
         self.push_back(entry)
         return props
 
-    def determine_control(self) -> Control:
+    def process_header(self) -> Continuation:
         # Skip entries about platform names until entry marking task start
         entry = self.read_task_start()
         if entry is None:
-            return Control.FINISH
+            return Continuation.FINISH
 
         # Read header with key, value pairs
         header = self.read_header(entry)
         if header is None:
-            return Control.FINISH
+            return Continuation.FINISH
         if self._header is None:
             self._header = header
-            return Control.RESTART
+            return Continuation.RESTART
 
         simple_tasks = ("info", "summarize-builtin", "visualize")
         if self._header["task"] in simple_tasks or header in simple_tasks:
-            return Control.RESTART
+            return Continuation.RESTART
 
         # Compare header with previous header
         other = self._header
@@ -583,31 +583,31 @@ class Analyzer:
             "task", "filter", "coverage.first"
         )):
             self._header = header
-            return Control.RESTART
+            return Continuation.RESTART
 
         # Read until next entry with release
         release = None
         while (entry := self.next()) and not (release := entry.message.release()):
             pass
         if entry is None:
-            return Control.FINISH
+            return Continuation.FINISH
 
         if any(abs(release - r) <= 1 for r in self._releases.values()):
-            return Control.CONTINUE
+            return Continuation.CONTINUE
         else:
-            return Control.RESTART
+            return Continuation.RESTART
 
     def extract(self) -> Iterator[None | TimeSeriesEntry]:
         while (entry := self.next()):
             if entry.is_rule() and entry.module == "shantay":
-                control = self.determine_control()
-                if control is Control.FINISH:
+                continuation = self.process_header()
+                if continuation is Continuation.FINISH:
                     self._cli.info("finishing because logged task ended")
-                    break
-                elif control is Control.CONTINUE:
+                    return
+                elif continuation is Continuation.CONTINUE:
                     self._cli.info('continuing because logged task continued')
                     continue
-                elif control is Control.RESTART:
+                elif continuation is Continuation.RESTART:
                     self._cli.info('restarting because logged task changed')
                     assert self._header is not None
                     for k, v in self._header.items():
