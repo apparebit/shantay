@@ -1,7 +1,7 @@
 from pathlib import Path
 import unittest
 
-from shantay.metadata import Metadata
+from shantay.metadata import _FILE_TYPE, Metadata
 from shantay.model import MetadataConflict
 from shantay.schema import normalize_category, StatementCategoryProtectionOfMinors
 
@@ -48,6 +48,22 @@ class TestMetadata(unittest.TestCase):
             METADATA_2000.parent / "meta.json"
         )
         self.check_metadata_2000(metadata)
+
+    def test_find_metadata(self) -> None:
+        # Let's do some glassbox testing first...
+        bytes = METADATA_2000.read_bytes()
+        prefix = bytes[:bytes.find(b'\n', 3)]
+        self.assertTrue(prefix.endswith(b'",'))
+        self.assertTrue(_FILE_TYPE.match(prefix))
+
+        # Then some helper method testing...
+        self.assertTrue(Metadata.is_file(METADATA_2000))
+
+        # Before hitting the real method
+        self.assertEqual(
+            Metadata.find_file(METADATA_2000.parent).name,
+            METADATA_2000.name
+        )
 
     def test_merge_with_extra_data(self) -> None:
         # When one record has more data, that becomes authoritative

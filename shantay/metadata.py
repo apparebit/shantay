@@ -19,7 +19,10 @@ from .progress import NO_PROGRESS, Progress
 
 JSON_SCHEMA_ID = "https://apparebit.com/schema/shantay-metadata.schema.json"
 
-_FILE_TYPE = re.compile(fr'^\s*"@schema":\s?"{JSON_SCHEMA_ID}"')
+_FILE_TYPE = re.compile(
+    br'^\{\s*"@schema":\s*"https://apparebit.com/schema/shantay-metadata\.schema\.json",', re.DOTALL
+)
+_IS_FILE_BUFFER_LENGTH = 128
 _logger = logging.getLogger(__spec__.parent)
 
 
@@ -246,8 +249,8 @@ class Metadata[R: Release]:
         """
         if file.suffix != ".json":
             return False
-        with open(file, mode="r", encoding="utf8") as handle:
-            return _FILE_TYPE.match(handle.read(32)) is not None
+        with open(file, mode="rb") as handle:
+            return _FILE_TYPE.match(handle.read(_IS_FILE_BUFFER_LENGTH)) is not None
 
     @classmethod
     def find_file(cls, directory: Path) -> Path:
