@@ -470,7 +470,7 @@ class StatementsOfReasons(Dataset):
         glob = f"{root}/{release.directory}/{release.batch_glob}"
         _logger.debug(
             'summarizing file-count=%d, glob="%s", release="%s", filter="%s"',
-            count, glob, release, metadata.filter
+            count, glob, release, metadata.filter or ""
         )
 
         # With scan_parquet(), Shantay makes rapid progress only to get stuck at

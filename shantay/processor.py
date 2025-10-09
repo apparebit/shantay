@@ -552,7 +552,7 @@ class Processor[R: Release]:
         self._metadata.write_json(self._storage.staging_root / f"{self.stem}.json")
         _logger.info(
             'distilled release="%s", batch-count=%d, filter="%s"',
-            release.id, batch_count, self._metadata.filter
+            release.id, batch_count, self._metadata.filter or ""
         )
 
         # It's ok for a worker process to copy the batches to long-term storage
@@ -565,7 +565,7 @@ class Processor[R: Release]:
         )
         _logger.info(
             'persisted release="%s", batch-count=%d, filter="%s"',
-            release.id, batch_count, self._metadata.filter
+            release.id, batch_count, self._metadata.filter or ""
         )
 
     def list_archived_files(self, root: Path, release: Daily) -> list[str]:
@@ -756,7 +756,7 @@ class Processor[R: Release]:
         latency = time.time() - start_time
         _logger.info(
             'summarized release="%s", filter="%s", latency=%.3f, unit="sec"',
-            release.id, filter or "", latency
+            release.id, self._metadata.filter or "", latency
         )
 
         log_max_rss(release.id)
