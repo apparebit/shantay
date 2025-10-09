@@ -560,10 +560,6 @@ class Processor[R: Release]:
         # workers are concurrently copying batches to the extract root, they are
         # only adding new subdirectories and files. That does *not* hold for the
         # metadata, which must be merged and written by the coordinator.
-        self._progress.activity(
-            f"copying batches for {release.id} out of staging",
-            f"persisting {release.id}", "batch", with_rate=False,
-        ).start(batch_count)
         self.copy_distilled_data(
             self._storage.staging_root, self._storage.the_extract_root, release, batch_count
         )
@@ -601,12 +597,28 @@ class Processor[R: Release]:
 
     @annotate_error(filename_arg="target")
     def copy_distilled_data(
-        self, source: Path, target: Path, release: Daily, count: int
+        self,
+        source: Path,
+        target: Path,
+        release: Daily,
+        count: int,
+        silent: bool = True,
     ) -> None:
         """Copy the batch files between root directories."""
         source_dir = source / release.directory
         target_dir = target / release.directory
         target_dir.mkdir(parents=True, exist_ok=True)
+
+        if not silent:
+            if target == self._storage.staging_root:
+                direction = "into"
+            else:
+                direction = "out of"
+            self._progress.activity(
+                f"copying batches for {release.id} {direction} staging",
+                f"persisting {release.id}", "batch", with_rate=False,
+            ).start(count)
+
         shutil.copy(source_dir / DIGEST_FILE, target_dir / DIGEST_FILE)
         for index in range(count):
             batch = release.batch_file(index)
@@ -616,7 +628,8 @@ class Processor[R: Release]:
                 raise ValueError(f"cannot copy over existing {target_path}")
             shutil.copy(source_dir / batch, target_path)
 
-            self._progress.step(index)
+            if not silent:
+                self._progress.step(index)
 
     def stage_extract_data(self, release: Daily) -> None:
         """Stage the category-specific data for the given release."""
@@ -728,6 +741,7 @@ class Processor[R: Release]:
         """Determine summary statistics for the extract of the given release."""
         start_time = time.time()
 
+        self._progress.perform(f"summarizing subset of release {release}")
         self.stage_extract_data(release)
 
         self._dataset.summarize_release(
