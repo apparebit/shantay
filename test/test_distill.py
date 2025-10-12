@@ -103,20 +103,14 @@ class TestDistill(TestCase):
             self.assertFileEqual(workdir / CSV_FILES[1], FIXTURE / "csv" / CSV_FILES[1])
 
         with self.subTest("determine row counts"):
-            glob = f"{STAGING / release.temp_directory}/*.csv"
+            counters = Counter(batch_count=2)
+            counters += dataset.get_batch_row_counts(STAGING, release, 0)
 
-            total_rows = keyword_rows = 0
-            for csv_file in sorted(
-                (STAGING / release.temp_directory).glob("*.csv")
-            ):
-                tl, kw = dataset.get_total_row_counts(csv_file)
-                total_rows += tl
-                keyword_rows += kw
-
-            self.assertEqual(total_rows, 100)
-            self.assertEqual(keyword_rows, 12)
+            self.assertEqual(counters["total_rows"], 100)
+            self.assertEqual(counters["total_rows_with_keywords"], 12)
 
         with self.subTest("distill first batch of category data"):
+            glob = f"{STAGING / release.temp_directory}/*.csv"
             frame = dataset._read_rows(
                 csv_files=glob,
                 release=release,
@@ -126,10 +120,8 @@ class TestDistill(TestCase):
             )
             validate(frame, SCHEMA)
 
-            counters = Counter(batch_count=2)
-            counters += dataset._assemble_frame_counters(
-                frame, total_rows, keyword_rows
-            )
+            counters += dataset.get_frame_row_counts(frame, is_extract=True)
+
             self.assertEqual(counters["batch_count"], 2)
             self.assertEqual(counters["total_rows"], 100)
             self.assertEqual(counters["total_rows_with_keywords"], 12)
@@ -189,7 +181,7 @@ class TestDistill(TestCase):
                 "total_rows": 665,
                 "total_rows_with_keywords": 212,
             }
-            dataset.summarize_release(
+            dataset.summarize_release_extract(
                 STAGING,
                 release,
                 metadata,

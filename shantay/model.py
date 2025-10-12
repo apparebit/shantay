@@ -802,7 +802,7 @@ class Dataset(metaclass=ABCMeta):
         """Ingest filtered, uncompressed data."""
 
     @abstractmethod
-    def summarize_release(
+    def summarize_release_extract(
         self,
         root: Path,
         release: Daily,
@@ -810,6 +810,23 @@ class Dataset(metaclass=ABCMeta):
         collector: CollectorProtocol
     ) -> None:
         """Summarize the release extract's data."""
+
+    @abstractmethod
+    def get_batch_row_counts(
+        self,
+        root: Path,
+        release: Daily,
+        index: int,
+    ) -> Counter:
+        """Get total row counts for a batch's CSV files."""
+
+    @abstractmethod
+    def get_extract_row_counts(
+        self,
+        path: str | Path,
+    ) -> Counter:
+        """Get extract row counts for one or more parquet files with the
+        distilled data."""
 
 
 # ================================================================================================

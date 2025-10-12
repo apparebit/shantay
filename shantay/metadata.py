@@ -20,7 +20,8 @@ from .progress import NO_PROGRESS, Progress
 JSON_SCHEMA_ID = "https://apparebit.com/schema/shantay-metadata.schema.json"
 
 _FILE_TYPE = re.compile(
-    br'^\{\s*"@schema":\s*"https://apparebit.com/schema/shantay-metadata\.schema\.json",', re.DOTALL
+    br'^\{\s*"@schema":\s*"https://apparebit.com/schema/shantay-metadata\.schema\.json",',
+    re.DOTALL
 )
 _IS_FILE_BUFFER_LENGTH = 128
 _logger = logging.getLogger(__spec__.parent)

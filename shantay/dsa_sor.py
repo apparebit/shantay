@@ -7,7 +7,8 @@ from pathlib import Path
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Daily, Dataset, Filter, FilterKind, MetadataProtocol, Release
+    CollectorProtocol, Daily, Dataset, Filter, FilterKind, MetadataEntry,
+    MetadataProtocol, Release
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
@@ -121,14 +122,8 @@ class StatementsOfReasons(Dataset):
         )
         validate(frame, SCHEMA)
 
-        counter = Counter(
-            total_rows=frame.height,
-            total_rows_with_keywords=frame.select(
-                pl.col("category_specification").is_not_null().sum()
-            ).item(),
-        )
-
-        return counter, frame
+        counters = self.get_frame_row_counts(frame, is_extract=False)
+        return counters, frame
 
     @annotate_error(filename_arg="root")
     def distill_release(
@@ -144,14 +139,8 @@ class StatementsOfReasons(Dataset):
         path = root / release.temp_directory
         csv_files = f"{path}/sor-global-{release.id}-full-{index:05}-*.csv"
 
-        progress.step(index, extra="count rows")
-        total_rows = keyword_rows = 0
-        for csv_file in sorted(
-            path.glob(f"sor-global-{release.id}-full-{index:05}-*.csv")
-        ):
-            tl, kw = self.get_total_row_counts(csv_file)
-            total_rows += tl
-            keyword_rows += kw
+        progress.step(index, "count rows")
+        counters = self.get_batch_row_counts(root, release, index)
 
         frame = self._read_rows(
             csv_files=csv_files,
@@ -169,17 +158,38 @@ class StatementsOfReasons(Dataset):
 
         # Write the parquet file and immediately read it again to compute
         # digest. Experiments with a large file suggest that this performs at
-        # least as well as intercepting writes for computing the digest.
+        # least as well as intercepting writes for computing the digest,
+        # presumably because the OS cache absorbs most of that I/O.
         frame.write_parquet(path)
         with open(path, mode="rb") as file:
             digest = hashlib.file_digest(file, "sha256").hexdigest()
 
-        return digest, self._assemble_frame_counters(frame, total_rows, keyword_rows)
+        counters += self.get_frame_row_counts(frame, is_extract=True)
+        return digest, counters
 
-    def get_total_row_counts(self, path: Path) -> tuple[int, int]:
+    def get_batch_row_counts(
+        self,
+        root: Path,
+        release: Daily,
+        index: int,
+    ) -> Counter:
         """
-        Determine the number of rows and rows with keywords in the CSV file with
-        the given path.
+        Get the total and keyword row counts for the CSV files belonging to an
+        archive batch.
+        """
+        path = root / release.temp_directory
+
+        counters = Counter()
+        for csv_file in sorted(
+            path.glob(f"sor-global-{release.id}-full-{index:05}-*.csv")
+        ):
+            counters += self.get_csv_row_counts(csv_file)
+        return counters
+
+    def get_csv_row_counts(self, path: Path) -> Counter:
+        """
+        Get the total and keyword row counts for a single CSV file from an
+        archive batch.
 
         In the common case of CSV files being parsed with Pola.rs, this method
         does another pass over the CSV file. That obviously is less than ideal.
@@ -207,7 +217,33 @@ class StatementsOfReasons(Dataset):
             'counted rows=%d, rows-with-keywords=%s, file="%s"',
             total_rows, keyword_rows, path.name
         )
-        return total_rows, keyword_rows
+        return Counter(total_rows=total_rows, total_rows_with_keywords=keyword_rows)
+
+    def get_extract_row_counts(self, path: str | Path) -> Counter:
+        """
+        Get the total and keyword rows counts for a specific parquet file or all
+        parquet files matching a glob.
+        """
+        return self.get_frame_row_counts(pl.read_parquet(path), is_extract=True)
+
+    def get_frame_row_counts(
+        self, frame: pl.DataFrame, is_extract: bool = False
+    ) -> Counter:
+        """
+        Get the total and keyword row counts for the data frame. Their names
+        depend on the `is_extract` flag.
+        """
+        keyword_rows = frame.select(
+            pl.col("category_specification").is_not_null().sum(),
+        ).item()
+
+        return Counter(
+            extract_rows=frame.height,
+            extract_rows_with_keywords=keyword_rows
+        ) if is_extract else Counter(
+            total_rows=frame.height,
+            total_rows_with_keywords=keyword_rows
+        )
 
     def _read_rows(
         self,
@@ -443,23 +479,8 @@ class StatementsOfReasons(Dataset):
 
         return result
 
-    def _assemble_frame_counters(
-        self, frame: pl.DataFrame, total_rows: int, total_rows_with_keywords: int
-    ) -> Counter:
-        extract_rows = frame.height
-        extract_rows_with_keywords = frame.select(
-            pl.col("category_specification").is_not_null().sum(),
-        ).item()
-
-        return Counter(
-            total_rows=total_rows,
-            total_rows_with_keywords=total_rows_with_keywords,
-            extract_rows=extract_rows,
-            extract_rows_with_keywords=extract_rows_with_keywords,
-        )
-
     @annotate_error(filename_arg="root")
-    def summarize_release(
+    def summarize_release_extract(
         self,
         root: Path,
         release: Daily,
