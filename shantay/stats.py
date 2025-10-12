@@ -23,9 +23,12 @@ from typing import Any, cast, ClassVar, Self
 import polars as pl
 
 from .framing import (
-    aggregates, finalize, get_quantity, NOT_NULL, predicate, Quantity
+    aggregates, finalize, get_quantity, NoArgumentProvided, NO_ARGUMENT_PROVIDED,
+    NOT_NULL, predicate, Quantity
 )
-from .model import Daily, DateRange, MetadataEntry, Release, ReleaseRange
+from .model import (
+    Daily, DateRange, FullMetadataEntry, MetadataEntry, Release, ReleaseRange
+)
 from .schema import (
     CanonicalPlatformNames, CategoryValueType, check_stats_platforms, ColumnValueType,
     DurationTransform, EntityValueType, humanize, KeywordChildSexualAbuseMaterial,
@@ -62,6 +65,13 @@ def get_tags(frame: pl.DataFrame) -> list[None | str]:
     tags = []
     if None in raw_tags:
         tags.append(None)
+    for tag in raw_tags:
+        if (
+            tag is not None
+            and not tag.startswith("STATEMENT_CATEGORY_")
+            and not tag.startswith("KEYWORD_")
+        ):
+            tags.append(tag)
     for tag in raw_tags:
         if tag is not None and tag.startswith("STATEMENT_CATEGORY_"):
             tags.append(tag)
@@ -410,7 +420,9 @@ class Collector:
         pairs["batch_count"] = md.get("batch_count")
         pairs["extract_rows"] = self._source.height
         pairs["extract_rows_with_keywords"] = extract_rows_with_keywords
-        pairs["total_rows"] = self._source.height if tag is None else md.get("total_rows")
+        pairs["total_rows"] = (
+            self._source.height if tag is None else md.get("total_rows")
+        )
         pairs["total_rows_with_keywords"] = (
             extract_rows_with_keywords if tag is None
             else md.get("total_rows_with_keywords")
@@ -1151,6 +1163,76 @@ class Statistics:
             pl.col("start_date").min(),
             pl.col("end_date").max(),
         ).row(0))
+
+    def metadata(
+        self,
+        tag: NoArgumentProvided | None | str = NO_ARGUMENT_PROVIDED,
+    ) -> list[FullMetadataEntry]:
+        if tag == NO_ARGUMENT_PROVIDED:
+            tags = get_tags(self.frame())
+            if len(tags) == 1:
+                tag = tags[0]
+            else:
+                lst = ", ".join((str(t) for t in tags))
+                raise ValueError(
+                    f"statistics include {lst} as tags; please pass one as argument"
+                )
+
+        selectors = []
+        for column in ("batch_count", "extract_rows", "extract_rows_with_keywords"):
+            if tag is None:
+                selector = pl.col("tag").is_null()
+            else:
+                selector = pl.col("tag").eq(tag)
+
+            selectors.append(
+                pl.col("count").filter(
+                    selector.and_(
+                        pl.col("column").eq(column)
+                    )
+                ).alias(column)
+            )
+
+        for column in ("total_rows", "total_rows_with_keywords"):
+            selectors.append(
+                pl.col("count").filter(
+                    pl.col("tag").is_null().and_(
+                        pl.col("column").eq(column)
+                    )
+                ).alias(column)
+            )
+
+        frame = self.frame().filter(
+            pl.col("start_date").eq(pl.col("end_date")).and_(
+                pl.col("platform").is_null()
+            ).and_(
+                pl.col("category").is_null()
+            ).and_(
+                pl.col("entity").is_null()
+            ).and_(
+                pl.col("variant").is_null()
+            )
+        ).select(
+            pl.col("start_date").alias("date"),
+            *selectors,
+        )
+
+        entries = []
+        for row in frame.rows():
+            date, batches, extract_rows, extract_kw_rows, total_rows, total_kw_rows = (
+                row
+            )
+
+            entries.append(dict(
+               release=Release.of(date),
+                batch_count=batches,
+                extract_rows=extract_rows,
+                extract_rows_with_keywords=extract_kw_rows,
+                total_rows=total_rows,
+                total_rows_with_keywords=total_kw_rows,
+            ))
+
+        return entries
 
     def collect(
         self,
