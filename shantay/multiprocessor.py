@@ -9,15 +9,19 @@ import time
 from types import FrameType
 from typing import Any, cast
 
+from .digest import validate_digests
 from .logutil import log_max_rss
 from .metadata import Metadata
 from .model import (
-    Config, Daily, DataFrameType, Dataset, FullMetadataEntry, ReleaseRange, Storage
+    Config, Daily, DataFrameType, Dataset, DIGEST_FILE, FullMetadataEntry,
+    MetadataEntry, ReleaseRange, Storage
 )
 from .pool import (
     Cancelled, check_not_cancelled, Pool, Result, Task, WorkerProgress
 )
-from .processor import is_distilled, prepare_statistics, Processor
+from .processor import (
+    distilled_batch_count, maybe_update_metadata, prepare_statistics, Processor
+)
 from .progress import NO_PROGRESS, Progress
 from .schema import MissingPlatformError, update_platforms
 from .stats import Statistics
@@ -168,13 +172,26 @@ class Multiprocessor:
                 if self._task != "summarize-extract":
                     effective_task = self._task
                 else:
-                    if (
-                        release not in self._metadata
-                        or not is_distilled(self._storage.the_extract_root, release)
-                    ):
-                        effective_task = "distill"
-                    else:
+                    if (batches := distilled_batch_count(
+                        self._storage.the_extract_root, release
+                    )):
+                        if release not in self._metadata:
+                            digest = validate_digests(
+                                self._storage.the_extract_root / release.directory,
+                                release.batch_glob,
+                                self._storage.the_extract_root / release.directory /
+                                DIGEST_FILE,
+                            )
+                            self._metadata[release] = cast(MetadataEntry, dict(
+                                batch_count=batches,
+                                sha256=digest,
+                            ))
+                            self._metadata.write_json(
+                                self._storage.staging_root / f"{self.stem}.json"
+                            )
                         effective_task = "summarize-extract"
+                    else:
+                        effective_task = "distill"
 
             # Create a minimal metadata instance for the worker
             if effective_task == "summarize-extract":
@@ -218,10 +235,11 @@ class Multiprocessor:
                 release = next(self._iter, None)
         elif self._task == "distill":
             while (
-                release is not None
-                and release in self._metadata
-                and is_distilled(self._storage.the_extract_root, release)
+                release is not None and (batches := distilled_batch_count(
+                    self._storage.the_extract_root, release
+                ))
             ):
+                maybe_update_metadata(self._storage, release, batches, self._metadata)
                 release = next(self._iter, None)
         elif self._task is not None and self._task.startswith("summarize"):
             assert self._pre_existing_stats is not None

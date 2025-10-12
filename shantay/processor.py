@@ -32,7 +32,7 @@ from .util import annotate_error, scale_time
 _logger = logging.getLogger(__spec__.parent)
 
 
-class Processor[R: Release]:
+class Processor:
     """The single-process implementation of Shantay's tasks."""
 
     CHUNK_SIZE = 64 * 1_024
@@ -291,10 +291,8 @@ class Processor[R: Release]:
 
     def distill_release(self, release: Daily, cleanup: bool = True) -> None:
         """Filter data for the given release."""
-        if (
-            release in self._metadata
-            and is_distilled(self._storage.the_extract_root, release)
-        ):
+        if (batches := distilled_batch_count(self._storage.the_extract_root, release)):
+            maybe_update_metadata(self._storage, release, batches, self._metadata)
             return
 
         _logger.debug('distill release="%s"', release.id)
@@ -633,9 +631,19 @@ class Processor[R: Release]:
 
     def stage_extract_data(self, release: Daily) -> None:
         """Stage the category-specific data for the given release."""
-        batch_count = self._metadata[release]["batch_count"]
-        if is_distilled(self._storage.staging_root, release):
+        batch_count = None
+        if release in self._metadata:
+            batch_count = self._metadata[release]["batch_count"]
+        bc2 = distilled_batch_count(self._storage.staging_root, release)
+        if batch_count is not None and bc2 != 0 and batch_count != bc2:
+            raise ValueError(
+                f"metadata batch_count {batch_count} does not match {bc2} files"
+            )
+        if bc2 != 0:
             return
+        if batch_count is None:
+            maybe_update_metadata(self._storage, release, bc2, self._metadata)
+            batch_count = bc2
 
         self.copy_distilled_data(
             self._storage.the_extract_root,
@@ -652,7 +660,7 @@ class Processor[R: Release]:
                     self._storage.staging_root / release.directory,
                     release.batch_glob,
                     self._storage.staging_root / release.directory / DIGEST_FILE,
-                    digest,
+                    digest_of_digests=digest,
                 )
             except ValueError as x:
                 _logger.error(
@@ -695,7 +703,7 @@ class Processor[R: Release]:
                 )
                 break
 
-            if not is_distilled(self._storage.the_extract_root, release):
+            if distilled_batch_count(self._storage.the_extract_root, release) == 0:
                 with self._progress.nested():
                     self.distill_release(release, cleanup=False)
 
@@ -744,7 +752,7 @@ class Processor[R: Release]:
         self._progress.perform(f"summarizing subset of release {release}")
         self.stage_extract_data(release)
 
-        self._dataset.summarize_release(
+        self._dataset.summarize_release_extract(
             root=self._storage.staging_root,
             release=release,
             metadata=self._metadata,
@@ -800,6 +808,7 @@ class Processor[R: Release]:
                 update_platforms(x.args[0])
                 raise
 
+            assert stats is not None
             stats.write(stats_dir, should_finalize=True)
             _logger.debug(
                 'saved per-release summary statistics to file="%s", release="%s"',
@@ -833,7 +842,9 @@ class Processor[R: Release]:
         )
         return stats.frame()
 
-    def summarize_full_release(self, release: Daily) -> Statistics:
+    def summarize_full_release(
+        self, release: Daily, metadata_only: bool = False
+    ) -> None | Statistics:
         """
         Determine summary statistics for the given release of the full database
         and return the result.
@@ -863,33 +874,42 @@ class Processor[R: Release]:
                 self._progress.step(index, "unarchiving data")
                 self.unarchive_file(archive, release, index, name)
 
-                counts, frame = self._dataset.ingest_release(
-                    root=self._storage.staging_root,
-                    release=release,
-                    index=index,
-                    name=name,
-                    progress=self._progress
-                )
+                if metadata_only:
+                    self._progress.step(index, "count rows")
+                    full_counts += self._dataset.get_batch_row_counts(
+                        root=self._storage.staging_root,
+                        release=release,
+                        index=index,
+                    )
+                else:
+                    counts, frame = self._dataset.ingest_release(
+                        root=self._storage.staging_root,
+                        release=release,
+                        index=index,
+                        name=name,
+                        progress=self._progress
+                    )
 
-                full_counts += counts
+                    full_counts += counts
 
-                # Check_db_platforms only probes the data frame for hereto unknown
-                # platform names, raising a MissingPlatformError with such names.
-                check_db_platforms(
-                    self._storage.staging_root / self._dataset.archive_path(release),
-                    frame
-                )
+                    # Check_db_platforms only probes the data frame for hereto
+                    # unknown platform names, raising a MissingPlatformError
+                    # with such names.
+                    check_db_platforms(
+                        self._storage.staging_root/self._dataset.archive_path(release),
+                        frame
+                    )
 
-                # We process each batch by itself. When the summary statistics are
-                # finalized, those unit counts add up.
-                stats = Statistics(
-                    f"{release}-{index:05}.parquet",
-                    stratify_by_category=self._config.stratify_by_category,
-                    stratify_all_text=self._config.stratify_all_text,
-                )
-                stats.collect(release, frame, metadata_entry={"batch_count": 1})
-                stats.write(self._storage.staging_root / release.directory)
-                stats = None
+                    # We process each batch by itself. When the summary
+                    # statistics are finalized, those unit counts add up.
+                    stats = Statistics(
+                        f"{release}-{index:05}.parquet",
+                        stratify_by_category=self._config.stratify_by_category,
+                        stratify_all_text=self._config.stratify_all_text,
+                    )
+                    stats.collect(release, frame, metadata_entry={"batch_count": 1})
+                    stats.write(self._storage.staging_root / release.directory)
+                    stats = None
 
                 # A daily release may comprise over 100 GB of uncompressed CSV data.
                 # With three concurrent processes, that would be over 300 GB of disk
@@ -903,17 +923,20 @@ class Processor[R: Release]:
                     name, latency
                 )
 
-        stats_file = f"{release}.parquet"
-        _logger.debug(
-            'combining entity="batch statistics", '
-            'count=%d, glob="%s-*.parquet", file="%s"',
-            batch_count, release, stats_file
-        )
-        stats = Statistics.read_all(
-            self._storage.staging_root / release.directory,
-            glob=f"{release}-*.parquet",
-            file=stats_file
-        )
+        if metadata_only:
+            stats = None
+        else:
+            stats_file = f"{release}.parquet"
+            _logger.debug(
+                'combining entity="batch statistics", '
+                'count=%d, glob="%s-*.parquet", file="%s"',
+                batch_count, release, stats_file
+            )
+            stats = Statistics.read_all(
+                self._storage.staging_root / release.directory,
+                glob=f"{release}-*.parquet",
+                file=stats_file
+            )
 
         self._metadata[release] = cast(MetadataEntry, full_counts)
         self._metadata.write_json(self._storage.staging_root / f"{self.stem}.json")
@@ -974,15 +997,52 @@ def prepare_statistics(stem: str, storage: Storage, config: Config) -> Statistic
     return stats
 
 
-def is_distilled(root: Path, release: Daily) -> bool:
-    """Determine whether all batch files exist under the given root directory."""
+def distilled_batch_count(root: Path, release: Daily) -> int:
+    """
+    Determine the number of distilled batch files under the given root
+    directory. If the directory corresponding directory does not exist, does not
+    contain parquet files named after the release, does not contain a digest
+    file, or does not provide as many digests as there are batch files, this
+    function returns 0. Otherwise it returns the number of distilled batch
+    files, which always is at least 1.
+    """
     path = root / release.directory
+    if not path.exists():
+        return 0
+    if not (path / DIGEST_FILE).exists():
+        return 0
     batch_count = sum(1 for _ in path.glob(release.batch_glob))
     if batch_count == 0:
-        return False
-    if not (path / DIGEST_FILE).exists():
-        return False
+        return 0
     if batch_count != len(read_digest_file(path / DIGEST_FILE)):
-        return False
+        return 0
 
-    return True
+    return batch_count
+
+
+def maybe_update_metadata(
+    storage: Storage,
+    release: Daily,
+    batch_count: int,
+    metadata: Metadata
+) -> None:
+    if release in metadata:
+        return
+
+    # While there is no metadata entry, we just determined the
+    # critical missing entry, i.e., the batch count. Since data
+    # integrity matters, we might as well validate the digests, too.
+    digest = validate_digests(
+        storage.the_extract_root / release.directory,
+        release.batch_glob,
+        storage.the_extract_root / release.directory / DIGEST_FILE,
+    )
+
+    metadata[release] = cast(MetadataEntry, dict(
+        batch_count=batch_count,
+        sha256=digest,
+    ))
+
+    metadata.write_json(
+        storage.staging_root / f"{metadata.stem}.json"
+    )
