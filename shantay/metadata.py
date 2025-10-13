@@ -35,6 +35,10 @@ class Metadata[R: Release]:
     releases. The filter can be a statement category name or an arbitrary
     Pola.rs expression. Stem and filter must be consistent for statement
     categories.
+
+    The implementation internally maintains a mapping from releases as ISO date
+    strings to metadata entries, without release properties. Methods that merge
+    entries only preserve well-known properties in canonical order.
     """
 
     __slots__ = ("_stem", "_filter", "_releases")
@@ -88,7 +92,7 @@ class Metadata[R: Release]:
     def records(self) -> Iterator[FullMetadataEntry]:
         """Get an iterator over the release records."""
         for release, entry in self._releases.items():
-            yield cast(FullMetadataEntry, dict(release=release, **entry))
+            yield fill_entry(release, entry) # type: ignore
 
     def _label_range(self) -> None | tuple[str, str]:
         if len(self._releases) == 0:
@@ -220,43 +224,36 @@ class Metadata[R: Release]:
         self, release: str | R, other: MetadataEntry, strict: bool = True
     ) -> bool:
         """
-        Merge the given release metadata into this metadata instance. Previously
-        unknown values are copied over, whereas values from both instances are
-        checked for equality. This method raises a metadata conflict error upon
-        divergent entries. It returns a flag indicating whether it updated this
-        metadata.
+        Merge the given release metadata entry into this metadata instance.
+        Missing properties are copied over. In strict mode, this method checks
+        that properties present in both entries have the same value and raises
+        an exception otherwise. This method returns a flag indicating whether
+        this metadata instance was modified.
         """
         release = str(release)
-        if release not in self._releases:
-            self._releases[release] = other
-            return True
+        this = self._releases.get(release, {})
+        result = {}
 
-        this = self._releases[release]
         updated = False
         mismatched = []
 
+        # Rebuild entry to ensure canonical ordering of properties...
         for key in (
             "batch_count",
-            "total_rows",
-            "total_rows_with_keywords",
             "extract_rows",
             "extract_rows_with_keywords",
+            "total_rows",
+            "total_rows_with_keywords",
             "sha256",
         ):
-            # Copy over missing fields, check existing fields for consistency
-            if key not in this and key in other:
-                this[key] = other[key] # type: ignore
+            if key in this:
+                if strict and key in other and this[key] != other[key]: # type: ignore
+                    mismatched.append(key)
+                else:
+                    result[key] = this[key] # type: ignore
+            elif key in other:
+                result[key] = other[key] # type: ignore
                 updated = True
-            elif (
-                key in this
-                and key in other
-                and (
-                    this[key] # pyright: ignore[reportTypedDictNotRequiredAccess]
-                    != other[key] # pyright: ignore[reportTypedDictNotRequiredAccess]
-                )
-                and strict
-            ):
-                mismatched.append(key)
 
         if mismatched:
             raise MetadataConflict(
@@ -264,6 +261,9 @@ class Metadata[R: Release]:
                 f"on field(s) {", ".join(mismatched)}"
             )
 
+        # ... but only update this metadata instance if the entry changed.
+        if updated:
+            self._releases[release] = result # type: ignore
         return updated
 
     @classmethod
@@ -347,6 +347,26 @@ class Metadata[R: Release]:
 
     def __repr__(self) -> str:
         return f"Metadata({self._stem}, {len(self._releases):,} releases)"
+
+
+def fill_entry(release: str | Daily, entry: MetadataEntry) -> FullMetadataEntry:
+    """
+    Fill in the release. If the metadata entry does not yet have a `release`
+    property, this function creates a new entry with the release and the all
+    other properties of the given entry. If the entry already has a `release`
+    property, this function checks that both releases are the same before
+    returning the entry unmodified.
+    """
+    release = str(release)
+    raw_entry = cast(dict[str, object], entry)
+    if "release" in raw_entry:
+        if raw_entry["release"] != release:
+            raise MetadataConflict(
+                f"metadata release {raw_entry["release"]} does not match {release}"
+            )
+        return cast(FullMetadataEntry, raw_entry)
+
+    return cast(FullMetadataEntry, {"release": release} | raw_entry)
 
 
 def fsck(

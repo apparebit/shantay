@@ -11,7 +11,7 @@ from typing import Any, cast
 
 from .digest import validate_digests
 from .logutil import log_max_rss
-from .metadata import Metadata
+from .metadata import fill_entry, Metadata
 from .model import (
     Config, Daily, DataFrameType, Dataset, DIGEST_FILE, FullMetadataEntry,
     MetadataEntry, Release, ReleaseRange, Storage
@@ -431,18 +431,10 @@ def _run_on_worker(
         return None, None
     elif task == "distill":
         processor.distill_release(release)
-        metadata_entry = cast(
-            FullMetadataEntry,
-            {"release": str(release)} | metadata[release]
-        )
-        return metadata_entry, None
+        return fill_entry(release, metadata[release]), None
     elif task == "summarize-all":
         stats = processor.summarize_full_release(release)
-        metadata_entry = cast(
-            FullMetadataEntry,
-            {"release": str(release)} | metadata[release]
-        )
-        return metadata_entry, None
+        return fill_entry(release, metadata[release]), stats
     elif task == "summarize-extract":
         stats = Statistics(
             f"{release}.parquet",

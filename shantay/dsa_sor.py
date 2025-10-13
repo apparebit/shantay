@@ -3,10 +3,10 @@ import csv
 import hashlib
 import logging
 from pathlib import Path
-from typing import cast
 
 import polars as pl
 
+from .metadata import fill_entry
 from .model import (
     CollectorProtocol, Daily, Dataset, Filter, FilterKind, FullMetadataEntry,
     MetadataProtocol, Release
@@ -534,4 +534,4 @@ class StatementsOfReasons(Dataset):
             )
             collector.collect(release, csam, tag=KeywordChildSexualAbuseMaterial)
 
-        return cast(FullMetadataEntry, {"release": str(release)} | metadata_entry)
+        return fill_entry(release, metadata_entry)

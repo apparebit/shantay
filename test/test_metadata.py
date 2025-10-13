@@ -65,6 +65,14 @@ class TestMetadata(unittest.TestCase):
             METADATA_2000.name
         )
 
+    def test_merge_release(self) -> None:
+        metadata = Metadata.read_json(METADATA_2000)
+        self.check_metadata_2000(metadata)
+        metadata.merge_release("2042-01-01", {"batch_count": 42})
+        self.assertEqual(len(metadata), 3)
+        for record in metadata.records:
+            self.assertEqual(len(record), 2)
+
     def test_merge_with_extra_data(self) -> None:
         # When one record has more data, that becomes authoritative
         metadata = Metadata.read_json(METADATA_2000)
