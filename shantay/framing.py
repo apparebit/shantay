@@ -47,7 +47,8 @@ def is_row_within_period(period: Period) -> pl.Expr:
     `end_date` fall within the given period.
     """
     return (
-        (period.start_date <= pl.col("start_date")) & (pl.col("end_date") <= period.end_date)
+        (period.start_date <= pl.col("start_date"))
+        & (pl.col("end_date") <= period.end_date)
     )
 
 

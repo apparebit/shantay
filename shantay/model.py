@@ -808,7 +808,7 @@ class Dataset(metaclass=ABCMeta):
         release: Daily,
         metadata: MetadataProtocol,
         collector: CollectorProtocol
-    ) -> None:
+    ) -> FullMetadataEntry:
         """Summarize the release extract's data."""
 
     @abstractmethod

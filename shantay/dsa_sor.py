@@ -3,11 +3,12 @@ import csv
 import hashlib
 import logging
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
 from .model import (
-    CollectorProtocol, Daily, Dataset, Filter, FilterKind, MetadataEntry,
+    CollectorProtocol, Daily, Dataset, Filter, FilterKind, FullMetadataEntry,
     MetadataProtocol, Release
 )
 from .progress import NO_PROGRESS, Progress
@@ -486,7 +487,7 @@ class StatementsOfReasons(Dataset):
         release: Daily,
         metadata: MetadataProtocol,
         collector: CollectorProtocol,
-    ) -> None:
+    ) -> FullMetadataEntry:
         count = sum(1 for _ in (root / release.directory).glob(release.batch_glob))
         glob = f"{root}/{release.directory}/{release.batch_glob}"
         _logger.debug(
@@ -506,10 +507,18 @@ class StatementsOfReasons(Dataset):
                 pl.lit(None, dtype=pl.String).alias("content_id_ean")
             )
 
+        metadata_entry = metadata[release]
+        if "extract_rows" not in metadata_entry:
+            metadata_entry["extract_rows"] = len(extract)
+        if "extract_rows_with_keywords" not in metadata_entry:
+            metadata_entry["extract_rows_with_keywords"] = extract.select(
+                pl.col("category_specification").is_null().not_().sum()
+            ).item()
+
         collector.collect(
             release,
             extract,
-            metadata_entry=metadata[release],
+            metadata_entry=metadata_entry,
             tag=metadata.tag(),
         )
 
@@ -524,3 +533,5 @@ class StatementsOfReasons(Dataset):
                 )
             )
             collector.collect(release, csam, tag=KeywordChildSexualAbuseMaterial)
+
+        return cast(FullMetadataEntry, {"release": str(release)} | metadata_entry)

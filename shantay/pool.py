@@ -75,7 +75,9 @@ _PROGRESS = ["activity", "start", "step", "perform"]
 
 @dataclass(frozen=True, slots=True)
 class Result:
-    """A container for the result of a task execution."""
+    """
+    A container for the result of a task execution. Since
+    """
 
     value: Any
     exception: None | BaseException
@@ -91,6 +93,10 @@ class Result:
         """Create a result with the given exception while also marking task
         completion."""
         return cls(None, WorkerError(exception))
+
+    def is_value(self) -> bool:
+        """Determine whether this result is a value."""
+        return self.exception is None
 
     def to_inner(self) -> Any:
         """Get this result's value or raise its exception."""
@@ -582,7 +588,11 @@ class WorkerError(Exception):
     not survive transmission across process boundaries, this class eagerly
     captures the stack trace during instantiation and preserves that trace when
     being pickled. Upon unpickling, a worker error becomes an instance of the
-    wrapped exception, but with a remote error as cause.
+    wrapped exception, but with an error trace as cause.
+
+    This class is the equivalent of `concurrent.futures`' private
+    `_ExceptionWithTraceback`, except `WorkerError` is an exception whereas
+    `_ExceptionWithTraceback` is not.
     """
     def __init__(self, exc: BaseException) -> None:
         trace = "".join(traceback.format_exception(exc))

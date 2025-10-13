@@ -14,7 +14,7 @@ from .logutil import log_max_rss
 from .metadata import Metadata
 from .model import (
     Config, Daily, DataFrameType, Dataset, DIGEST_FILE, FullMetadataEntry,
-    MetadataEntry, ReleaseRange, Storage
+    MetadataEntry, Release, ReleaseRange, Storage
 )
 from .pool import (
     Cancelled, check_not_cancelled, Pool, Result, Task, WorkerProgress
@@ -303,16 +303,14 @@ class Multiprocessor:
 
     def _update_metadata(self, entry: FullMetadataEntry) -> Daily:
         release = entry["release"]
-        del entry["release"] # pyright: ignore[reportGeneralTypeIssues]
-        self._metadata[release] = entry
+        if self._metadata.merge_release(release, entry):
+            # This method runs in the coordinator and uses the coordinator's
+            # staging, making this write safe.
+            meta_json = f"{self.stem}.json"
+            meta_staging = self._storage.staging_root / meta_json
+            self._metadata.write_json(meta_staging)
 
-        # This method runs in the coordinator and uses the coordinator's
-        # staging, making this write safe.
-        meta_json = f"{self.stem}.json"
-        meta_staging = self._storage.staging_root / meta_json
-        self._metadata.write_json(meta_staging)
-
-        return cast(Daily, release)
+        return cast(Daily, Release.of(release))
 
     def stop(self) -> None:
         assert self._pool is not None
@@ -433,17 +431,25 @@ def _run_on_worker(
         return None, None
     elif task == "distill":
         processor.distill_release(release)
-        return cast(FullMetadataEntry, metadata[release] | dict(release=release)), None
+        metadata_entry = cast(
+            FullMetadataEntry,
+            {"release": str(release)} | metadata[release]
+        )
+        return metadata_entry, None
     elif task == "summarize-all":
         stats = processor.summarize_full_release(release)
-        return cast(FullMetadataEntry, metadata[release] | dict(release=release)), stats
+        metadata_entry = cast(
+            FullMetadataEntry,
+            {"release": str(release)} | metadata[release]
+        )
+        return metadata_entry, None
     elif task == "summarize-extract":
         stats = Statistics(
             f"{release}.parquet",
             stratify_by_category=config.stratify_by_category,
             stratify_all_text=config.stratify_all_text,
         )
-        processor.summarize_release_extract(release, stats)
-        return None, stats
+        metadata_entry = processor.summarize_release_extract(release, stats)
+        return metadata_entry, stats
     else:
         raise AssertionError(f"invalid task {task}")

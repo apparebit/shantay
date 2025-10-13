@@ -17,8 +17,8 @@ from .logutil import log_max_rss
 from .metadata import Metadata
 from .model import (
     Config, ConfigError, CollectorProtocol, Daily, DataFrameType, Dataset, DateRange,
-    DIGEST_FILE, DownloadFailed, FilterKind, MetadataEntry, Release, ReleaseRange,
-    Storage
+    DIGEST_FILE, DownloadFailed, FilterKind, FullMetadataEntry, MetadataEntry,
+    ReleaseRange, Storage
 )
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
@@ -713,9 +713,16 @@ class Processor:
                 stratify_by_category=self._config.stratify_by_category,
                 stratify_all_text=self._config.stratify_all_text,
             )
-            self.summarize_release_extract(release=release, collector=stats)
+            metadata_entry = self.summarize_release_extract(
+                release=release, collector=stats
+            )
             stats.write(stats_dir, should_finalize=True)
             stats = None
+
+            if self._metadata.merge_release(release, metadata_entry):
+                self._metadata.write_json(
+                    self._storage.staging_root / f"{self.stem}.json"
+                )
 
             self._progress.step(index + 1, extra=release.id)
 
@@ -745,14 +752,14 @@ class Processor:
 
     def summarize_release_extract(
         self, release: Daily, collector: CollectorProtocol
-    ) -> None:
+    ) -> FullMetadataEntry:
         """Determine summary statistics for the extract of the given release."""
         start_time = time.time()
 
         self._progress.perform(f"summarizing subset of release {release}")
         self.stage_extract_data(release)
 
-        self._dataset.summarize_release_extract(
+        metadata_entry = self._dataset.summarize_release_extract(
             root=self._storage.staging_root,
             release=release,
             metadata=self._metadata,
@@ -768,6 +775,7 @@ class Processor:
         )
 
         log_max_rss(release.id)
+        return metadata_entry
 
     def summarize_database(self) -> DataFrameType:
         """Determine summary statistics for the full database."""

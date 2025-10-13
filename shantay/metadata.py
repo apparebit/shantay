@@ -159,6 +159,8 @@ class Metadata[R: Release]:
                 "batch_count": data["batch_count"],
                 "total_rows": data.get("total_rows"),
                 "total_rows_with_keywords": data.get("total_rows_with_keywords"),
+                "extract_rows": data.get("total_rows"),
+                "extract_rows_with_keywords": data.get("total_rows_with_keywords"),
             }
 
         return type(self)("db", None, {k: strip(v) for k, v in self._releases.items()})
@@ -212,35 +214,57 @@ class Metadata[R: Release]:
 
     def _merge_releases(self, other: dict[str, MetadataEntry]) -> None:
         for release, entry2 in other.items():
-            if release not in self._releases:
-                self._releases[release] = entry2
-                continue
+            self.merge_release(release, entry2, strict=True)
 
-            mismatch = False
-            entry1 = self._releases[release]
-            for key in (
-                "batch_count",
-                "total_rows",
-                "total_rows_with_keywords",
-                "extract_rows",
-                "extract_rows_with_keywords",
-                "sha256",
+    def merge_release(
+        self, release: str | R, other: MetadataEntry, strict: bool = True
+    ) -> bool:
+        """
+        Merge the given release metadata into this metadata instance. Previously
+        unknown values are copied over, whereas values from both instances are
+        checked for equality. This method raises a metadata conflict error upon
+        divergent entries. It returns a flag indicating whether it updated this
+        metadata.
+        """
+        release = str(release)
+        if release not in self._releases:
+            self._releases[release] = other
+            return True
+
+        this = self._releases[release]
+        updated = False
+        mismatched = []
+
+        for key in (
+            "batch_count",
+            "total_rows",
+            "total_rows_with_keywords",
+            "extract_rows",
+            "extract_rows_with_keywords",
+            "sha256",
+        ):
+            # Copy over missing fields, check existing fields for consistency
+            if key not in this and key in other:
+                this[key] = other[key] # type: ignore
+                updated = True
+            elif (
+                key in this
+                and key in other
+                and (
+                    this[key] # pyright: ignore[reportTypedDictNotRequiredAccess]
+                    != other[key] # pyright: ignore[reportTypedDictNotRequiredAccess]
+                )
+                and strict
             ):
-                # Copy over missing fields, check existing fields for consistency
-                if (
-                    key not in entry1
-                    and key in entry2
-                ):
-                    entry1[key] = entry2[key] # type: ignore
-                elif (
-                    key in entry1
-                    and key in entry2
-                    and entry1[key] != entry2[key] # type: ignore
-                ):
-                    mismatch = True
+                mismatched.append(key)
 
-            if mismatch:
-                raise MetadataConflict(f"divergent metadata for release {release}")
+        if mismatched:
+            raise MetadataConflict(
+                f"divergent metadata for release {release} "
+                f"on field(s) {", ".join(mismatched)}"
+            )
+
+        return updated
 
     @classmethod
     def is_file(cls, file: Path) -> bool:
