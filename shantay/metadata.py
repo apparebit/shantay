@@ -7,8 +7,6 @@ import re
 import shutil
 from typing import Callable, cast, Self
 
-# from .framing import below within method
-from . import __version__
 from .digest import compute_digest, read_digest_file, write_digest_file
 from .model import (
     Daily, DateRange, DIGEST_FILE, file_stem_for, Filter, FullMetadataEntry,
@@ -60,19 +58,18 @@ class Metadata[R: Release]:
             if filter is None:
                 raise ValueError("metadata for database extract has no filter")
 
-    @classmethod
-    def for_category(cls, category: str) -> Self:
-        """Create a fresh metadata instance for the given category."""
-        return cls(file_stem_for(category), Filter.with_category(category))
+    def with_stem_and_filter(self) -> Self:
+        """Create a new metadata instance that has the same stem and filter."""
+        return type(self)(self._stem, self._filter)
 
-    def with_releases_only(self, *releases: Release) -> Self:
-        """
-        Create a new metadata instance that has the same stem and filter as this
-        one, but only has entries for the given releases.
-        """
-        return type(self)(self._stem, self._filter, {
-            str(r): cast(MetadataEntry, dict(self._releases[str(r)])) for r in releases
-        })
+    def with_release_only(self, release: Release) -> Self:
+        """Create a new metadata instance that is limited to the given release."""
+        r = str(release)
+        return type(self)(
+            self._stem,
+            self._filter,
+            {r: cast(MetadataEntry, dict(self._releases[r]))},
+        )
 
     @property
     def stem(self) -> str:

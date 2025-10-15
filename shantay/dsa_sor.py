@@ -518,20 +518,8 @@ class StatementsOfReasons(Dataset):
         collector.collect(
             release,
             extract,
+            filter=metadata.filter,
             metadata_entry=metadata_entry,
-            tag=metadata.tag(),
         )
-
-        filter = metadata.filter
-        if (
-            filter is not None
-            and filter.is_category(StatementCategoryProtectionOfMinors)
-        ):
-            csam = extract.filter(
-                pl.col("category_specification").list.contains(
-                    KeywordChildSexualAbuseMaterial
-                )
-            )
-            collector.collect(release, csam, tag=KeywordChildSexualAbuseMaterial)
 
         return fill_entry(release, metadata_entry)

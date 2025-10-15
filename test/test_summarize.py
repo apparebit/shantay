@@ -9,7 +9,7 @@ from .runtime import TestCase
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.logutil import log_rule, Size
 from shantay.metadata import Metadata
-from shantay.model import Config, Daily, ReleaseRange, Storage
+from shantay.model import Config, Daily, Filter, ReleaseRange, Storage
 from shantay.multiprocessor import Multiprocessor
 from shantay.processor import Processor
 from shantay.schema import StatementCategoryProtectionOfMinors
@@ -119,7 +119,8 @@ class TestSummarize(TestCase):
         )
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
-        metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+        filter = Filter.with_category(StatementCategoryProtectionOfMinors)
+        metadata = Metadata(filter.stem(), filter)
         metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
         processor = Processor(
@@ -148,7 +149,8 @@ class TestSummarize(TestCase):
         )
         release = Daily(2024, 3, 14)
         coverage = ReleaseRange(release, release)
-        metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+        filter = Filter.with_category(StatementCategoryProtectionOfMinors)
+        metadata = Metadata(filter.stem(), filter)
         metadata.write_json(storage.staging_root / f"{metadata.stem}.json")
 
         processor = Multiprocessor(

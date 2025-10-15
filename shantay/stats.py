@@ -27,13 +27,15 @@ from .framing import (
     NOT_NULL, predicate, Quantity
 )
 from .model import (
-    Daily, DateRange, FullMetadataEntry, MetadataEntry, Release, ReleaseRange
+    Daily, DateRange, Filter, FilterKind, FullMetadataEntry, MetadataEntry, Release,
+    ReleaseRange
 )
 from .schema import (
     CanonicalPlatformNames, CategoryValueType, check_stats_platforms, ColumnValueType,
     DurationTransform, EntityValueType, humanize, KeywordChildSexualAbuseMaterial,
-    NULL, PlatformValueType, StatisticsSchema, TagValueType, TRANSFORM_COUNT,
-    TRANSFORMS, TransformType, ValueCountsPlusTransform, VariantValueType,
+    NULL, PlatformValueType, StatementCategoryProtectionOfMinors, StatisticsSchema,
+    TagValueType, TRANSFORM_COUNT, TRANSFORMS, TransformType, ValueCountsPlusTransform,
+    VariantValueType,
 )
 from .util import scale_time
 
@@ -110,10 +112,9 @@ class Collector:
     @contextmanager
     def source_data(
         self,
-        *,
         frame: pl.DataFrame,
         release: Release,
-        tag: None | str = None,
+        tag: None | str,
     ) -> Iterator[Self]:
         """
         Create a context for the release. This context manager precomputes the
@@ -390,22 +391,26 @@ class Collector:
                     )
 
     def collect_categories(self) -> None:
-        """Collect statistics about categories. This method forces evaluation."""
+        """Collect statistics about categories."""
         for category in self._source_categories:
             with self.category_data(category) as this:
+                this.collect_body_data()
+
+    def collect_platform(self, platform) -> None:
+        """Collect statistics for the given platform."""
+        with self.platform_data(platform) as this:
+            if self._stratify_by_category:
+                this.collect_categories()
+            else:
                 this.collect_body_data()
 
     def collect_platforms(self) -> None:
         """Collect statistics about platforms. This method forces evaluation."""
         for name in self._source_platforms:
-            with self.platform_data(name) as this:
-                if self._stratify_by_category:
-                    this.collect_categories()
-                else:
-                    this.collect_body_data()
+            self.collect_platform(name)
 
     def collect_header(
-        self, metadata_entry: None | MetadataEntry = None, tag: None | str = None
+        self, tag: None | str, metadata_entry: None | MetadataEntry
     ) -> None:
         """Eagerly create a header frame with the given statistics."""
         pairs = {}
@@ -455,16 +460,33 @@ class Collector:
         self,
         release: Release,
         frame: pl.DataFrame,
-        tag: None | str = None,
+        filter: None | Filter = None,
         metadata_entry: None | MetadataEntry = None,
     ) -> None:
         """Collect all necessary data in partial data frames."""
-        if tag is None or tag.startswith("STATEMENT_CATEGORY_"):
-            with self.source_data(frame=frame, release=release, tag=tag) as this:
-                this.collect_header(metadata_entry, tag)
+        tag = None if filter is None else filter.tag()
+
+        with self.source_data(frame, release, tag) as this:
+            this.collect_header(tag, metadata_entry)
+            if filter is None or filter.kind is not FilterKind.PLATFORM:
                 this.collect_platforms()
-        else:
-            with self.source_data(frame=frame, release=release, tag=tag) as this:
+            else:
+                assert isinstance(filter.criterion, tuple)
+                for platform in filter.criterion:
+                    this.collect_platform(platform)
+
+        if filter is not None and filter.is_category(
+            StatementCategoryProtectionOfMinors
+        ):
+            frame = frame.filter(
+                pl.col("category_specification").list.contains(
+                    KeywordChildSexualAbuseMaterial
+                )
+            )
+
+            with self.source_data(
+                frame, release, KeywordChildSexualAbuseMaterial
+            ) as this:
                 this.collect_platforms()
 
     def frame(self) -> pl.DataFrame:
@@ -1238,7 +1260,7 @@ class Statistics:
         self,
         release: Release,
         frame: pl.DataFrame,
-        tag: None | str = None,
+        filter: None | Filter = None,
         metadata_entry: None | MetadataEntry = None,
     ) -> None:
         """
@@ -1251,7 +1273,13 @@ class Statistics:
                 stratify_by_category=self._stratify_by_category,
                 stratify_all_text=self._stratify_all_text,
             )
-        self._collector.collect(release, frame, tag=tag, metadata_entry=metadata_entry)
+
+        self._collector.collect(
+            release,
+            frame,
+            filter=filter,
+            metadata_entry=metadata_entry
+        )
 
     def append(self, frame: pl.DataFrame) -> None:
         """

@@ -195,9 +195,9 @@ class Multiprocessor:
 
             # Create a minimal metadata instance for the worker
             if effective_task == "summarize-extract":
-                metadata = self._metadata.with_releases_only(release)
+                metadata = self._metadata.with_release_only(release)
             else:
-                metadata = self._metadata.with_releases_only()
+                metadata = self._metadata.with_stem_and_filter()
 
             _logger.info(
                 'submitting task="%s", release="%s", pool="%s"',

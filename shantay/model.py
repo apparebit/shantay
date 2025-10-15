@@ -12,11 +12,9 @@ from typing import (
 )
 
 from .progress import NO_PROGRESS, Progress
-from .schema import humanize, normalize_category
-
-
-_NONWORD = re.compile(r'\W+')
-_SPACE_DOT = re.compile(r'[\s.]')
+from .schema import (
+    humanize, normalize_category, SOME_PLATFORMS_TAG, SOME_QUERY_TAG, to_platform_tag
+)
 
 
 # The model is a leaky insofar that Pola.rs data frames and filter expressions
@@ -577,6 +575,26 @@ class Filter:
             criterion = tuple(criterion)
         return cls(kind, criterion)
 
+    def stem(self) -> str:
+        criterion = self.criterion
+        match self.kind:
+            case FilterKind.CATEGORY:
+                assert isinstance(criterion, str)
+                return file_stem_for(criterion)
+            case FilterKind.PLATFORM:
+                assert isinstance(criterion, tuple)
+                if 1< len(criterion):
+                    return "platform-selection"
+                return (
+                    criterion[0]
+                    .lower()
+                    .replace(",", "")
+                    .replace(" ", "-")
+                    .replace(".", "-")
+                )
+            case FilterKind.EXPRESSION:
+                return "some-selection"
+
     def tag(self) -> str:
         """Get an identifying tag for this filter."""
         criterion = self.criterion
@@ -586,14 +604,11 @@ class Filter:
                 return criterion
             case FilterKind.PLATFORM:
                 assert isinstance(criterion, tuple)
-                platforms = (_SPACE_DOT.sub('_', p.upper()) for p in criterion)
-                return f"PLATFORM_{'_'.join(platforms)}"
+                if 1 < len(criterion):
+                    return SOME_PLATFORMS_TAG
+                return to_platform_tag(criterion[0])
             case FilterKind.EXPRESSION:
-                assert isinstance(criterion, str)
-                query = _NONWORD.sub(
-                    '_', criterion.replace("pl.col", "").replace("pl.lit", "")
-                )
-                return f"QUERY_{query}"
+                return SOME_QUERY_TAG
 
     def is_category(self, category: str) -> bool:
         """Determine whether this filter selects the given category."""
@@ -725,24 +740,20 @@ class MetadataProtocol[R: Release](Protocol):
 class CollectorProtocol(Protocol):
     """The protocol for incremental data frame generation."""
 
-    # The name of the main statistics frame.
-    STATISTICS = "stats"
-
     def collect(
         self,
         release: Release,
         frame: DataFrameType,
-        tag: None | str = None,
+        filter: None | Filter = None,
         metadata_entry: None | MetadataEntry = None,
     ) -> None:
         """
         Collect summary statistics for the data frame.
 
         This method should collect the standard statistics for the given data
-        frame. For a frame with data from the full database, the tag and
-        metadata should be omitted. For a frame with category-specific data,
-        the tag should be the category and the metadata should be the result
-        of extracting the category-specific data.
+        frame. For a frame with data from the full database, the filter and
+        metadata should be omitted. For a previously distilled frame, the filter
+        and metadata entry should reflect the extracted release data.
         """
 
     def frame(self) -> DataFrameType:

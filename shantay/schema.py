@@ -28,6 +28,7 @@ from dataclasses import dataclass
 import datetime as dt
 import enum
 import itertools
+import re
 from types import GenericAlias, MappingProxyType
 from typing import Any, cast, get_args, get_origin, Literal, overload, Self
 
@@ -876,9 +877,21 @@ TRANSFORM_COUNT = sum(
 # Statistics Schema
 
 
-# For now, the universe of tags are all statement categories and keywords, with
-# each keyword implying the larger category as well.
-TagValueType = pl.Enum([*StatementCategory, *Keyword])
+_SPACE_DOT = re.compile(r'[\s.]')
+
+def to_platform_tag(platform: str) -> str:
+    return _SPACE_DOT.sub("_", platform.replace(",", "").upper())
+
+PlatformTags = [to_platform_tag(p) for p in PlatformNames]
+
+SOME_PLATFORMS_TAG = "SOME_PLATFORMS_ONLY"
+SOME_QUERY_TAG = "SOME_SELECTION_ONLY"
+
+
+TagValueType = pl.Enum([
+    SOME_PLATFORMS_TAG, SOME_QUERY_TAG,
+    *StatementCategory, *Keyword, *PlatformNames
+])
 
 
 PlatformValueType = pl.Enum(PlatformNames)

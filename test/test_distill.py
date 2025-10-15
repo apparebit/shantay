@@ -10,7 +10,7 @@ from .runtime import TestCase
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
 from shantay.metadata import Metadata
-from shantay.model import Config, Daily, ReleaseRange, Storage
+from shantay.model import Config, Daily, Filter, ReleaseRange, Storage
 from shantay.processor import Processor
 from shantay.schema import (
     SCHEMA, StatementCategoryProtectionOfMinors, StatisticsSchema, validate
@@ -64,7 +64,8 @@ class TestDistill(TestCase):
             )
             release = Daily(2024, 3, 14)
             coverage = ReleaseRange(release, release)
-            metadata = Metadata.for_category(StatementCategoryProtectionOfMinors)
+            filter = Filter.with_category(StatementCategoryProtectionOfMinors)
+            metadata = Metadata(filter.stem(), filter)
             processor = Processor(
                 dataset=dataset,
                 storage=storage,
@@ -175,7 +176,7 @@ class TestDistill(TestCase):
 
         with self.subTest("analyze release data"):
             collector = Collector()
-            metadata = metadata.with_releases_only()
+            metadata = metadata.with_stem_and_filter()
             metadata[release] = {
                 "batch_count": 2,
                 "total_rows": 665,

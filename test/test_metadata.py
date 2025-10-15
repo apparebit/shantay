@@ -2,7 +2,7 @@ from pathlib import Path
 import unittest
 
 from shantay.metadata import _FILE_TYPE, Metadata
-from shantay.model import MetadataConflict
+from shantay.model import Filter, MetadataConflict
 from shantay.schema import normalize_category, StatementCategoryProtectionOfMinors
 
 ROOT = Path(__file__).parent
@@ -29,11 +29,12 @@ class TestMetadata(unittest.TestCase):
             {"release": "1999-12-31", "batch_count": 665},
             {"release": "2000-01-01", "batch_count":   1},
         ])
-        self.assertEqual(metadata.tag(), "PLATFORM_END_OF_THE_WORLD")
+        self.assertEqual(metadata.tag(), "SOME_PLATFORMS_ONLY")
 
     def test_new_metadata(self) -> None:
         # Instantiate metadata
-        metadata = Metadata.for_category(normalize_category(CATEGORY))
+        filter = Filter.with_category(CATEGORY)
+        metadata = Metadata(filter.stem(), filter)
         self.assertEqual(metadata.stem, "protection-of-minors")
         assert metadata.filter is not None
         self.assertEqual(metadata.filter.kind, "category")
