@@ -183,6 +183,10 @@ class Daily(Release):
         assert 1 <= self.month <= 12
         assert 1 <= self.day <= _days_in_month(self.year, self.month)
 
+    @classmethod
+    def from_date(cls, date: dt.date) -> Self:
+        return cls(date.year, date.month, date.day)
+
     @property
     def id(self) -> str:
         return f"{self.year}-{self.month:02}-{self.day:02}"

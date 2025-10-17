@@ -3,19 +3,19 @@ import csv
 import hashlib
 import logging
 from pathlib import Path
+from typing import cast
 
 import polars as pl
 
 from .metadata import fill_entry
 from .model import (
     CollectorProtocol, Daily, Dataset, Filter, FilterKind, FullMetadataEntry,
-    MetadataProtocol, Release
+    MetadataEntry, MetadataProtocol, Release
 )
 from .progress import NO_PROGRESS, Progress
 from .schema import (
     BASE_SCHEMA_V1, BASE_SCHEMA_V2, CanonicalPlatformNames,
-    KeywordChildSexualAbuseMaterial, PARTIAL_SCHEMA, SCHEMA,
-    StatementCategoryProtectionOfMinors, TerritorialAlias, validate
+    PARTIAL_SCHEMA, SCHEMA, TerritorialAlias, validate
 )
 from .util import annotate_error
 
@@ -507,7 +507,9 @@ class StatementsOfReasons(Dataset):
                 pl.lit(None, dtype=pl.String).alias("content_id_ean")
             )
 
-        metadata_entry = metadata[release]
+        metadata_entry = metadata[release] if release in metadata else {}
+        if "batch_count" not in metadata_entry:
+            metadata_entry["batch_count"] = count
         if "extract_rows" not in metadata_entry:
             metadata_entry["extract_rows"] = len(extract)
         if "extract_rows_with_keywords" not in metadata_entry:
@@ -519,7 +521,7 @@ class StatementsOfReasons(Dataset):
             release,
             extract,
             filter=metadata.filter,
-            metadata_entry=metadata_entry,
+            metadata_entry=cast(MetadataEntry, metadata_entry),
         )
 
-        return fill_entry(release, metadata_entry)
+        return fill_entry(release, cast(MetadataEntry, metadata_entry))
