@@ -11,21 +11,22 @@ persistent root directories. Or so I hope...
 """
 
 from collections import Counter
-from collections.abc import Iterator, Sequence
+from collections.abc import Hashable, Iterable, Iterator, Sequence
 import dataclasses
 import datetime as dt
 import enum
 import logging
 from pathlib import Path
+import re
 import shutil
-from typing import Any, cast, ClassVar, final, get_origin
+from typing import Any, cast, ClassVar, final, get_origin, Self
 from urllib.request import Request, urlopen
 import zipfile
 
 from .digest import compute_digest
 from .dsa_sor import StatementsOfReasons
 from .metadata import Metadata
-from .model import Daily, DownloadFailed, Filter, MetadataEntry
+from .model import Daily, DateRange, DownloadFailed, Filter, MetadataEntry, ReleaseRange
 from .pool import check_not_cancelled
 from .progress import NO_PROGRESS, Progress
 from .schema import check_db_platforms
@@ -35,7 +36,7 @@ from .stats import Statistics
 _logger = logging.getLogger(__file__)
 
 
-class Resource:
+class Resource(Hashable):
     """
     An abstract data resource.
 
@@ -69,10 +70,22 @@ class Resource:
         )
 
     @final
+    def is_config_var(self) -> bool:
+        """Determine whether this resource is a configuration variable. Subclasses
+        must not override this method."""
+        return False
+
+    @final
     def is_dyn_var(self) -> bool:
         """Determine whether this resource is a dynamic variable. Subclasses
         must not override this method."""
         return False
+
+    def is_transient(self) -> bool:
+        return False
+
+    def name(self) -> str:
+        raise NotImplementedError
 
     def directory(self) -> Path:
         """Get the directory containing all of this resource's files. This path
@@ -92,12 +105,41 @@ class Resource:
         """If this resource may have more than one file, get the glob pattern."""
         return NotImplemented
 
-    def depends_on(self) -> "Sequence[Resource]":
-        """Compute all of this resource's data dependencies. Before the runtime
-        invokes this method, it ensures that the values of all dynamic variables
-        have been computed. Subclasses that have a dynamic variable as field
-        value must implement this method."""
-        return NotImplemented
+    def exists(self, root: Path) -> bool:
+        """
+        Determine whether this resource exists under the given root. This method
+        returns a success if at least one of the files identified by the resource
+        as persistent exists.
+
+        """
+        directory = root / self.directory()
+        if (file := self.file()) is NotImplemented:
+            return all(f.exists() for f in directory.glob(self.file_pattern()))
+        else:
+            return (directory / file).exists()
+
+    @final
+    def static_dependencies(self) -> "Sequence[Resource]":
+        """
+        Compute the resource's statically known direct data dependencies. This
+        includes the resource's variables, but no resources that can only be
+        determined with those variable values.
+        """
+        assert dataclasses.is_dataclass(self)
+
+        return [
+            getattr(self, f.name)
+            for f in dataclasses.fields(self)
+            if self.is_subclass(f.type)
+        ]
+
+    def dynamic_dependencies(self) -> "Sequence[Resource]":
+        """
+        Compute the resource's dynamic direct data dependencies. Each such
+        dependency depends on the value of a variable. The runtime fills in the
+        values of all variables before invoking this method.
+        """
+        return []
 
     def __call__(self, root: Path) -> Any:
         """Compute the data for this resource. Upon invocation by the runtime, all
@@ -106,34 +148,6 @@ class Resource:
         method may optionally accept a `Progress` argument; it should default to
         `NO_PROGRESS`. Subclasses must implement this method."""
         raise NotImplementedError
-
-    def has_files(self) -> bool:
-        """Determine whether this resource has more than one file."""
-        if self.file() is NotImplemented == self.file_pattern() is NotImplemented:
-            raise AssertionError(
-                f'{type(self)} should implement one of `file()` and `file_pattern()`'
-            )
-
-        return self.file() is NotImplemented
-
-    def dependencies(self) -> "Sequence[Resource]":
-        """Compute the resource's statically known direct data dependencies."""
-        assert dataclasses.is_dataclass(self)
-
-        resources = []
-        seen_before = set()
-        for field in dataclasses.fields(self):
-            if not self.is_subclass(field.type):
-                continue
-
-            value = getattr(self, field.name)
-            if value.is_dyn_var():
-                value = value.dependencies()[0]
-
-            if value not in seen_before:
-                seen_before.add(value)
-                resources.append(value)
-        return resources
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -155,12 +169,18 @@ class ConfigVariable[V: dt.date](Resource):
     def is_config_var(self) -> bool: # type: ignore
         return True
 
+    def name(self) -> str:
+        return to_snake_case(type(self).__name__)
+
+    def exists(self, root: Path) -> bool:
+        return self.value is not None
+
+    def static_dependencies(self) -> Sequence[Resource]: # type: ignore
+        return []
+
     def __call__(self, __ignored: None | Path = None) -> V:
         """Compute this dynamic variable's value."""
         raise NotImplementedError
-
-    def dependencies(self) -> Sequence[Resource]:
-        return []
 
 
 class StartDate(ConfigVariable[dt.date]):
@@ -212,12 +232,18 @@ class DynamicVariable[V: int | str](Resource):
     def is_dyn_var(self) -> bool: # type: ignore
         return True
 
+    def name(self) -> str:
+        return to_snake_case(type(self).__name__)
+
+    def exists(self, root: Path) -> bool:
+        return self.value is not None
+
+    def static_dependencies(self) -> Sequence[Resource]: # type: ignore
+        return [self.resource]
+
     def __call__(self, root: Path) -> V:
         """Compute this dynamic variable's value."""
         raise NotImplementedError
-
-    def dependencies(self) -> Sequence[Resource]:
-        return [self.resource]
 
 # --------------------------------------------------------------------------------------
 
@@ -228,7 +254,7 @@ class ReleaseArchive(Resource):
 
     date: dt.date
 
-    def release(self) -> str:
+    def name(self) -> str:
         return self.date.isoformat()
 
     def description(self) -> str:
@@ -241,12 +267,12 @@ class ReleaseArchive(Resource):
         return Path(f"{self.date.year}") / f"{self.date.month:02}"
 
     def file(self) -> str:
-        return f"sor-global-{self.release()}-full.zip"
+        return f"sor-global-{self.name()}-full.zip"
 
     def __call__(self, root: Path, progress: Progress = NO_PROGRESS) -> int:
         progress.activity(
-            f"downloading data for release {self.release()}",
-            f"downloading {self.release()}", "byte", with_rate=True,
+            f"downloading data for release {self.name()}",
+            f"downloading {self.name()}", "byte", with_rate=True,
         )
 
         url = self.url(self.file())
@@ -283,8 +309,8 @@ class ReleaseDigest(Resource):
 
     archive: ReleaseArchive
 
-    def release(self) -> str:
-        return self.archive.release()
+    def name(self) -> str:
+        return self.archive.name()
 
     def description(self) -> str:
         return f'downloading entity="release digest", url="{self.url(self.file())}"'
@@ -348,14 +374,17 @@ class ReleaseBatch(Resource):
     def date(self) -> dt.date:
         return self.archive.date
 
-    def release(self) -> str:
-        return self.archive.release()
+    def name(self) -> str:
+        return self.archive.name()
+
+    def alias(self) -> str:
+        return f"sor-global-{self.name()}-full-{self.index:05}.csv.zip"
+
+    def is_transient(self) -> bool:
+        return True
 
     def description(self) -> str:
-        return (
-            'unarchiving entity="batch archive", '
-            f'name="{self.archive.file()[:-4]}-{self.index:05}.csv.zip"'
-        )
+        return f'unarchiving entity="batch archive", name="{self.alias()}"'
 
     def directory(self) -> Path:
         return self.archive.directory() / f"{self.date().day:02}" / "batch"
@@ -365,10 +394,129 @@ class ReleaseBatch(Resource):
 
     def __call__(self, root: Path) -> None:
         with zipfile.ZipFile(root / self.archive.path()) as archive:
-            name = f'{self.archive.file()[:-4]}-{self.index:05}.csv.zip'
-            with archive.open(name) as source_file:
+            with archive.open(self.alias()) as source_file:
                 with zipfile.ZipFile(source_file) as nested_archive:
                     nested_archive.extractall(self.directory())
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class BatchSummary(Resource):
+
+    batch_data: ReleaseBatch
+
+    def date(self) -> dt.date:
+        return self.batch_data.date()
+
+    def name(self) -> str:
+        return self.batch_data.name()
+
+    def index(self) -> int:
+        return self.batch_data.index
+
+    def is_transient(self) -> bool:
+        return True
+
+    def description(self) -> str:
+        return (
+            f'computing entity="summary statistics", batch={self.index()}, '
+            f'release="{self.name()}"'
+        )
+
+    def directory(self) -> Path:
+        return self.batch_data.archive.directory() / f"{self.date().day:02}" / "stats"
+
+    def file(self) -> str:
+        return f'{self.name()}-{self.index():05}.stats.parquet'
+
+    def __call__(self, root: Path) -> Counter:
+        release = Daily.from_date(self.date())
+
+        counters, frame = StatementsOfReasons().ingest_release(
+            root=root,
+            release=release,
+            index=self.index(),
+            name=self.batch_data.alias(),
+        )
+
+        # Check_db_platforms only probes the data frame for hereto
+        # unknown platform names, raising a MissingPlatformError
+        # with such names.
+        check_db_platforms(root / self.batch_data.archive.path(), frame)
+
+        # We process each batch by itself. When the summary
+        # statistics are finalized, those unit counts add up.
+        stats = Statistics(self.file())
+        stats.collect(release, frame, metadata_entry={"batch_count": 1})
+        stats.write(root / self.directory())
+
+        return counters
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReleaseSummary(Resource):
+
+    archive: ReleaseArchive
+    digest: ReleaseDigest
+    batch_count: BatchCount
+
+    def __init__(self, archive: ReleaseArchive) -> None:
+        super().__setattr__("archive", archive)
+        super().__setattr__("digest", ReleaseDigest(archive))
+        super().__setattr__("batch_count", BatchCount(archive))
+
+    def date(self) -> dt.date:
+        return self.archive.date
+
+    def name(self) -> str:
+        return self.archive.name()
+
+    def directory(self) -> Path:
+        return Path("db.stats")
+
+    def file(self) -> str:
+        return f'{self.name()}.stats.parquet'
+
+    def dynamic_dependencies(self) -> Sequence[Resource]:
+        return [
+            BatchSummary(ReleaseBatch(
+                self.archive,
+                index
+            )) for index in range(self.batch_count.value)
+        ]
+
+    def __call__(self, root: Path) -> None:
+        stats = Statistics.read_all(
+            root / BatchSummary(ReleaseBatch(self.archive, 0)).directory(),
+            glob=f'{self.name()}-?????.stats.parquet',
+            file=self.file(),
+        )
+        stats.write(root / self.directory(), should_finalize=True)
+
+
+class DatabaseSummary(Resource):
+
+    start_date: StartDate
+    end_date: EndDate
+
+    def directory(self) -> Path:
+        return Path(".")
+
+    def file(self) -> str:
+        return "db.stats.parquet"
+
+    def dynamic_dependencies(self) -> Sequence[Resource]:
+        return [
+            ReleaseSummary(ReleaseArchive(date))
+            for date in self.start_date.to(self.end_date)
+        ]
+
+    def __call__(self, root: Path) -> None:
+        stats = Statistics.read_all(
+            root,
+            glob=f"{root}/db.stats/????-??-??.stats.parquet",
+            file=self.file(),
+        )
+        stats.write(root, should_finalize=True)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -380,8 +528,8 @@ class BatchExtract(Resource):
     def date(self) -> dt.date:
         return self.batch_data.date()
 
-    def release(self) -> str:
-        return self.batch_data.release()
+    def name(self) -> str:
+        return self.batch_data.name()
 
     def index(self) -> int:
         return self.batch_data.index
@@ -389,14 +537,44 @@ class BatchExtract(Resource):
     def description(self) -> str:
         return (
             f'distilling batch={self.index()}, '
-            f'release="{self.release()}", filter="{self.filter}"'
+            f'release="{self.name()}", filter="{self.filter}"'
         )
 
     def directory(self) -> Path:
         return self.batch_data.directory().parent / "extract"
 
     def file(self) -> str:
-        return f"{self.release()}-{self.index():05}.parquet"
+        return f"{self.name()}-{self.index():05}.parquet"
+
+    def __call__(self, root: Path) -> None:
+        digest, counters = StatementsOfReasons().distill_release(
+            root=root,
+            release=Daily.from_date(self.batch_data.date()),
+            index=self.index(),
+            name=self.batch_data.alias(),
+            filter=self.filter,
+            # PROGRESS???
+        )
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class ReleaseExtract(Resource):
+
+    archive: ReleaseArchive
+    digest: ReleaseDigest
+    batch_count: BatchCount
+    filter: Filter
+
+    def __init__(self, archive: ReleaseArchive) -> None:
+        super().__setattr__("archive", archive)
+        super().__setattr__("digest", ReleaseDigest(archive))
+        super().__setattr__("batch_count", BatchCount(archive))
+
+    def dynamic_dependencies(self):
+        return [
+            BatchExtract(ReleaseBatch(self.archive, index), self.filter)
+            for index in range(self.batch_count.value)
+        ]
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -407,8 +585,8 @@ class BatchExtractSummary:
     def date(self) -> dt.date:
         return self.batch_extract.date()
 
-    def release(self) -> str:
-        return self.batch_extract.release()
+    def name(self) -> str:
+        return self.batch_extract.name()
 
     def index(self) -> int:
         return self.batch_extract.index()
@@ -416,14 +594,14 @@ class BatchExtractSummary:
     def description(self) -> str:
         return (
             f'computing entity="summary statistics", batch={self.index()}, '
-            f'release="{self.release()}", filter="{self.batch_extract.filter}"'
+            f'release="{self.name()}", filter="{self.batch_extract.filter}"'
         )
 
     def directory(self) -> Path:
         return self.batch_extract.directory().with_suffix(".stats")
 
     def file(self) -> str:
-        return f'{self.release()}-{self.index():05}.stats.parquet'
+        return f'{self.name()}-{self.index():05}.stats.parquet'
 
     def __call__(self, root: Path) -> None:
         release = Daily.from_date(self.date())
@@ -444,112 +622,188 @@ class BatchExtractSummary:
         stats.write(root / self.directory())
 
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class BatchSummary(Resource):
 
-    batch_data: ReleaseBatch
 
-    def date(self) -> dt.date:
-        return self.batch_data.date()
+class Runtime:
 
-    def release(self) -> str:
-        return self.batch_data.release()
+    def __init__(self, date_range: DateRange, staging: Path, archive: Path) -> None:
+        self._pending: list[Resource] = []
+        self._scheduling = []
+        self._staging = staging
+        self._archive = archive
+        self._date_range = date_range
+        self._dependency_table = dict()
+        self._metadata = {} # Persist!!!
 
-    def index(self) -> int:
-        return self.batch_data.index
+    def step(self) -> None:
+        while True:
+            resource = self._pending[-1]
 
-    def description(self) -> str:
-        return (
-            f'computing entity="summary statistics", batch={self.index()}, '
-            f'release="{self.release()}"'
+            if resource.exists(self._staging):
+                self._pending.pop()
+                return
+            if not resource.is_transient() and resource.exists(self._archive):
+                self.copy(resource, self._archive, self._staging)
+                return
+
+            dependencies = self.get_dependencies(resource)
+            if dependencies is None:
+                continue
+
+
+    def is_available(self, resource: Resource) -> bool:
+        return resource.exists(self._staging) or (
+            not resource.is_transient() and resource.exists(self._archive)
         )
 
-    def directory(self) -> Path:
-        return self.batch_data.directory().with_suffix(".stats")
+    def schedule(self, resource: Resource) -> None:
+        self._pending.append(resource)
 
-    def file(self) -> str:
-        return f'{self.release()}-{self.index():05}.stats.parquet'
+    def instantiate_top(self) -> bool:
+        resource = self._pending[-1]
 
-    def __call__(self, root: Path) -> Counter:
-        release = Daily.from_date(self.date())
+        if resource.exists(self._staging):
+            self._pending.pop()
+            return True
+        if not resource.is_transient() and resource.exists(self._archive):
+            self.copy(resource, self._archive, self._staging)
+            self._pending.pop()
+            return True
 
-        counters, frame = StatementsOfReasons().ingest_release(
-            root=root,
-            release=release,
-            index=self.index(),
-            name=self.batch_data.file(),
+        dependencies = self.get_dependencies(resource)
+        if dependencies is None:
+            return False
+
+        pending_count = len(self._pending)
+        for dependency in dependencies:
+            if not self.is_available(dependency):
+                self.schedule(dependency)
+        if pending_count < len(self._pending):
+            return False
+
+        if resource.is_dyn_var():
+            result = resource(self._staging)
+            object.__setattr__(resource, "value", result)
+        else:
+            resource.directory().mkdir(parents=True, exist_ok=True)
+            resource(self._staging)
+            if not resource.is_transient():
+                self.copy(resource, self._staging, self._archive)
+
+        self._pending.pop()
+        return True
+
+    def get_metadata(self, release: str) -> dict[str, Any]:
+        return self._metadata.setdefault(release, {})
+
+    def get_dependencies(self, resource: Resource) -> None | Sequence[Resource]:
+        # Look for cached dependencies
+        dependencies = self._dependency_table.get(resource)
+        if dependencies is not None:
+            return dependencies
+
+        # Determine static dependencies
+        static_dependencies = resource.static_dependencies()
+        variables = only_variables(static_dependencies)
+        if len(variables) == 0:
+            # No variables -> these are the only dependencies
+            all_dependencies = without_duplicates(static_dependencies)
+            self._dependency_table[resource] = all_dependencies
+            return all_dependencies
+
+        # Check variables
+        pending_count = len(self._pending)
+        for variable in variables:
+            if variable.is_config_var():
+                self.resolve_config_var(cast(ConfigVariable, variable))
+            elif variable.is_dyn_var():
+                self.resolve_dyn_var(cast(DynamicVariable, variable))
+
+        if pending_count < len(self._pending):
+            # resolve_dyn_var scheduled work
+            return None
+
+        # All variables have been resolved; determine dynamic dependencies
+        dynamic_dependencies = resource.dynamic_dependencies()
+        if has_variable(dynamic_dependencies):
+            raise MisconfigurationError(
+                f"{type(resource)} has variables as dynamic dependencies"
+            )
+
+        all_dependencies = without_duplicates(
+            (*without_variables(static_dependencies), *dynamic_dependencies)
         )
+        self._dependency_table[resource] = all_dependencies
+        return all_dependencies
 
-        # Check_db_platforms only probes the data frame for hereto
-        # unknown platform names, raising a MissingPlatformError
-        # with such names.
-        check_db_platforms(root / self.batch_data.archive.path(), frame)
+    def resolve_config_var(self, variable: ConfigVariable) -> None:
+        if variable.value is not None:
+            return
 
-        # We process each batch by itself. When the summary
-        # statistics are finalized, those unit counts add up.
-        stats = Statistics(self.file())
-        stats.collect(release, frame, metadata_entry={"batch_count": 1})
-        stats.write(root / self.directory())
+        if isinstance(variable, StartDate):
+            object.__setattr__(variable, "value", self._date_range.first)
+        elif isinstance(variable, EndDate):
+            object.__setattr__(variable, "value", self._date_range.last)
+        else:
+            raise AssertionError(f"unsupported configuration variable {type(variable)}")
 
-        return counters
+    def resolve_dyn_var(self, variable: DynamicVariable) -> None:
+        if variable.value is not None:
+            return
 
+        key = variable.name()
+        entry = self.get_metadata(variable.resource.name())
+        if key in entry:
+            object.__setattr__(variable, "value", entry[key])
+            return
 
-@dataclasses.dataclass(frozen=True, slots=True)
-class ReleaseSummary(Resource):
-    archive: ReleaseArchive
-    batch_count: BatchCount
+        self.schedule(variable)
 
-    def date(self) -> dt.date:
-        return self.archive.date
-
-    def release(self) -> str:
-        return self.archive.release()
-
-    def directory(self) -> Path:
-        return Path("db.stats")
-
-    def file(self) -> str:
-        return f'{self.release()}.stats.parquet'
-
-    def depends_on(self) -> Sequence[Resource]:
-        return [
-            BatchSummary(ReleaseBatch(
-                self.archive,
-                index
-            )) for index in range(self.batch_count.value)
-        ]
-
-    def __call__(self, root: Path) -> None:
-        stats = Statistics.read_all(
-            root / BatchSummary(ReleaseBatch(self.archive, 0)).directory(),
-            glob=f'{self.release()}-?????.stats.parquet',
-            file=self.file(),
-        )
-        stats.write(root / self.directory(), should_finalize=True)
+    def copy(self, resource: Resource, source: Path, target: Path) -> None:
+        if resource.file() is NotImplemented:
+            for path in source.glob(resource.file_pattern()):
+                safe_copy(path, target / resource.directory() / path.name)
+        else:
+            safe_copy(
+                source / resource.directory() / resource.file(),
+                target / resource.directory() / resource.file(),
+            )
 
 
-class DatabaseSummary(Resource):
+def to_snake_case(name: str) -> str:
+    return re.sub(r"(?<!^)([A-Z])", "_\1", name).lower()
 
-    start_date: StartDate
-    end_date: EndDate
 
-    def directory(self) -> Path:
-        return Path(".")
+def has_variable(resources: Sequence[Resource]) -> bool:
+    return any(r.is_config_var() or r.is_dyn_var() for r in resources)
 
-    def file(self) -> str:
-        return "db.stats.parquet"
 
-    def __call__(self, root: Path) -> None:
-        stats = Statistics.read_all(
-            root,
-            glob=f"{root}/db.stats/????-??-??.stats.parquet",
-            file=self.file(),
-        )
-        stats.write(root, should_finalize=True)
+def only_variables(resources: Iterable[Resource]) -> Sequence[Resource]:
+    return [r for r in resources if r.is_config_var() or r.is_dyn_var()]
 
-    def depends_on(self) -> Sequence[Resource]:
-        return [
-            ReleaseSummary(archive, BatchCount(archive))
-            for date in self.start_date.to(self.end_date)
-            for archive in (ReleaseArchive(date),)
-        ]
+
+def without_variables(resources: Iterable[Resource]) -> Sequence[Resource]:
+    return [r for r in resources if not r.is_config_var() and not r.is_dyn_var()]
+
+
+def without_duplicates(resources: Iterable[Resource]) -> Sequence[Resource]:
+    deduplicated = []
+    seen_before = set()
+    for resource in resources:
+        if resource in seen_before:
+            continue
+        seen_before.add(resource)
+        deduplicated.append(resource)
+    return deduplicated
+
+
+def safe_copy(source: Path, target: Path) -> None:
+    if target.exists():
+        raise ValueError(f"copy target {target} already exists")
+    tmp = target.with_suffix(f".tmp{target.suffix}")
+    shutil.copy2(source, tmp)
+    tmp.replace(target)
+
+
+class MisconfigurationError(Exception):
+    pass
