@@ -334,6 +334,10 @@ def run(options: Any) -> int:
         print(f'{Style.EOS}\n\n{Style.WARN} Terminated by user {Style.RESET}')
         return 1
     except MissingPlatformError as x:
+        # Actually force an update of the platform names
+        from ._platform import predate_platforms
+        predate_platforms()
+
         platforms = "platform" if len(x.args[0]) == 1 else "platforms"
         names = ", ".join(f'"{n}"' for n in x.args[0])
         print(

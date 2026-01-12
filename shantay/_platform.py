@@ -491,8 +491,15 @@ def _write_platforms(names: list[str] | tuple[str, ...]) -> None:
     tmp.replace(_PLATFORM_FILE)
 
 
-def _predate_platforms() -> None:
-    ns = os.stat(_PLATFORM_FILE).st_mtime_ns - 2 * _ONE_WEEK_NS
+def predate_platforms() -> None:
+    """
+    Predate the last modified time of the file with platform names. Running this
+    function forces an update of the platform names upon the next run of
+    Shantay. At the same time, this function is safe to call concurrently
+    because the file system will serialize the competing updates, any of which
+    has the intended effect.
+    """
+    ns = time.time_ns() - 2 * _ONE_WEEK_NS
     os.utime(_PLATFORM_FILE, ns=(ns, ns))
 
 
@@ -504,7 +511,7 @@ except FileNotFoundError:
     # Create the platforms file in the first place, but predate its last
     # modified time so that the platform names are immediately updated.
     _write_platforms(PlatformNames)
-    _predate_platforms()
+    predate_platforms()
 
 
 _PAGE_PATTERN = re.compile(
