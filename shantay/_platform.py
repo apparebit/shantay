@@ -346,6 +346,7 @@ CanonicalPlatformNames = MappingProxyType({
     "willhaben internet service GmbH & Co KG": "willhaben",
     "willhaben internet service GmbH &amp; Co KG": "willhaben",
     "www.gutefrage.net": "gutefrage.net",
+    "X (formerly Twitter)":"X",
     "Xbox Console Store": "Xbox Store",
     "Xbox.com Website Store": "Xbox.com",
     "ΣΚΡΟΥΤΖ Α.Ε.": "ΣΚΡΟΥΤΖ",
