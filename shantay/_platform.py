@@ -57,6 +57,8 @@ MetaPlatforms = (
 
 
 PlatformNames = (
+    "ABOUT YOU",
+    "Acast",
     "ADEO",
     "Adobe Lightroom",
     "Adobe Photoshop Express",
@@ -74,9 +76,11 @@ PlatformNames = (
     "Auctronia",
     "AutoRevue",
     "AutoScout24",
+    "Autoweek",
     "Azar",
     "Back Market",
     "Badoo",
+    "bazar.at",
     "Behance",
     "BigBang.si",
     "BlaBlaCar",
@@ -90,6 +94,7 @@ PlatformNames = (
     "Catawiki",
     "Cdiscount",
     "Chrome Web Store",
+    "CLIP STUDIO PAINT",
     "Conrad",
     "Course Hero",
     "daft.ie",
@@ -113,6 +118,8 @@ PlatformNames = (
     "Eventbrite",
     "Facebook",
     "Fashiondays.ro",
+    "Ferryhopper",
+    "finden.at",
     "Flights",
     "Flourish",
     "G2.com",
@@ -130,16 +137,22 @@ PlatformNames = (
     "Habbo",
     "happn",
     "Használtautó.hu",
+    "Heureka Group",
     "Hinge",
     "HLN Shop",
+    "HolidayCheck",
+    "HomeExchange.com",
     "Hornbach",
     "Hostelworld.com",
     "Hotel Hideaway",
+    "Hotelcareer",
     "Hotels",
     "Hírstart",
     "Idealista.com",
     "Idealo",
     "IMDb",
+    "immo.kurier.at",
+    "immobilien.derstandard.at",
     "imobiliare.ro",
     "Imovirtual",
     "Indeed",
@@ -151,22 +164,30 @@ PlatformNames = (
     "irishjobs.ie",
     "JetBrains",
     "JetBrains Marketplace",
+    "Jobat",
     "jobs.cz",
+    "jobs.derstandard.at",
     "jobs.ie",
     "Joom",
     "Kaggle",
     "Kleinanzeigen",
     "Knowunity",
     "kununu",
+    "Költözzbe.hu",
     "La Redoute",
+    "Lasso Moderation",
+    "LeasingMarkt.de",
     "leboncoin",
     "Ligaportal",
     "LinkedIn",
     "Livios Forum",
     "LOVOO",
+    "ländleauto.at",
     "ManoMano",
+    "Marktplaats",
     "MATY",
     "Meetic",
+    "Meinestadt",
     "METRO Markets",
     "Microsoft Operations",
     "Microsoft Store",
@@ -176,6 +197,7 @@ PlatformNames = (
     "Mimiaukce",
     "Mimibazar",
     "Mindmegette",
+    "Miravia",
     "mobile.de",
     "MORE.COM",
     "mydealz, Pepper, Preisjäger",
@@ -187,6 +209,7 @@ PlatformNames = (
     "NPM",
     "OKCupid",
     "OLX",
+    "Opinio",
     "Other Meta Product",
     "OTTO",
     "Parship",
@@ -195,11 +218,13 @@ PlatformNames = (
     "Pexels",
     "PHAISTOS NETWORKS",
     "Pinterest",
+    "Platomics",
     "Plenty of Fish",
     "Pornhub",
     "Profesia",
     "profession.hu",
     "Práce za rohem",
+    "Práce.cz",
     "Pub.dev",
     "Quora",
     "Rajče",
@@ -209,6 +234,7 @@ PlatformNames = (
     "ResearchGate",
     "rezeptwelt.de",
     "Roblox",
+    "Salonkee",
     "Samsung Galaxy Store",
     "Samsung PENUP",
     "SAP",
@@ -216,7 +242,9 @@ PlatformNames = (
     "Seduo",
     "SFDC",
     "Shein",
+    "SHOPFLIX",
     "Shopify",
+    "shöpping.at",
     "SME Blog",
     "Snapchat",
     "SoundCloud",
@@ -240,8 +268,10 @@ PlatformNames = (
     "Threads",
     "TikTok",
     "Tinder",
+    "Trendyol B.V.",
     "Tripadvisor",
     "Trustpilot",
+    "Tweakers",
     "Twitch",
     "Uber",
     "Udemy",
@@ -258,19 +288,25 @@ PlatformNames = (
     "Vrbo.com",
     "VSCO",
     "Wallapop",
+    "Wattpad",
     "Waze",
     "WhatsApp",
+    "Wikimedia",
     "Wikipower",
     "willhaben",
     "Wizz",
+    "Wolt",
     "X",
     "Xbox Store",
     "Xbox.com",
     "XING",
+    "XNXX",
     "XVideos",
     "YouTube",
     "Yubo",
+    "YVES ROCHER FRANCE",
     "Zalando",
+    "Zboží.cz",
     "Zenga",
     "Živě.cz",
     "ΣΚΡΟΥΤΖ",
@@ -304,6 +340,7 @@ CanonicalPlatformNames = MappingProxyType({
     'SIA "JOOM"': "Joom",
     "SIA &quot;JOOM&quot;": "Joom",
     "Takeaway.com Central Core B.V.": "Takeaway.com",
+    "Trendyol B.V.": "Trendyol",
     "Vinted UAB": "Vinted",
     "WhatsApp Channels": "WhatsApp",
     "willhaben internet service GmbH & Co KG": "willhaben",
@@ -333,6 +370,7 @@ class MissingPlatformError(Exception):
 _KNOWN_PLATFORM_NAMES: frozenset[str] = frozenset(PlatformNames)
 _logger = logging.getLogger(__spec__.parent)
 _ONE_WEEK = 7 * 24 * 60 * 60
+_ONE_WEEK_NS = _ONE_WEEK * 1_000_000_000
 
 
 def sync_web_platforms(
@@ -453,12 +491,20 @@ def _write_platforms(names: list[str] | tuple[str, ...]) -> None:
     tmp.replace(_PLATFORM_FILE)
 
 
+def _predate_platforms() -> None:
+    ns = os.stat(_PLATFORM_FILE).st_mtime_ns - 2 * _ONE_WEEK_NS
+    os.utime(_PLATFORM_FILE, ns=(ns, ns))
+
+
 try:
     PlatformNames = tuple(_read_platforms())
     _KNOWN_PLATFORM_NAMES = frozenset(PlatformNames)
     PlatformLookupTable = _create_lookup_table()
 except FileNotFoundError:
+    # Create the platforms file in the first place, but predate its last
+    # modified time so that the platform names are immediately updated.
     _write_platforms(PlatformNames)
+    _predate_platforms()
 
 
 _PAGE_PATTERN = re.compile(
