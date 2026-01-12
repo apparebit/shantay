@@ -14,6 +14,7 @@ also are a few places that need to mediate between API surface and data frames.
 This module collects the functions necessary for the latter.
 """
 from collections.abc import Sequence
+import datetime as dt
 from typing import Literal
 
 import polars as pl
@@ -80,6 +81,7 @@ def predicate(
         NoArgumentProvided | NotNull | None | str | Sequence[str]
     ) = NO_ARGUMENT_PROVIDED,
     category: NoArgumentProvided | NotNull | None | str = NO_ARGUMENT_PROVIDED,
+    date: NoArgumentProvided | dt.date = NO_ARGUMENT_PROVIDED,
 ) -> pl.Expr:
     """
     Create the predicate over the "tag", "platform", "category", "column",
@@ -97,6 +99,10 @@ def predicate(
             result = clause
         else:
             result = result.and_(clause)
+
+    if date is not NO_ARGUMENT_PROVIDED:
+        filter(pl.col("start_date").eq(date))
+        filter(pl.col("end_date").eq(date))
 
     for key, value in (
         ("tag", tag),
