@@ -268,7 +268,7 @@ PlatformNames = (
     "Threads",
     "TikTok",
     "Tinder",
-    "Trendyol B.V.",
+    "Trendyol",
     "Tripadvisor",
     "Trustpilot",
     "Tweakers",
