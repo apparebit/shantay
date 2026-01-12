@@ -1,7 +1,7 @@
 # Version History for Shantay
 
 
-## v0.6.0 (September ??, 2025)
+## v0.6.0 (January 14, 2026)
 
 Shantay now **covers all transparency DB columns** in its summary statistics,
 including the `content_id_ean` column introduced with the EU's transparency DB
@@ -101,6 +101,8 @@ This release also contains several minor improvements and bug fixes:
   * Generated reports now include per-platform tables of keyword usage.
     Additionally, the size of annotations, the labelling of delays, the use of
     colors, and the display of null values in tables have been fixed.
+  * Shantay now updates the list of known platform names, even if the last
+    update is less than a week old.
   * Crashing errors when cleaning up directories during archive download, when
     forwarding cancellations during multiprocessing, when just downloading
     archives with multiprocessing, and when the archive already contains the
