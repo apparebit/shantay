@@ -1154,21 +1154,22 @@ class Statistics:
     def __contains__(self, date: None | dt.date | Daily) -> bool:
         """
         Determine whether the summary statistics contain data for the given
-        date. This method recognizes summary statistics with either daily or
-        monthly granularity.
+        date. This method checks for that day's batch_count being present.
         """
         if date is None:
             return False
         if isinstance(date, Daily):
             date = date.start_date
 
-        # The threshold TRANSFORM_COUNT is the number of transforms that aren't
-        # skipped. Since each such transform results in at least a row,
-        # typically many more, that count also is a loose lower bound on the
-        # number of rows added per time period.
-        return TRANSFORM_COUNT < self.frame().filter(
-            pl.col("start_date").le(date).and_(pl.col("end_date").ge(date))
-        ).height
+        return self.frame().select(
+            pl.col("column").eq("batch_count").and_(
+                pl.col("tag").is_null()
+            ).and_(
+                pl.col("start_date").eq(date)
+            ).and_(
+                pl.col("end_date").eq(date)
+            )
+        ).height == 1
 
     def release_range(self) -> None | ReleaseRange[Daily]:
         """Determine the range of releases covered by the summary statistics."""
@@ -1246,7 +1247,7 @@ class Statistics:
             )
 
             entries.append(dict(
-               release=Release.of(date),
+                release=Release.of(date),
                 batch_count=batches,
                 extract_rows=extract_rows,
                 extract_rows_with_keywords=extract_kw_rows,
