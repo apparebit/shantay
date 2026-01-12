@@ -1039,7 +1039,9 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         if effective_platform is not None:
             filter["platform"] = effective_platform
 
-        if self._statistics.frame().filter(predicate(**filter)).height == 0:
+        if self._statistics.frame().filter(
+            predicate(**filter) # type: ignore
+        ).height == 0:
             _logger.debug('skipping platform="%s", reason="no data"', platform)
             self._html("<p>No data available for platform</p>")
             return

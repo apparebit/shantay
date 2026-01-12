@@ -255,15 +255,12 @@ class TestDistill(TestCase):
             self.assertTrue(lines[offset + 9].startswith("    return function(*args, **kwargs)"))
             self.assertTrue(lines[offset + 10].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
             self.assertTrue(lines[offset + 11].startswith("  File"))
-            self.assertTrue(lines[offset + 12].startswith("    return function(*args, **kwargs)"))
-            self.assertTrue(lines[offset + 13].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
-            self.assertTrue(lines[offset + 14].startswith("  File"))
-            self.assertTrue(lines[offset + 15].startswith("    return wrap_df(ldf.collect(engine, callback))"))
-            self.assertTrue(lines[offset + 16].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+            self.assertTrue(lines[offset + 12].startswith("    return wrap_df(ldf.collect(engine, callback))"))
+            self.assertTrue(lines[offset + 13].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
 
             # Since the particulars of the traceback have changed over time,
             # make offsets relative to the next log line.
-            offset = offset + 17
+            offset = offset + 14
 
             self.assertTrue(
                 lines[offset].startswith(
