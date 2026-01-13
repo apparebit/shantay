@@ -1,4 +1,3 @@
-from abc import ABCMeta, abstractmethod
 from collections.abc import Iterable, Sequence
 import datetime as dt
 from io import StringIO
@@ -38,7 +37,7 @@ from .util import minify, to_markdown_table, upper_limit
 
 _CUTOFF_FACTOR = 1.9
 
-_TIMELINE_WIDTH = 600
+_TIMELINE_WIDTH = 700
 _TIMELINE_HEIGHT = 400
 _SPACING = 30
 
