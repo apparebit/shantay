@@ -1038,11 +1038,25 @@ class Statistics:
         Instantiate a new statistics frame from the parquet files in the given
         directory. By  default, the file name for the new statistics is derived
         from the directory stem. This method assumes that all frames have been
-        created with the same stratification options.
+        created with the same stratification options. At the same time, frames
+        may differ in their schemas as far as the enumeration of platform names
+        is concerned.
         """
         if file is None:
             file = f"{directory.stem}.parquet"
-        return cls._do_read(f"{directory}/{glob}", file)
+
+        frames = []
+        for path in sorted(directory.glob(glob)):
+            frame = pl.read_parquet(path)
+            frame = cls._check_platform_names(path, frame)
+            frames.append(frame)
+
+        frame = pl.concat(frames, how="vertical", rechunk=True)
+        return cls(
+            file,
+            frame,
+            **cls._extract_stratification(frame),
+        )
 
     @classmethod
     def read(cls, path: Path) -> Self:
@@ -1050,7 +1064,12 @@ class Statistics:
         Instantiate a new statistics frame from the given file path. This method
         assumes that the file exists and throws an exception otherwise.
         """
-        return cls._do_read(path, path.name)
+        frame = pl.read_parquet(path)
+        return cls(
+            path.name,
+            cls._check_platform_names(path, frame),
+            **cls._extract_stratification(frame)
+        )
 
     @classmethod
     def _check_platform_names(
@@ -1082,15 +1101,6 @@ class Statistics:
             "stratify_by_category": non_null_categories != 0,
             "stratify_all_text": rows_of_text_entities == 0,
         }
-
-    @classmethod
-    def _do_read(cls, path: str | Path, file: str) -> Self:
-        frame = pl.read_parquet(path)
-        return cls(
-            file,
-            cls._check_platform_names(path, frame),
-            **cls._extract_stratification(frame)
-        )
 
     @property
     def file(self) -> str:
