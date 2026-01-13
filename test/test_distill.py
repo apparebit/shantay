@@ -5,7 +5,7 @@ import zipfile
 
 import polars as pl
 
-from .runtime import TestCase
+from .runtime import StyledStream, TestCase
 
 from shantay.dsa_sor import StatementsOfReasons
 from shantay.framing import finalize
@@ -206,99 +206,116 @@ class TestDistill(TestCase):
         with self.subTest("check log file"):
             lines = LOGFILE.read_text("utf8").splitlines(keepends=True)
 
-            offset = -1
-            for offset, line in enumerate(lines):
-                if 'staged file="sor-global-2024-03-14-full.zip"' in line:
-                    break
+            try:
+                self.check_log_file(lines)
+            except:
+                # Print log file to aid debugging
+                import sys
+                stream = sys.stdout
+                styled = StyledStream(stream)
 
-            self.assertNotEqual(offset, -1)
-            self.assertTrue(offset + 37 <= len(lines))
-            self.assertIn("staged file", lines[offset + 0])
-            self.assertIn("validated release", lines[offset + 1])
-            self.assertIn('unarchived type="nested archive"', lines[offset + 2])
-            self.assertIn(
-                'counted rows=50, rows-with-keywords=4, file='
-                '"sor-global-2024-03-14-full-00000-00000.csv"',
-                lines[offset + 3]
-            )
-            self.assertIn(
-                'counted rows=50, rows-with-keywords=8, file='
-                '"sor-global-2024-03-14-full-00000-00001.csv"',
-                lines[offset + 4]
-            )
-            self.assertIn("ingested rows=8", lines[offset + 5])
-            self.assertIn('unarchived type="nested archive"', lines[offset + 6])
-            self.assertIn(
-                'counted rows=50, rows-with-keywords=0, file='
-                '"sor-global-2024-03-14-full-00001-00000.csv"',
-                lines[offset + 7]
-            )
-            self.assertIn(
-                'counted rows=52, rows-with-keywords=1, file='
-                '"sor-global-2024-03-14-full-00001-00001.csv"',
-                lines[offset + 8]
-            )
-            offset += 9
-            # Trying to parse both CSV files in one Pola.rs operation fails:
-            self.assertIn(
-                'shantay︙WARNING︙failed to read CSV with strategy=1, using="globbing Pola.rs"',
-                lines[offset + 0],
-            )
-            self.assertTrue(lines[offset + 1].startswith("Traceback"))
-            self.assertTrue(lines[offset + 2].startswith("  File"))
-            self.assertTrue(lines[offset + 3].startswith("    frame = self.finish_frame("))
-            self.assertTrue(lines[offset + 4].startswith("            ^^^^^^^^^^^^^^^^^^"))
-            self.assertTrue(lines[offset + 5].startswith("  File"))
-            self.assertTrue(lines[offset + 6].startswith("    ).collect()"))
-            self.assertTrue(lines[offset + 7].startswith("      ^^^^^^^"))
-            self.assertTrue(lines[offset + 8].startswith("  File"))
-            self.assertTrue(lines[offset + 9].startswith("    return function(*args, **kwargs)"))
-            self.assertTrue(lines[offset + 10].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
-            self.assertTrue(lines[offset + 11].startswith("  File"))
-            self.assertTrue(lines[offset + 12].startswith("    return wrap_df(ldf.collect(engine, callback))"))
-            self.assertTrue(lines[offset + 13].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+                print("\n")
+                print(styled.h1("Shantay's Log"))
+                for line in lines:
+                    print(line[:-1])
+                print(styled.h1("EOF Shantay's Log"), flush=True)
 
-            # Since the particulars of the traceback have changed over time,
-            # make offsets relative to the next log line.
-            offset = offset + 14
+                raise
 
-            self.assertTrue(
-                lines[offset].startswith(
-                    "polars.exceptions.ComputeError: could not parse"
-                )
+    def check_log_file(self, lines: list[str]) -> None:
+        offset = -1
+        for offset, line in enumerate(lines):
+            if 'staged file="sor-global-2024-03-14-full.zip"' in line:
+                break
+
+        self.assertNotEqual(offset, -1)
+        self.assertTrue(offset + 37 <= len(lines))
+        self.assertIn("staged file", lines[offset + 0])
+        self.assertIn("validated release", lines[offset + 1])
+        self.assertIn('unarchived type="nested archive"', lines[offset + 2])
+        self.assertIn(
+            'counted rows=50, rows-with-keywords=4, file='
+            '"sor-global-2024-03-14-full-00000-00000.csv"',
+            lines[offset + 3]
+        )
+        self.assertIn(
+            'counted rows=50, rows-with-keywords=8, file='
+            '"sor-global-2024-03-14-full-00000-00001.csv"',
+            lines[offset + 4]
+        )
+        self.assertIn("ingested rows=8", lines[offset + 5])
+        self.assertIn('unarchived type="nested archive"', lines[offset + 6])
+        self.assertIn(
+            'counted rows=50, rows-with-keywords=0, file='
+            '"sor-global-2024-03-14-full-00001-00000.csv"',
+            lines[offset + 7]
+        )
+        self.assertIn(
+            'counted rows=52, rows-with-keywords=1, file='
+            '"sor-global-2024-03-14-full-00001-00001.csv"',
+            lines[offset + 8]
+        )
+        offset += 9
+        # Trying to parse both CSV files in one Pola.rs operation fails:
+        self.assertIn(
+            'shantay︙WARNING︙failed to read CSV with strategy=1, using="globbing Pola.rs"',
+            lines[offset + 0],
+        )
+        self.assertTrue(lines[offset + 1].startswith("Traceback"))
+        self.assertTrue(lines[offset + 2].startswith("  File"))
+        self.assertTrue(lines[offset + 3].startswith("    frame = self.finish_frame("))
+        self.assertTrue(lines[offset + 4].startswith("            ^^^^^^^^^^^^^^^^^^"))
+        self.assertTrue(lines[offset + 5].startswith("  File"))
+        self.assertTrue(lines[offset + 6].startswith("    ).collect()"))
+        self.assertTrue(lines[offset + 7].startswith("      ^^^^^^^"))
+        self.assertTrue(lines[offset + 8].startswith("  File"))
+        self.assertTrue(lines[offset + 9].startswith("    return function(*args, **kwargs)"))
+        self.assertTrue(lines[offset + 10].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
+        self.assertTrue(lines[offset + 11].startswith("  File"))
+        self.assertTrue(lines[offset + 12].startswith("    return wrap_df(ldf.collect(engine, callback))"))
+        self.assertTrue(lines[offset + 13].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
+
+        # Since the particulars of the traceback have changed over time,
+        # make offsets relative to the next log line.
+        offset = offset + 14
+
+        self.assertTrue(
+            lines[offset].startswith(
+                "polars.exceptions.ComputeError: could not parse"
             )
-            self.assertTrue(lines[offset + 1].startswith(""))
-            self.assertTrue(
-                lines[offset + 2].startswith(
-                    "The current offset in the file is 131 bytes"
-                )
+        )
+        self.assertTrue(lines[offset + 1].startswith(""))
+        self.assertTrue(
+            lines[offset + 2].startswith(
+                "The current offset in the file is 131 bytes"
             )
-            self.assertTrue(lines[offset + 3].startswith(""))
-            self.assertTrue(lines[offset + 4].startswith("You might want to try"))
-            self.assertTrue(lines[offset + 5].startswith("- increasing"))
-            self.assertTrue(lines[offset + 6].startswith("- specifying"))
-            self.assertTrue(lines[offset + 7].startswith("- setting"))
-            self.assertTrue(lines[offset + 8].startswith("- adding"))
-            self.assertTrue(lines[offset + 9].startswith(""))
-            self.assertTrue(
-                lines[offset + 10].startswith("Original error: ```invalid csv file")
-            )
-            self.assertTrue(lines[offset + 11].startswith(""))
-            self.assertTrue(lines[offset + 12].startswith('Field `"Napodobňovanie'))
-            # Parsing the first CSV file by itself with Pola.rs works:
-            self.assertIn(
-                'ingested rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
-            )
-            # Parsing the second CSV file by itself with Pola.rs fails:
-            self.assertIn(
-                'failed to read CSV with strategy=2, using="Pola.rs"',
-                lines[offset + 14],
-            )
-            # Parsing the second CSV fail by itself with Python's csv works:
-            self.assertIn(
-                'ingested rows=1, strategy=3, using="Python\'s CSV module"',
-                lines[offset + 15],
-            )
+        )
+        self.assertTrue(lines[offset + 3].startswith(""))
+        self.assertTrue(lines[offset + 4].startswith("You might want to try"))
+        self.assertTrue(lines[offset + 5].startswith("- increasing"))
+        self.assertTrue(lines[offset + 6].startswith("- specifying"))
+        self.assertTrue(lines[offset + 7].startswith("- setting"))
+        self.assertTrue(lines[offset + 8].startswith("- adding"))
+        self.assertTrue(lines[offset + 9].startswith(""))
+        self.assertTrue(
+            lines[offset + 10].startswith("Original error: ```invalid csv file")
+        )
+        self.assertTrue(lines[offset + 11].startswith(""))
+        self.assertTrue(lines[offset + 12].startswith('Field `"Napodobňovanie'))
+        # Parsing the first CSV file by itself with Pola.rs works:
+        self.assertIn(
+            'ingested rows=8, strategy=2, using="Pola.rs"', lines[offset + 13]
+        )
+        # Parsing the second CSV file by itself with Pola.rs fails:
+        self.assertIn(
+            'failed to read CSV with strategy=2, using="Pola.rs"',
+            lines[offset + 14],
+        )
+        # Parsing the second CSV fail by itself with Python's csv works:
+        self.assertIn(
+            'ingested rows=1, strategy=3, using="Python\'s CSV module"',
+            lines[offset + 15],
+        )
 
 
 # Shantay's current analysis data format is a very long table...
