@@ -92,6 +92,8 @@ _DOC_STYLE = """\
     line-height: 1.5;
     --black: #1d1d20;
     --white: #f5f5f8;
+    --regular-width: 45rem;
+    --wide-width: 70rem;
 }
 body {
     margin: 3rem 0.5rem;
@@ -110,11 +112,9 @@ main > :where(details, div, h1, h2, h3, ol, p, svg, table, ul, .vega-embed) {
 }
 
 main > :where(details, div, h1, h2, h3, ol, p, ul) {
-    max-width:  75rch;
+    max-width: var(--regular-width);
 }
-main > :where(table) { max-width:  90rch; }
-main > :where(.vega-embed) { width: 100rch; }
-main > :where(svg)   { max-width: 100rch; }
+main > :where(table, .vega-embed, svg) { max-width: var(--wide-width); }
 
 h2 {
     margin-top: 3rem;
@@ -132,6 +132,7 @@ table {
     line-height: 1.2;
     margin-bottom: 3rem;
 }
+
 table caption {
     font-size: 1.2em;
     text-align: left;
@@ -141,6 +142,7 @@ table caption {
 table caption > :where(cite, dfn, em, i) {
     font-style: normal;
 }
+
 th {
     font-weight: normal;
 }
@@ -186,6 +188,26 @@ td {
 }
 tbody > tr.highlight > td {
     text-align: center;
+}
+
+.decision-ground-table {
+    table-layout: fixed;
+    width: var(--wide-width);
+}
+
+.decision-ground-table tr > :nth-child(1) {
+    width: 5%;
+}
+.decision-ground-table tr > :nth-child(2) {
+    width: 25%;
+    overflow-wrap: break-word;
+}
+.decision-ground-table tr > :nth-child(3) {
+    width: 55%;
+    overflow-wrap: break-word;
+}
+.decision-ground-table tr > :nth-child(4) {
+    width: 15%;
 }
 </style>
 """
@@ -439,7 +461,7 @@ class Visualizer:
         self,
         frame: pl.DataFrame,
         caption: None | str = None,
-        klass: None | str = None,
+        klass: None | str | Sequence[str] = None,
         with_index: bool = True,
         with_head: bool = True,
     ) -> None:
@@ -458,9 +480,17 @@ class Visualizer:
         if html.startswith("<div>") and html.endswith("</div>"):
             html = html[len("<div>"): -len("</div>")]
         html = _FRAME_BORDER.sub("", html)
-        table_head = '<table>' if klass is None else f'<table class="{klass}">\n'
+
+        if klass is None:
+            attr = ''
+        elif isinstance(klass, str):
+            attr = f' class="{klass}"'
+        else:
+            attr = f' class="{" ".join(klass)}"'
+        table_head = f'<table{attr}>\n'
         if caption is not None:
             table_head += f'<caption>{caption}</caption>\n'
+
         html = _FRAME_CLASS.sub(table_head, html)
         html = _FRAME_QUOT.sub("", html)
         html = _FRAME_SHAPE.sub("", html)
@@ -600,8 +630,8 @@ class Visualizer:
 
         else:
             # Goal: Show top_num platforms in addition to Meta's and select platforms
-            top_num = 5
-            select_platforms = ("TikTok", "X", "YouTube")
+            TOP_NUM = 5
+            SELECT_PLATFORMS = ("TikTok", "X", "YouTube")
 
             # Line up top_num + len(Meta platforms) + len(select platforms):
             # Even if we remove len(Meta platforms) + len(select platforms)
@@ -617,21 +647,19 @@ class Visualizer:
             ).head(
                 # Thanks to the len(...) terms, this selection must contain at least
                 # top_num platforms in addition to Meta's and select platforms.
-                top_num + len(MetaPlatforms) + len(select_platforms)
+                TOP_NUM + len(MetaPlatforms) + len(SELECT_PLATFORMS)
             ).collect(
             ).get_column(
                 "platform"
             ).to_list()
 
             # Remove redundant platforms from top_num list
-            preselected = set((*MetaPlatforms, *select_platforms))
-            for platform in top:
-                if platform in preselected:
-                    del top[top.index(platform)]
+            preselected = set((*MetaPlatforms, *SELECT_PLATFORMS))
+            filtered = [p for p in top if p not in preselected]
 
             # Compose complete list
             self._top_platforms = (
-                top[:top_num] + ["Meta", *MetaPlatforms, *select_platforms]
+                filtered[:TOP_NUM] + ["Meta", *MetaPlatforms, *SELECT_PLATFORMS]
             )
             self._progress.start(len(self._top_platforms) + 1)
 
@@ -801,7 +829,9 @@ class Visualizer:
             ).collect()
 
             self._frame(
-                frame, caption=f"Rows with Arbitrary Text",
+                frame,
+                caption=f"Rows with Arbitrary Text",
+                klass="right-except-2",
             )
 
         # Document how transparency data was filtered
@@ -1132,10 +1162,14 @@ whereas all other percentages denote fractions of SoRs with keywords only.</p>
         for metric in metrics:
             if isinstance(metric, tuple):
                 caption, column = metric
+                klass = ["right-except-2-3"]
+                if column == "decision_ground_reference_url":
+                    klass.append("decision-ground-table")
+
                 self._frame(
                     self._prepare_text_usage(column, tag, platform),
                     caption=caption,
-                    klass="right-except-2-3",
+                    klass=klass,
                 )
                 continue
             elif metric == "keywords":
