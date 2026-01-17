@@ -268,22 +268,14 @@ class TestDistill(TestCase):
         self.assertTrue(lines[offset + 5].startswith("  File"))
         self.assertTrue(lines[offset + 6].startswith("    ).collect()"))
         self.assertTrue(lines[offset + 7].startswith("      ^^^^^^^"))
-        self.assertTrue(lines[offset + 8].startswith("  File"))
-        self.assertTrue(lines[offset + 9].startswith("    return function(*args, **kwargs)"))
-        self.assertTrue(lines[offset + 10].startswith("           ^^^^^^^^^^^^^^^^^^^^^^^^^"))
-        self.assertTrue(lines[offset + 11].startswith("  File"))
-        self.assertTrue(lines[offset + 12].startswith("    return wrap_df(ldf.collect(engine, callback))"))
-        self.assertTrue(lines[offset + 13].startswith("                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^"))
 
-        # Since the particulars of the traceback have changed over time,
-        # make offsets relative to the next log line.
-        offset = offset + 14
+        # Only match non-Polars traceback.
+        offset += 8
+        while not lines[offset].startswith(
+            "polars.exceptions.ComputeError: could not parse"
+        ):
+            offset += 1
 
-        self.assertTrue(
-            lines[offset].startswith(
-                "polars.exceptions.ComputeError: could not parse"
-            )
-        )
         self.assertTrue(lines[offset + 1].startswith(""))
         self.assertTrue(
             lines[offset + 2].startswith(
