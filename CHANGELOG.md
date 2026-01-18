@@ -1,7 +1,7 @@
 # Version History for Shantay
 
 
-## v0.6.0 (January 14, 2026)
+## v0.6.0 (January 18, 2026)
 
 Shantay now **covers all transparency DB columns** in its summary statistics,
 including the `content_id_ean` column introduced with the EU's transparency DB
